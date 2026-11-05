@@ -16,6 +16,7 @@ import { Redis } from 'ioredis';
 import { auth } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
+import { aiCallRoutes } from './routes/ai-calls.ts';
 import { projectRoutes } from './routes/projects.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -106,6 +107,7 @@ export async function buildApp() {
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
+  await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
 
   return app;

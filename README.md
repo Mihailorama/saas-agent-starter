@@ -10,6 +10,10 @@ obligations, and every code dependency is permissive (enforced in CI).
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
   Rust hot paths via PyO3 with a pure-Python fallback.
+- **AI layer**: one logged gateway for every LLM call (Anthropic, any OpenAI-compatible
+  endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
+  GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
+  See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
 - **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
   optional Jaeger + Prometheus profile, CI with gitleaks, osv-scanner, CodeQL, Dependabot.
 
@@ -56,6 +60,15 @@ See `.env.example`; put local overrides in `.env` (gitignored). In production se
 `DATABASE_URL` (restricted app role) and `MIGRATION_DATABASE_URL` (schema owner, used only by
 `pnpm db:migrate` / the `migrate` container), `VALKEY_URL`, `TEMPORAL_ADDRESS`, and `S3_*`
 (omit `S3_ENDPOINT` for AWS S3).
+
+## AI
+
+Off until you pick a model: set `AI_PROJECT_SUMMARY_PROVIDER=anthropic`,
+`AI_PROJECT_SUMMARY_MODEL=claude-haiku-5-5` and `ANTHROPIC_API_KEY` (or `openai_compatible` with
+`OPENAI_BASE_URL` / `OPENAI_API_KEY` and a model registered for your `AI_CONTOUR` in
+`config/ai-models.json`), then restart the worker. New projects with a description get an
+AI-generated summary that members can confirm or correct; admins see every call under
+"AI calls". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
 
 ## SSO
 

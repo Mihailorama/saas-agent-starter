@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { auditLog, withOrg } from '@app/db';
+import { aiCalls, auditLog, projects, withOrg } from '@app/db';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
@@ -153,7 +154,12 @@ describe('projects', () => {
     expect(first.type).toBe('ProjectCreatedWorkflow');
 
     // Re-starting with the same id is a no-op, not a second execution.
-    await startProjectCreated({ orgId: 'x', projectId: project.id, name: 'Gemini' });
+    await startProjectCreated({
+      orgId: 'x',
+      projectId: project.id,
+      name: 'Gemini',
+      actorId: null,
+    });
     expect((await handle.describe()).runId).toBe(first.runId);
     await handle.terminate('test cleanup');
   });
@@ -184,5 +190,146 @@ describe('projects', () => {
       await call(owner, 'GET', `/api/projects/${project.id}/attachments/${attachment.id}/download`)
     ).json();
     expect(await (await fetch(url)).text()).toBe(body);
+  });
+});
+
+// What the worker's ai.call_llm writes; the API only reads it.
+async function recordAiCall(orgId: string, over: Partial<typeof aiCalls.$inferInsert> = {}) {
+  const [row] = await withOrg(db, orgId, (tx) =>
+    tx
+      .insert(aiCalls)
+      .values({
+        orgId,
+        purpose: 'project.summary',
+        provider: 'anthropic',
+        requestModel: 'claude-haiku-5-5',
+        responseModel: 'claude-haiku-5-5',
+        promptTemplateId: 'project.summary',
+        promptTemplateVersion: '1',
+        requestKey: `${orgId}/x/request.json`,
+        contentExpiresAt: new Date(Date.now() + 86_400_000),
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        cost: 0.00002,
+        costCurrency: 'USD',
+        latencyMs: 420,
+        status: 'ok',
+        contour: 'eu',
+        ...over,
+      })
+      .returning(),
+  );
+  return row!;
+}
+
+describe('AI summary review', () => {
+  it('confirms or corrects an AI summary, audit-logged, tenant-isolated', async () => {
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    const created = await call(owner, 'POST', '/api/projects', {
+      name: 'Apollo',
+      description: 'Land on the Moon.',
+    });
+    const project = created.json();
+    expect(project).toMatchObject({ description: 'Land on the Moon.', aiStatus: null });
+
+    // Nothing generated yet.
+    const early = await call(owner, 'POST', `/api/projects/${project.id}/ai-summary/confirm`);
+    expect(early.statusCode).toBe(409);
+
+    // The worker stores a summary (simulated here).
+    const aiCall = await recordAiCall(org);
+    await withOrg(db, org, (tx) =>
+      tx
+        .update(projects)
+        .set({ aiSummary: 'A Moon landing.', aiStatus: 'generated', aiCallId: aiCall.id })
+        .where(eq(projects.id, project.id)),
+    );
+
+    const confirmed = await call(owner, 'POST', `/api/projects/${project.id}/ai-summary/confirm`);
+    expect(confirmed.statusCode).toBe(200);
+    expect(confirmed.json()).toMatchObject({
+      aiSummary: 'A Moon landing.',
+      aiStatus: 'confirmed',
+      aiCallId: aiCall.id,
+      reviewedBy: owner.id,
+    });
+
+    const url = `/api/projects/${project.id}/ai-summary/correct`;
+    expect((await call(owner, 'POST', url, { summary: '  ' })).statusCode).toBe(400);
+    const corrected = await call(owner, 'POST', url, { summary: 'Crewed lunar landing.' });
+    expect(corrected.json()).toMatchObject({
+      aiSummary: 'Crewed lunar landing.',
+      aiStatus: 'corrected',
+    });
+
+    const stranger = await signUp();
+    await createOrg(stranger);
+    expect((await call(stranger, 'POST', url, { summary: 'x' })).statusCode).toBe(404);
+    expect((await call(null, 'POST', url, { summary: 'x' })).statusCode).toBe(401);
+
+    const audit = await withOrg(db, org, (tx) => tx.select().from(auditLog));
+    expect(audit.map((a) => [a.action, a.target, a.actorId])).toEqual(
+      expect.arrayContaining([
+        ['POST /api/projects/:id/ai-summary/confirm', project.id, owner.id],
+        ['POST /api/projects/:id/ai-summary/correct', project.id, owner.id],
+      ]),
+    );
+  });
+});
+
+describe('AI calls log', () => {
+  it('lists, filters, pages and exports for org admins only', async () => {
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    const ok = await recordAiCall(org);
+    const failed = await recordAiCall(org, {
+      status: 'error',
+      errorClass: 'RateLimitError',
+      requestModel: 'claude-sonnet-5-5',
+      responseModel: null,
+      responseKey: null,
+    });
+    const base = `/api/orgs/${org}/ai-calls`;
+
+    const all = (await call(owner, 'GET', base)).json();
+    expect(all.total).toBe(2);
+    expect(all.items.map((c: { id: string }) => c.id)).toEqual([failed.id, ok.id]);
+    expect(all.items[1]).toMatchObject({ cost: 0.00002, inputTokens: 100, contour: 'eu' });
+    expect(all.items[0]).not.toHaveProperty('orgId');
+
+    const errors = (await call(owner, 'GET', `${base}?status=error`)).json();
+    expect(errors.items.map((c: { id: string }) => c.id)).toEqual([failed.id]);
+    const byModel = (await call(owner, 'GET', `${base}?model=claude-haiku-5-5`)).json();
+    expect(byModel.total).toBe(1);
+    const paged = (await call(owner, 'GET', `${base}?limit=1&offset=1`)).json();
+    expect(paged).toMatchObject({ total: 2, items: [{ id: ok.id }] });
+    const future = (await call(owner, 'GET', `${base}?from=2999-01-01`)).json();
+    expect(future.total).toBe(0);
+    expect((await call(owner, 'GET', `${base}?status=maybe`)).statusCode).toBe(400);
+
+    const exported = await call(owner, 'GET', `${base}/export?purpose=project.summary`);
+    expect(exported.statusCode).toBe(200);
+    expect(exported.headers['content-type']).toContain('application/x-ndjson');
+    expect(exported.headers['content-disposition']).toMatch(/attachment; filename="ai-calls-/);
+    const lines = exported.body
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    expect(lines.map((l) => l.id)).toEqual([ok.id, failed.id]);
+
+    // Members cannot read the log; other orgs cannot address it.
+    const memberUser = await signUp();
+    await auth.api.addMember({
+      body: { userId: memberUser.id, organizationId: org, role: 'member' },
+    });
+    await call(memberUser, 'POST', '/api/auth/organization/set-active', { organizationId: org });
+    expect((await call(memberUser, 'GET', base)).statusCode).toBe(403);
+    expect((await call(memberUser, 'GET', `${base}/export`)).statusCode).toBe(403);
+    const stranger = await signUp();
+    await createOrg(stranger);
+    expect((await call(stranger, 'GET', base)).statusCode).toBe(403);
+    expect((await call(null, 'GET', base)).statusCode).toBe(401);
   });
 });

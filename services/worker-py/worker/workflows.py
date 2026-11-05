@@ -13,9 +13,17 @@ class ProjectCreatedWorkflow:
 
     @workflow.run
     async def run(self, event: ProjectCreated) -> str:
-        return await workflow.execute_activity_method(
+        fingerprint = await workflow.execute_activity_method(
             Activities.fingerprint_project,
             event,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), maximum_attempts=5),
         )
+        # LLM calls are slow and cost money: longer timeout, fewer retries.
+        await workflow.execute_activity_method(
+            Activities.summarize_project,
+            event,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=3),
+        )
+        return fingerprint

@@ -5,6 +5,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --filter web...
 COPY apps/web apps/web
+COPY config config
 RUN pnpm --filter web build
 
 # Static files + /api reverse proxy; runs as non-root on port 8080.

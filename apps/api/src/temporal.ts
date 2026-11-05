@@ -21,7 +21,13 @@ export async function closeTemporal() {
 }
 
 /** Contract with services/worker-py: workflow type, id and argument shape. */
-export type ProjectCreated = { orgId: string; projectId: string; name: string };
+export type ProjectCreated = {
+  orgId: string;
+  projectId: string;
+  name: string;
+  /** User who triggered it; recorded as actor of the AI calls the workflow makes. */
+  actorId: string | null;
+};
 export const projectWorkflowId = (projectId: string) => `project-created-${projectId}`;
 
 /** Idempotent: the workflow id is derived from the project id, duplicates are rejected. */

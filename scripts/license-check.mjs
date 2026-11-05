@@ -65,16 +65,28 @@ for (const [license, pkgs] of Object.entries(js)) {
   if (!allowed(license)) bad.push(...pkgs.map((p) => `js  ${p.name}@${p.versions} (${license})`));
 }
 
-// Python: everything in the worker venv, tooling included.
+// Python: everything in the worker venv, tooling included. A PEP 639 License-Expression
+// is authoritative; otherwise the declared License field or the trove classifiers must pass
+// (the field is often an SPDX id like `Apache-2.0` while the classifier is the vaguer
+// `Apache Software License`; free-text fields fall back to the classifiers).
 const py = JSON.parse(
   run(
     'uv',
-    ['run', '--locked', 'pip-licenses', '--format=json', '--from=mixed', '--with-system'],
+    ['run', '--locked', 'pip-licenses', '--format=json', '--from=all', '--with-system'],
     'services/worker-py',
   ),
 );
+const known = (v) => v && v !== 'UNKNOWN';
+// A classifier naming a copyleft/source-available family vetoes a permissive-looking field.
+const copyleft = /GPL|MPL|Mozilla|EUPL|SSPL|Server Side|Business Source|Commons Clause/i;
 for (const p of py) {
-  if (!allowed(p.License)) bad.push(`py  ${p.Name}@${p.Version} (${p.License})`);
+  const expr = p['License-Expression'];
+  const [field, classifier] = [p['License-Metadata'], p['License-Classifier']];
+  const ok = known(expr)
+    ? allowed(expr)
+    : !copyleft.test(classifier) && [field, classifier].some((l) => known(l) && allowed(l));
+  const shown = known(expr) ? expr : `${p['License-Metadata']} / ${p['License-Classifier']}`;
+  if (!ok) bad.push(`py  ${p.Name}@${p.Version} (${shown})`);
 }
 
 // Images: each must be documented with its license.

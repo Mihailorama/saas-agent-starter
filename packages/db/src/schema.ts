@@ -1,5 +1,15 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, pgPolicy, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  index,
+  integer,
+  numeric,
+  pgPolicy,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { organization } from './auth-schema.ts';
 
 export * from './auth-schema.ts';
@@ -24,11 +34,65 @@ export const projects = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     orgId: orgId(),
     name: text('name').notNull(),
+    description: text('description'),
     /** SimHash of the name, filled asynchronously by the Python worker (Temporal). */
     fingerprint: text('fingerprint'),
+    /** AI summary of the description (worker, via ai.call_llm) and its human review state. */
+    aiSummary: text('ai_summary'),
+    aiStatus: text('ai_status', { enum: ['generated', 'confirmed', 'corrected'] }),
+    aiCallId: uuid('ai_call_id').references(() => aiCalls.id, { onDelete: 'set null' }),
+    reviewedBy: text('reviewed_by'),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index().on(t.orgId), tenantIsolation()],
+  (t) => [
+    index().on(t.orgId),
+    check('projects_ai_status', sql`${t.aiStatus} in ('generated', 'confirmed', 'corrected')`),
+    tenantIsolation(),
+  ],
+);
+
+/**
+ * One row per LLM call, written by the worker's `ai.call_llm` gateway. Append-only: the app
+ * role gets no UPDATE/DELETE on it (packages/db/src/migrate.ts). Prompt and completion
+ * content live in S3 objects (keys below), never in this row or in logs/spans.
+ */
+export const aiCalls = pgTable(
+  'ai_calls',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    actorId: text('actor_id'),
+    purpose: text('purpose').notNull(),
+    provider: text('provider').notNull(),
+    /** Model id we requested (checked against config/ai-models.json). */
+    requestModel: text('request_model').notNull(),
+    /** Exact model id the provider reported, when it reports one. */
+    responseModel: text('response_model'),
+    promptTemplateId: text('prompt_template_id').notNull(),
+    promptTemplateVersion: text('prompt_template_version').notNull(),
+    requestKey: text('request_key').notNull(),
+    responseKey: text('response_key'),
+    /** Content objects are expected to be gone after this (bucket lifecycle rule). */
+    contentExpiresAt: timestamp('content_expires_at', { withTimezone: true }).notNull(),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    totalTokens: integer('total_tokens'),
+    cost: numeric('cost', { precision: 14, scale: 6, mode: 'number' }),
+    costCurrency: text('cost_currency'),
+    latencyMs: integer('latency_ms').notNull(),
+    status: text('status', { enum: ['ok', 'error'] }).notNull(),
+    errorClass: text('error_class'),
+    traceId: text('trace_id'),
+    spanId: text('span_id'),
+    contour: text('contour').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index().on(t.orgId, t.createdAt),
+    check('ai_calls_status', sql`${t.status} in ('ok', 'error')`),
+    tenantIsolation(),
+  ],
 );
 
 /** Files in S3. The object key is derived from ids; access is checked via this row (RLS). */

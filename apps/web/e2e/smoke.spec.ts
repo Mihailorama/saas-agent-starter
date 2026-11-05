@@ -18,6 +18,19 @@ test('sign up, create an organization and a project', async ({ page }) => {
 
   await page.getByRole('button', { name: 'New project' }).first().click();
   await page.getByLabel('Name').fill('Difference Engine');
+  await page.getByLabel('Description (optional)').fill('Tabulates polynomial functions.');
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('link', { name: 'Difference Engine' })).toBeVisible();
+
+  // The owner is an org admin and sees the AI call log (empty: no AI configured in tests).
+  await page.getByRole('link', { name: 'AI calls' }).click();
+  await expect(page.getByRole('heading', { name: 'AI calls' })).toBeVisible();
+  await expect(page.getByText('No AI calls match these filters.')).toBeVisible();
+});
+
+test('AI transparency page is public', async ({ page }) => {
+  await page.goto('/ai-transparency');
+  await expect(page.getByRole('heading', { name: 'How we use AI' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Project summaries' })).toBeVisible();
+  await expect(page.getByText('claude-haiku-5-5', { exact: false })).toBeVisible();
 });

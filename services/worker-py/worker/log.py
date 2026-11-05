@@ -22,3 +22,4 @@ def configure_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     logging.basicConfig(level=level, handlers=[handler], force=True)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)  # one INFO line per HTTP request

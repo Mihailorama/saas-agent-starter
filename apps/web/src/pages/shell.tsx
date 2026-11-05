@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Link, Outlet, useNavigate } from '@tanstack/react-router';
+import { Link, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import {
   Building2,
   Check,
@@ -9,6 +9,8 @@ import {
   LogOut,
   Moon,
   Plus,
+  ScrollText,
+  Sparkles,
   Sun,
 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
@@ -36,6 +38,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { authClient } from '@/lib/auth';
 import { setTheme, useTheme } from '@/lib/theme';
+import { cn } from '@/lib/utils';
 
 const initials = (s: string) =>
   s
@@ -171,8 +174,16 @@ function UserMenu() {
   );
 }
 
+const navLink =
+  'flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
+const navActive = 'bg-accent font-medium !text-foreground';
+
 export function Shell() {
   const { data: orgs, isPending } = authClient.useListOrganizations();
+  const { data: member } = authClient.useActiveMember();
+  const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
+  // UI hint only; the API enforces the role.
+  const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
 
   if (isPending) {
     return (
@@ -210,15 +221,21 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link
-            to="/"
-            className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            activeProps={{ className: 'bg-accent font-medium !text-foreground' }}
-            activeOptions={{ exact: false }}
-          >
+          <Link to="/" className={cn(navLink, !onAiCalls && navActive)}>
             <FolderKanban className="size-4" /> Projects
           </Link>
+          {isAdmin && (
+            <Link to="/ai-calls" className={navLink} activeProps={{ className: navActive }}>
+              <ScrollText className="size-4" /> AI calls
+            </Link>
+          )}
         </nav>
+        <Link
+          to="/ai-transparency"
+          className="mx-2 mb-2 flex items-center gap-3 rounded-md px-2 py-2 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <Sparkles className="size-3.5" /> How we use AI
+        </Link>
         <div className="border-t p-2">
           <UserMenu />
         </div>

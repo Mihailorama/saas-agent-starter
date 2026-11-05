@@ -10,6 +10,7 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
+from tests.conftest import new_org
 from worker import settings
 from worker.activities import Activities, ProjectCreated
 from worker.text import simhash
@@ -19,31 +20,21 @@ TASK_QUEUE = f"test-{uuid.uuid4()}"
 
 
 @pytest.fixture(scope="session")
-async def pool() -> AsyncIterator[asyncpg.Pool]:
-    pool = await asyncpg.create_pool(settings.DATABASE_URL)
-    yield pool
-    await pool.close()
-
-
-@pytest.fixture(scope="session")
 async def client(pool: asyncpg.Pool) -> AsyncIterator[Client]:
     client = await Client.connect(settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE)
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[ProjectCreatedWorkflow],
-        activities=[Activities(pool).fingerprint_project],
+        # No AI configured here: summarize_project is a no-op (tests/test_ai.py covers it).
+        activities=[Activities(pool).fingerprint_project, Activities(pool).summarize_project],
     ):
         yield client
 
 
 async def new_project(pool: asyncpg.Pool, name: str) -> ProjectCreated:
-    org_id, project_id = str(uuid.uuid4()), str(uuid.uuid4())
+    org_id, project_id = await new_org(pool), str(uuid.uuid4())
     async with pool.acquire() as conn, conn.transaction():
-        await conn.execute(
-            "insert into organization (id, name, slug, created_at) values ($1, $1, $1, now())",
-            org_id,
-        )
         await conn.execute("select set_config('app.org_id', $1, true)", org_id)
         await conn.execute(
             "insert into projects (id, org_id, name) values ($1, $2, $3)", project_id, org_id, name

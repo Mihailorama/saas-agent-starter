@@ -1,12 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { ArrowLeft, Download, FileText, Upload } from 'lucide-react';
-import { useRef } from 'react';
+import { ArrowLeft, Check, Download, FileText, Pencil, Upload } from 'lucide-react';
+import { type FormEvent, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { AiBadge } from '@/components/ai-badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { type Attachment, api, formatBytes, formatDate, type Project } from '@/lib/api';
 
@@ -28,6 +37,97 @@ async function upload(projectId: string, file: File) {
   if (!res.ok) throw new Error(`Upload failed (${res.status})`);
 }
 
+/** The AI summary with human oversight: confirm it, or correct it (both are audit-logged). */
+function AiSummaryCard({ project }: { project: Project }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const review = useMutation({
+    mutationFn: (summary?: string) =>
+      api<Project>(
+        `/api/projects/${project.id}/ai-summary/${summary === undefined ? 'confirm' : 'correct'}`,
+        { method: 'POST', json: summary === undefined ? {} : { summary } },
+      ),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['projects', project.id], updated);
+      queryClient.invalidateQueries({ queryKey: ['projects'], exact: true });
+      setEditing(false);
+      toast.success(updated.aiStatus === 'corrected' ? 'Summary corrected' : 'Summary confirmed');
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  if (!project.aiSummary || !project.aiStatus) {
+    return project.description ? (
+      <p className="text-sm text-muted-foreground">No AI summary yet.</p>
+    ) : null;
+  }
+
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    review.mutate(String(new FormData(e.currentTarget).get('summary')));
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
+        <div className="space-y-1.5">
+          <CardTitle>Summary</CardTitle>
+          <CardDescription>
+            {project.aiStatus === 'generated'
+              ? 'Written by an AI model. Check it before relying on it.'
+              : `Reviewed ${project.reviewedAt ? formatDate(project.reviewedAt) : ''}`}
+          </CardDescription>
+        </div>
+        <AiBadge status={project.aiStatus} />
+      </CardHeader>
+      {editing ? (
+        <form onSubmit={onSubmit}>
+          <CardContent className="space-y-2">
+            <Label htmlFor="ai-summary">Corrected summary</Label>
+            <textarea
+              id="ai-summary"
+              name="summary"
+              defaultValue={project.aiSummary}
+              maxLength={1000}
+              required
+              rows={3}
+              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </CardContent>
+          <CardFooter className="justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={review.isPending}>
+              Save correction
+            </Button>
+          </CardFooter>
+        </form>
+      ) : (
+        <>
+          <CardContent>
+            <p className="text-sm">{project.aiSummary}</p>
+          </CardContent>
+          <CardFooter className="justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              <Pencil className="size-4" /> Correct
+            </Button>
+            {project.aiStatus !== 'confirmed' && (
+              <Button
+                size="sm"
+                onClick={() => review.mutate(undefined)}
+                disabled={review.isPending}
+              >
+                <Check className="size-4" /> Confirm
+              </Button>
+            )}
+          </CardFooter>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function ProjectPage() {
   const { projectId = '' } = useParams({ strict: false });
   const queryClient = useQueryClient();
@@ -35,6 +135,12 @@ export function ProjectPage() {
   const project = useQuery({
     queryKey: ['projects', projectId],
     queryFn: () => api<Project>(`/api/projects/${projectId}`),
+    // The AI summary arrives asynchronously from the worker; poll briefly for it.
+    refetchInterval: (q) => {
+      const p = q.state.data;
+      const fresh = p && Date.now() - Date.parse(p.createdAt) < 60_000;
+      return fresh && p.description && !p.aiSummary ? 3000 : false;
+    },
   });
   const files = useQuery({
     queryKey: ['projects', projectId, 'attachments'],
@@ -90,8 +196,13 @@ export function ProjectPage() {
               </Badge>
             )}
           </p>
+          {project.data.description && (
+            <p className="pt-2 text-sm whitespace-pre-line">{project.data.description}</p>
+          )}
         </div>
       )}
+
+      {project.data && <AiSummaryCard project={project.data} />}
 
       <Card>
         <CardHeader className="flex-row items-start justify-between space-y-0">

@@ -12,6 +12,7 @@ COPY services/worker-py/worker services/worker-py/worker
 FROM python:3.12-slim-trixie
 RUN useradd --system --uid 10001 worker
 COPY --from=build /app/services/worker-py /app/services/worker-py
+COPY config /app/config
 WORKDIR /app/services/worker-py
 ENV PATH=/app/services/worker-py/.venv/bin:$PATH PYTHONUNBUFFERED=1
 USER worker

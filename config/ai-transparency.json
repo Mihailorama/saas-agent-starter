@@ -1,0 +1,20 @@
+{
+  "$comment": "Content of the public /ai-transparency page (apps/web/src/pages/ai-transparency.tsx). Replace the example operator and contact before going live. Models are read from config/ai-models.json.",
+  "operator": "Example Inc.",
+  "contact": "ai-questions@example.com",
+  "updated": "2026-11-05",
+  "uses": [
+    {
+      "purpose": "project.summary",
+      "title": "Project summaries",
+      "what": "When you add a description to a project, a language model writes a one-sentence summary of it.",
+      "data": "The project name and description you entered. Nothing else about you or your organization is sent.",
+      "oversight": "The summary is labeled \"AI-generated\" until a member of your organization confirms or corrects it. Corrections replace the summary; the original output stays in the audit log."
+    }
+  ],
+  "contest": [
+    "Any member of the organization can correct an AI-generated summary on the project page; the correction is recorded with their name and time.",
+    "Organization admins can export the full log of AI calls (purpose, model, time, outcome) from the AI calls page.",
+    "To ask how a result was produced or to object to the use of AI, write to the contact address below."
+  ]
+}
