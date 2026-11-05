@@ -1,5 +1,5 @@
 # Build stage compiles the Rust extension (crates/core) into the venv via maturin.
-FROM ghcr.io/astral-sh/uv:0.12.5-python3.12-trixie AS build
+FROM ghcr.io/astral-sh/uv:0.13.7-python3.12-trixie AS build
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 ENV PATH=/root/.cargo/bin:$PATH UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
