@@ -59,7 +59,7 @@ services:
     entrypoint: ["/bin/sh", "/setup.sh"]
 
   temporal:
-    image: temporalio/server:1.32.0
+    image: temporalio/server:1.32.1
     depends_on: { temporal-setup: { condition: service_completed_successfully } }
     environment:
       PROMETHEUS_ENDPOINT: 0.0.0.0:8000 # scraped by the observability profile
