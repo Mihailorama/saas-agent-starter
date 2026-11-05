@@ -1,0 +1,24 @@
+server {
+  listen 8080;
+  root /usr/share/nginx/html;
+  server_tokens off;
+
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ${S3_PUBLIC_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+  add_header X-Content-Type-Options nosniff always;
+  add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+  location /api/ {
+    # Re-resolve the api container (its IP changes when it is recreated).
+    resolver 127.0.0.11 valid=10s;
+    set $api_upstream http://api:3000;
+    proxy_pass $api_upstream;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location / {
+    try_files $uri /index.html;
+  }
+}

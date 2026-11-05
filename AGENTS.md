@@ -1,0 +1,138 @@
+# AGENTS.md
+
+Single source of rules for coding agents (Claude Code, Codex, others) and humans.
+`CLAUDE.md` only imports this file. Keep it accurate when you change the code.
+
+## Definition of done
+
+`pnpm check` is green. It runs, in order: Biome (format + lint), `tsc --noEmit`,
+TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
+pyright (strict), pytest, the license gate for all three ecosystems, and the Playwright smoke.
+It needs the local infra running (see Setup). Do not finish a task with it red, and do not
+"fix" it by skipping, deleting or weakening a test, lint rule or license entry.
+
+## Setup
+
+```sh
+docker compose up -d --wait postgres valkey s3 temporal-ui   # infra only
+pnpm i && pnpm db:migrate
+pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
+pnpm worker     # Python Temporal worker
+```
+
+Tools: Node 22.18+ (runs `.ts` directly), pnpm, Docker, uv, Rust (rustup) and
+`cargo install --locked cargo-deny`. Config comes from env: real env > `.env` (gitignored,
+overrides) > `.env.example` (local defaults, committed, example values only).
+
+## Architecture map
+
+```
+apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
+  src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
+  src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
+  src/routes/*.ts     one file per resource (Zod schemas + handlers)
+  src/temporal.ts     Temporal client + workflow contracts with the worker
+  src/s3.ts           S3 client, presigned upload/download URLs
+  src/telemetry.ts    OpenTelemetry (preloaded, env-toggled)
+  test/               integration tests against the real compose services
+apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwind
+  src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail
+  src/components/ui/  shadcn/ui components (copied source; edit freely)
+  e2e/                Playwright smoke
+packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
+services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
+crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
+infra/              Temporal setup, SeaweedFS (dev S3), OTel collector/Prometheus config
+scripts/            license-check.mjs (JS + Python + Rust + images)
+docs/adr/           why things are the way they are; docs/LICENSES.md for images
+```
+
+Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
+active org, role) -> handler -> `withTenant` (transaction with `app.org_id`, Postgres RLS,
+audit row) -> commit -> optional `startProjectCreated` (Temporal) -> Python worker
+activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping.
+
+## Component picks (one line each; details in docs/adr)
+
+- TypeScript + Fastify: mainstream, fast, first-class Zod/OpenAPI and security plugins.
+- Zod at every boundary (env, HTTP in/out); OpenAPI generated from the same schemas.
+- Postgres + Drizzle: SQL-first ORM with typed schema, migrations and RLS policy support.
+- Postgres RLS for tenancy: isolation holds even when application code forgets a filter.
+- Better Auth: auth as a library on our own tables (orgs, roles, sessions); Keycloak is the
+  heavier alternative when enterprises need a separate IdP.
+- Temporal: durable workflows with retries/timeouts, typed SDKs for TS and Python, Web UI.
+- Valkey (Redis-compatible, BSD-3): shared rate-limit store across API replicas.
+- S3 API via the AWS SDK: works with AWS, R2, MinIO, SeaweedFS (local dev uses SeaweedFS).
+- OpenTelemetry: one vendor-neutral standard for traces/metrics in TS, Python and Temporal.
+- React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
+- Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
+- Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
+
+## Where code goes (TS vs Python vs Rust)
+
+- HTTP API, auth, tenancy, web UI: TypeScript.
+- AI/LLM calls, data processing, long-running or retryable work: Python activities in
+  `services/worker-py`, orchestrated by Temporal workflows.
+- Rust only for a hot path you have measured in Python. It must keep a pure-Python twin and
+  a parity test (see `worker/text.py`, `tests/test_text.py`) and come with a benchmark.
+
+## Recipe: add a tenant resource (example: `projects`)
+
+1. Schema: add the table in `packages/db/src/schema.ts` with `orgId: orgId()` and
+   `tenantIsolation()` in the table extras. Run `pnpm db:generate`, review the SQL
+   (it must contain `ENABLE ROW LEVEL SECURITY` and `CREATE POLICY "tenant_isolation"`),
+   then `pnpm db:migrate`.
+2. RLS test: extend `packages/db/test/rls.test.ts` only if the table has special rules;
+   the generic policy is already proven there.
+3. Route: copy `apps/api/src/routes/projects.ts`. Every handler has
+   `preHandler: requireRole(...)` and does all DB work inside `withTenant(req, tx => ...)`.
+   Validate `params`/`body`/`response` with Zod. Register it in `src/app.ts`.
+4. Tests: add integration tests in `apps/api/test/` covering success, 400, 401/403 and
+   cross-tenant 404.
+5. Web: add a page in `apps/web/src/pages/`, a route in `src/main.tsx`, a nav link in
+   `pages/shell.tsx`. Use TanStack Query for data and shadcn/ui components.
+6. `pnpm check`.
+
+A Claude Code command with the same steps: `/add-resource <name>`.
+
+## Recipe: add a background workflow
+
+1. Python: in `services/worker-py/worker/`, add `@activity.defn` methods (idempotent:
+   check-then-write in one transaction, `set_config('app.org_id', ...)` before tenant
+   queries) and a `@workflow.defn(name="...")` class with explicit timeouts and a
+   `RetryPolicy`. Register both in `worker/__main__.py`.
+2. TS: add a typed starter next to `startProjectCreated` in `apps/api/src/temporal.ts`.
+   Use a deterministic workflow id derived from the entity id plus
+   `workflowIdReusePolicy: 'REJECT_DUPLICATE'` so retries never run it twice.
+   Start it after the DB transaction commits.
+3. Tests: a pytest in `tests/test_workflow.py` style (real Temporal, unique task queue)
+   that checks the end result and that a duplicate start is rejected.
+4. The argument dataclass in Python and the TS type are the contract; change both together.
+
+## Conventions
+
+- Small files, colocated by feature. No speculative abstractions or empty folders.
+- TypeScript strict, ESM, `.ts` import extensions on the server. Python 3.12, typed, strict
+  pyright. Rust edition 2024, clippy clean.
+- Errors: throw `httpError(status, msg)` in handlers; never leak internals in responses.
+- Logs are structured JSON (pino / Python logging). Log ids, not payloads.
+
+## Security rules
+
+- Tenant tables: always `orgId()` + `tenantIsolation()`, always accessed via `withTenant`
+  (API) or a transaction that sets `app.org_id` (worker). Never query them with the
+  migration/owner role. The API refuses to start if its DB role can bypass RLS.
+- Never log secrets, tokens, cookies or request bodies; the logger redacts common paths
+  and drops query strings.
+- Validate all input with Zod/dataclasses; never build SQL with string concatenation.
+- New dependencies must pass `pnpm check:licenses` (allowlist in `scripts/license-check.mjs` and
+  `deny.toml`). Never add an exception to make the gate pass; ask a human.
+- No real secrets, client names or private data in the repo, ever. Example values use
+  `example.com` and `local-dev-*`.
+
+## Never
+
+- Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`.
+- Commit `.env`, credentials, media/binary files, or generated `dist/`, `target/`, `.venv/`.
+- Add Next.js/Vercel-specific code, GPL/AGPL/SSPL/BSL code dependencies, or Redis (use Valkey).
+- Push to `main` without `pnpm check` green, or force-push.

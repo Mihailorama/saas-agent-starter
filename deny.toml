@@ -1,0 +1,29 @@
+# cargo-deny: same license allowlist as scripts/license-check.mjs, plus RustSec advisories.
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+allow = [
+  "MIT", "MIT-0", "ISC", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "Apache-2.0",
+  "Unlicense", "CC0-1.0", "BlueOak-1.0.0", "PostgreSQL", "Python-2.0",
+]
+unused-allowed-license = "allow"
+# Build-time-only crates pulled in by PyO3 (proc macros / build script). Neither is
+# compiled into the shipped wheel; both licenses are permissive. See docs/LICENSES.md.
+exceptions = [
+  { crate = "unicode-ident", allow = ["Unicode-3.0"] },
+  { crate = "target-lexicon", allow = ["Apache-2.0 WITH LLVM-exception"] },
+]
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

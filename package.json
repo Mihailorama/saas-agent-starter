@@ -1,0 +1,31 @@
+{
+  "name": "saas-agent-starter",
+  "private": true,
+  "license": "MIT-0",
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "worker": "cd services/worker-py && uv run python -m worker",
+    "bench": "cd services/worker-py && uv run python bench.py",
+    "db:generate": "pnpm --filter @app/db generate",
+    "db:migrate": "pnpm --filter @app/db migrate",
+    "format": "biome format --write . && cargo fmt --all && cd services/worker-py && uv run ruff format",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "e2e": "pnpm --filter web e2e",
+    "check:ts": "biome ci . && pnpm typecheck && pnpm test",
+    "check:rust": "cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test",
+    "check:py": "cd services/worker-py && uv sync --locked && uv run ruff format --check && uv run ruff check && pyright && uv run pytest -q",
+    "check:licenses": "node scripts/license-check.mjs",
+    "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm e2e"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.5",
+    "pyright": "1.1.414",
+    "typescript": "5.9.3"
+  }
+}

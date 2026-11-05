@@ -1,0 +1,24 @@
+{
+  "name": "@app/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "node --env-file=../../.env.example --env-file-if-exists=../../.env src/migrate.ts",
+    "typecheck": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.15.6",
+    "drizzle-kit": "^0.31.11",
+    "vitest": "^4.1.12"
+  }
+}

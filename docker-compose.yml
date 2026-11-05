@@ -1,0 +1,160 @@
+# Local stack. Infra only:   docker compose up -d --wait postgres valkey s3 temporal-ui
+# Everything:                docker compose up -d --build
+# With tracing/metrics:      docker compose --profile observability up -d
+# Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
+
+x-app-env: &app-env
+  NODE_ENV: ${NODE_ENV:-development}
+  DATABASE_URL: postgres://app_user:app_user_password@postgres:5432/app
+  MIGRATION_DATABASE_URL: postgres://postgres:postgres@postgres:5432/app
+  VALKEY_URL: redis://valkey:6379
+  TEMPORAL_ADDRESS: temporal:7233
+  S3_ENDPOINT: http://s3:8333
+  S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT:-8333}
+  S3_ACCESS_KEY_ID: local-dev-access-key
+  S3_SECRET_ACCESS_KEY: local-dev-secret-key
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 2s
+      retries: 30
+
+  # Redis-compatible (Valkey): rate-limit store.
+  valkey:
+    image: valkey/valkey:9-alpine
+    ports: ["127.0.0.1:${VALKEY_PORT:-6379}:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      retries: 30
+
+  # S3-compatible object storage for local dev (SeaweedFS). Production: any S3 via env.
+  s3:
+    image: chrislusf/seaweedfs:4.52
+    command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0
+    ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
+    volumes:
+      - s3data:/data
+      - ./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz >/dev/null"]
+      interval: 2s
+      retries: 30
+
+  # Temporal, per temporalio/samples-server compose (postgres variant), on our Postgres server.
+  temporal-setup:
+    image: temporalio/admin-tools:1.32.0
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { POSTGRES_SEEDS: postgres, POSTGRES_USER: postgres, SQL_PASSWORD: postgres }
+    volumes: ["./infra/temporal/setup-postgres.sh:/setup.sh:ro"]
+    entrypoint: ["/bin/sh", "/setup.sh"]
+
+  temporal:
+    image: temporalio/server:1.32.0
+    depends_on: { temporal-setup: { condition: service_completed_successfully } }
+    environment:
+      PROMETHEUS_ENDPOINT: 0.0.0.0:8000 # scraped by the observability profile
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: postgres
+      POSTGRES_SEEDS: postgres
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    volumes:
+      [
+        "./infra/temporal/dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/development-sql.yaml:ro",
+      ]
+    ports: ["127.0.0.1:${TEMPORAL_PORT:-7233}:7233"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 3s
+      start_period: 30s
+      retries: 60
+
+  temporal-namespace:
+    image: temporalio/admin-tools:1.32.0
+    depends_on: { temporal: { condition: service_healthy } }
+    restart: on-failure:10
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        temporal operator cluster health --address temporal:7233 &&
+        (temporal operator namespace describe -n default --address temporal:7233 ||
+         temporal operator namespace create -n default --address temporal:7233)
+
+  temporal-ui:
+    image: temporalio/ui:2.54.1
+    depends_on: { temporal-namespace: { condition: service_completed_successfully } }
+    environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_UI_PORT: "8233" }
+    ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8233"]
+
+  migrate:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: ["node", "packages/db/src/migrate.ts"]
+    environment: *app-env
+    depends_on: { postgres: { condition: service_healthy } }
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    environment:
+      <<: *app-env
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me-local-dev-secret-at-least-32-chars}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:${WEB_PORT:-8080}}
+      TRUST_PROXY: "true"
+      # With --profile observability: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      valkey: { condition: service_healthy }
+      s3: { condition: service_healthy }
+      temporal-namespace: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:${API_PORT:-3000}:3000"]
+
+  worker:
+    build: { context: ., dockerfile: services/worker-py/Dockerfile }
+    environment:
+      <<: *app-env
+      # With --profile observability: http://otel-collector:4317 (gRPC)
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      temporal-namespace: { condition: service_completed_successfully }
+
+  web:
+    build: { context: ., dockerfile: apps/web/Dockerfile }
+    environment: { S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}" }
+    depends_on: [api]
+    ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
+
+  otel-collector:
+    profiles: [observability]
+    image: otel/opentelemetry-collector:0.164.0
+    command: ["--config=/etc/otel/collector.yaml"]
+    volumes: ["./infra/otel/collector.yaml:/etc/otel/collector.yaml:ro"]
+    ports: ["127.0.0.1:4317:4317", "127.0.0.1:4318:4318"]
+
+  jaeger:
+    profiles: [observability]
+    image: jaegertracing/jaeger:2.23.0
+    ports: ["127.0.0.1:16686:16686"]
+
+  prometheus:
+    profiles: [observability]
+    image: prom/prometheus:v3.15.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-otlp-receiver"]
+    volumes: ["./infra/otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["127.0.0.1:9090:9090"]
+
+volumes:
+  pgdata:
+  s3data:

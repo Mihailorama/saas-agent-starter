@@ -1,0 +1,9 @@
+# Accepted findings. Each entry needs a reason and an expiry; re-check when it expires.
+
+[[IgnoredVulns]]
+id = "GHSA-8988-4f7v-96qf"
+ignoreUntil = 2027-02-01
+reason = """@opentelemetry/core 1.x is pulled in by @temporalio/interceptors-opentelemetry for its \
+workflow-sandbox span exporter only; the API imports the client interceptor, which never loads it. \
+Global propagators come from @opentelemetry/sdk-node (core 2.x, fixed). Drop when Temporal's \
+package moves to OpenTelemetry 2.x."""

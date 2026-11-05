@@ -1,0 +1,49 @@
+[project]
+name = "worker"
+version = "0.1.0"
+description = "Temporal worker for AI/data processing. Rust hot paths via saas-core."
+requires-python = ">=3.12"
+license = "MIT-0"
+dependencies = [
+  "asyncpg>=0.32",
+  "opentelemetry-exporter-otlp-proto-grpc>=1.45",
+  "opentelemetry-sdk>=1.45",
+  "saas-core",
+  "temporalio>=1.35",
+]
+
+[dependency-groups]
+dev = [
+  "asyncpg-stubs>=0.32",
+  "pip-licenses>=5.5",
+  "pytest>=9.2",
+  "pytest-asyncio>=1.4",
+  "ruff>=0.17",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+saas-core = { path = "../../crates/core" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "S", "SIM", "RUF"]
+ignore = ["S101"] # assert is how pytest works
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+include = ["worker", "tests", "bench.py"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+pythonpath = ["."]

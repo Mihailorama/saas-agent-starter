@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pnpm check)",
+      "Bash(pnpm check:*)",
+      "Bash(pnpm test)",
+      "Bash(pnpm typecheck)",
+      "Bash(pnpm check:licenses)",
+      "Bash(pnpm e2e)",
+      "Bash(pnpm format)",
+      "Bash(pnpm db:generate)",
+      "Bash(pnpm db:migrate)",
+      "Bash(pnpm bench)",
+      "Bash(pnpm --filter *)",
+      "Bash(pnpm exec biome *)",
+      "Bash(pnpm exec vitest *)",
+      "Bash(pnpm exec playwright test *)",
+      "Bash(docker compose ps)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose up -d --wait *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "Bash(cargo deny check *)",
+      "Bash(uv sync *)",
+      "Bash(uv run ruff *)",
+      "Bash(uv run pytest *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*.local)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(docker compose down -v *)",
+      "Bash(rm -rf *)"
+    ]
+  }
+}

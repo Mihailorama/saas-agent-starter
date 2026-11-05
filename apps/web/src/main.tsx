@@ -1,0 +1,78 @@
+import './index.css';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+  redirect,
+} from '@tanstack/react-router';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Toaster } from '@/components/ui/sonner';
+import { authClient } from '@/lib/auth';
+import { ProjectPage } from '@/pages/project';
+import { ProjectsPage } from '@/pages/projects';
+import { Shell } from '@/pages/shell';
+import { SignInPage } from '@/pages/sign-in';
+
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
+
+const rootRoute = createRootRoute({
+  component: () => (
+    <>
+      <Outlet />
+      <Toaster richColors closeButton />
+    </>
+  ),
+});
+
+const signInRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sign-in',
+  component: SignInPage,
+});
+
+const appRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: 'app',
+  component: Shell,
+  beforeLoad: async () => {
+    const { data } = await authClient.getSession();
+    if (!data) throw redirect({ to: '/sign-in' });
+  },
+});
+
+const projectsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/',
+  component: ProjectsPage,
+});
+
+const projectRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/projects/$projectId',
+  component: ProjectPage,
+});
+
+const router = createRouter({
+  routeTree: rootRoute.addChildren([
+    signInRoute,
+    appRoute.addChildren([projectsRoute, projectRoute]),
+  ]),
+});
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
+  }
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  </StrictMode>,
+);

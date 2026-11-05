@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "saas-core"
+version = "0.1.0"
+description = "Rust hot paths for the Python worker (PyO3)."
+requires-python = ">=3.12"
+license = "MIT-0"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+
+[tool.uv]
+# Rebuild the extension when Rust sources change.
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "src/**/*.rs" }]
