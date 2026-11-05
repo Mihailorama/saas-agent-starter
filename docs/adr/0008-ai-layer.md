@@ -77,8 +77,9 @@ from its docs and repository, checked 2026-11-05:
   ([architecture](https://langfuse.com/self-hosting),
   [cache](https://langfuse.com/self-hosting/deployment/infrastructure/cache),
   [Docker Compose](https://langfuse.com/self-hosting/deployment/docker-compose)).
-  Its reference compose file uses Redis and MinIO; under this repo's policy swap in Valkey and
-  an S3 store that is not AGPL (e.g. SeaweedFS, AWS S3, R2).
+  Its reference compose file uses Redis and MinIO. Redis works as is (this repo runs it too);
+  MinIO no longer publishes community images (see docs/LICENSES.md), so point Langfuse at
+  SeaweedFS, AWS S3 or R2.
 - **Ingestion**: OTLP over HTTP (JSON or protobuf) at `/api/public/otel`; gRPC is not
   supported. Auth is HTTP Basic with the project's public/secret key pair
   ([OpenTelemetry docs](https://langfuse.com/integrations/native/opentelemetry)). It maps

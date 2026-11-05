@@ -40,8 +40,8 @@ export async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
   app.decorateRequest('tenant');
 
-  // Redis-compatible (Valkey) store: limits hold across API replicas.
-  const redis = new Redis(env.VALKEY_URL, { maxRetriesPerRequest: 1 });
+  // Redis store: limits hold across API replicas.
+  const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 1 });
   app.addHook('onClose', async () => {
     await redis.quit();
   });

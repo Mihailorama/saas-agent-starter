@@ -40,8 +40,11 @@ copyleft license, including the file-level MPL-2.0, which kept Tailwind on v3 an
   - Rust `unicode-ident` (`Unicode-3.0`) and `target-lexicon` (`Apache-2.0 WITH LLVM-exception`)
     are build-time-only crates of PyO3 (proc macros / build script), not compiled into the wheel.
     Both are permissive.
-- Infrastructure runs as separate, unmodified containers. Their licenses are listed in
-  `docs/LICENSES.md`; all are permissive. Grafana (AGPL) is mentioned as optional, not shipped.
+- The allowlist applies only to code dependencies. Infrastructure runs as separate containers,
+  run unmodified and not distributed with the app, so their license may be anything, AGPL and
+  source-available included (owner decision, 2026-11-05); prefer mainstream tools. Each image
+  must be listed in `docs/LICENSES.md` with its license; the gate fails only on an undocumented
+  image, never on an image's license.
 
 ## Consequences
 

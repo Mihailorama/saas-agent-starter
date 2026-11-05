@@ -14,7 +14,7 @@ It needs the local infra running (see Setup). Do not finish a task with it red, 
 ## Setup
 
 ```sh
-docker compose up -d --wait postgres valkey s3 temporal-ui   # infra only
+docker compose up -d --wait postgres redis s3 temporal-ui   # infra only
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
 pnpm worker     # Python Temporal worker
@@ -66,7 +66,7 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Better Auth: auth as a library on our own tables (orgs, roles, sessions); Keycloak is the
   heavier alternative when enterprises need a separate IdP.
 - Temporal: durable workflows with retries/timeouts, typed SDKs for TS and Python, Web UI.
-- Valkey (Redis-compatible, BSD-3): shared rate-limit store across API replicas.
+- Redis (official image, via ioredis): shared rate-limit store across API replicas.
 - S3 API via the AWS SDK: works with AWS, R2, MinIO, SeaweedFS (local dev uses SeaweedFS).
 - OpenTelemetry: one vendor-neutral standard for traces/metrics in TS, Python and Temporal.
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
@@ -161,7 +161,8 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 - New dependencies must pass `pnpm check:licenses` (allowlist in `scripts/license-check.mjs` and
   `deny.toml`): permissive licenses plus MPL-2.0 (file-level copyleft, no obligations on our
   code while unmodified). GPL/LGPL/AGPL/EUPL/SSPL/BUSL and other copyleft or source-available
-  licenses stay banned. Never add an exception to make the gate pass; ask a human
+  licenses stay banned for code dependencies (infrastructure containers are separate, see
+  docs/LICENSES.md). Never add an exception to make the gate pass; ask a human
   (docs/adr/0005-license-policy.md).
 - We never modify dependency files: no `pnpm patch`/`patch-package`, no edits in
   `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
@@ -173,7 +174,7 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 
 - Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`.
 - Commit `.env`, credentials, media/binary files, or generated `dist/`, `target/`, `.venv/`.
-- Add Next.js/Vercel-specific code, GPL/LGPL/AGPL/SSPL/BSL code dependencies, or Redis
-  (use Valkey).
+- Add Next.js/Vercel-specific code, or GPL/LGPL/AGPL/SSPL/BSL code dependencies (infra
+  containers run unmodified are exempt, see docs/LICENSES.md).
 - Patch, fork-in-place or edit a dependency's files (fixes go upstream).
 - Push to `main` without `pnpm check` green, or force-push.

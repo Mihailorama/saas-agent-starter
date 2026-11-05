@@ -13,7 +13,7 @@ security problems. We aim to acknowledge reports within a few days.
 - Sessions in HttpOnly, SameSite=Lax cookies (Secure in production), Origin checks on
   unsafe requests, CORS allowlist from env.
 - Helmet security headers (CSP, HSTS) on the API; CSP and HSTS on the web container.
-- Rate limits on sign-in/sign-up (Valkey-backed, shared across replicas).
+- Rate limits on sign-in/sign-up (Redis-backed, shared across replicas).
 - Zod validation of env and every request/response; generic error bodies.
 - Structured logs with redaction; query strings and headers are never logged.
 - Audit log row for every mutating tenant request, in the same transaction.

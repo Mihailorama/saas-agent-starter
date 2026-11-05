@@ -1,4 +1,4 @@
-# Local stack. Infra only:   docker compose up -d --wait postgres valkey s3 temporal-ui
+# Local stack. Infra only:   docker compose up -d --wait postgres redis s3 temporal-ui
 # Everything:                docker compose up -d --build
 # With tracing/metrics:      docker compose --profile observability up -d
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
@@ -7,7 +7,7 @@ x-app-env: &app-env
   NODE_ENV: ${NODE_ENV:-development}
   DATABASE_URL: postgres://app_user:app_user_password@postgres:5432/app
   MIGRATION_DATABASE_URL: postgres://postgres:postgres@postgres:5432/app
-  VALKEY_URL: redis://valkey:6379
+  REDIS_URL: redis://redis:6379
   TEMPORAL_ADDRESS: temporal:7233
   S3_ENDPOINT: http://s3:8333
   S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT:-8333}
@@ -28,12 +28,12 @@ services:
       interval: 2s
       retries: 30
 
-  # Redis-compatible (Valkey): rate-limit store.
-  valkey:
-    image: valkey/valkey:9-alpine
-    ports: ["127.0.0.1:${VALKEY_PORT:-6379}:6379"]
+  # Redis: rate-limit store.
+  redis:
+    image: redis:8-alpine
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       retries: 30
 
@@ -115,7 +115,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
     depends_on:
       migrate: { condition: service_completed_successfully }
-      valkey: { condition: service_healthy }
+      redis: { condition: service_healthy }
       s3: { condition: service_healthy }
       temporal-namespace: { condition: service_completed_successfully }
     ports: ["127.0.0.1:${API_PORT:-3000}:3000"]
