@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { attachments, projects } from '@app/db';
 import { and, desc, eq } from 'drizzle-orm';
+import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { presignDownload, presignUpload } from '../s3.ts';
@@ -10,10 +11,20 @@ import { httpError, requireRole, withTenant } from '../tenant.ts';
 const Project = z.object({
   id: z.uuid(),
   name: z.string(),
+  description: z.string().nullable(),
   fingerprint: z.string().nullable(),
+  aiSummary: z.string().nullable(),
+  aiStatus: z.enum(['generated', 'confirmed', 'corrected']).nullable(),
+  aiCallId: z.uuid().nullable(),
+  reviewedBy: z.string().nullable(),
+  reviewedAt: z.string().nullable(),
   createdAt: z.string(),
 });
-const ProjectInput = z.object({ name: z.string().trim().min(1).max(200) });
+const ProjectInput = z.object({
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000).optional(),
+});
+const SummaryCorrection = z.object({ summary: z.string().trim().min(1).max(1000) });
 const Attachment = z.object({
   id: z.uuid(),
   filename: z.string(),
@@ -37,7 +48,8 @@ const toDto = <T extends { createdAt: Date }>({ createdAt, ...rest }: T) => ({
   ...rest,
   createdAt: createdAt.toISOString(),
 });
-const projectDto = ({ orgId: _, ...p }: typeof projects.$inferSelect) => toDto(p);
+const projectDto = ({ orgId: _, reviewedAt, ...p }: typeof projects.$inferSelect) =>
+  toDto({ ...p, reviewedAt: reviewedAt?.toISOString() ?? null });
 const attachmentDto = ({ orgId: _, projectId: __, ...a }: typeof attachments.$inferSelect) =>
   toDto(a);
 const objectKey = (a: { orgId: string; projectId: string; id: string }) =>
@@ -62,7 +74,11 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
         async (tx) => {
           const [row] = await tx
             .insert(projects)
-            .values({ orgId: req.tenant.orgId, name: req.body.name })
+            .values({
+              orgId: req.tenant.orgId,
+              name: req.body.name,
+              description: req.body.description || null,
+            })
             .returning();
           return row!;
         },
@@ -74,6 +90,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
         orgId: project.orgId,
         projectId: project.id,
         name: project.name,
+        actorId: req.tenant.userId,
       }).catch((err) => req.log.error({ err }, 'failed to start ProjectCreatedWorkflow'));
       return reply.code(201).send(projectDto(project));
     },
@@ -97,12 +114,53 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
       withTenant(req, async (tx) => {
         const [row] = await tx
           .update(projects)
-          .set({ name: req.body.name })
+          .set({
+            name: req.body.name,
+            ...(req.body.description !== undefined && {
+              description: req.body.description || null,
+            }),
+          })
           .where(eq(projects.id, req.params.id))
           .returning();
         if (!row) throw httpError(404, 'not found');
         return projectDto(row);
       }),
+  );
+
+  // Human oversight of the AI summary: confirm it as is, or replace it with a correction.
+  // The original model output stays in ai_calls + S3; both actions are audit-logged.
+  const reviewSummary = (req: FastifyRequest, id: string, summary?: string) =>
+    withTenant(req, async (tx) => {
+      const [current] = await tx
+        .select({ aiSummary: projects.aiSummary })
+        .from(projects)
+        .where(eq(projects.id, id));
+      if (!current) throw httpError(404, 'not found');
+      if (current.aiSummary === null) throw httpError(409, 'no AI summary to review');
+      const [row] = await tx
+        .update(projects)
+        .set({
+          aiStatus: summary === undefined ? 'confirmed' : 'corrected',
+          reviewedBy: req.tenant.userId,
+          reviewedAt: new Date(),
+          ...(summary !== undefined && { aiSummary: summary }),
+        })
+        .where(eq(projects.id, id))
+        .returning();
+      return projectDto(row!);
+    });
+  const reviewResponses = { 200: Project, 404: ErrorBody, 409: ErrorBody };
+
+  app.post(
+    '/:id/ai-summary/confirm',
+    { ...member, schema: { tags, params: Id, response: reviewResponses } },
+    async (req) => reviewSummary(req, req.params.id),
+  );
+
+  app.post(
+    '/:id/ai-summary/correct',
+    { ...member, schema: { tags, params: Id, body: SummaryCorrection, response: reviewResponses } },
+    async (req) => reviewSummary(req, req.params.id, req.body.summary),
   );
 
   app.delete(

@@ -61,7 +61,8 @@ function NewProjectDialog({
 }) {
   const queryClient = useQueryClient();
   const create = useMutation({
-    mutationFn: (name: string) => api<Project>('/api/projects', { method: 'POST', json: { name } }),
+    mutationFn: (json: { name: string; description: string }) =>
+      api<Project>('/api/projects', { method: 'POST', json }),
     onSuccess: (project) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast.success(`Created ${project.name}`);
@@ -72,7 +73,11 @@ function NewProjectDialog({
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    create.mutate(String(new FormData(e.currentTarget).get('name')));
+    const form = new FormData(e.currentTarget);
+    create.mutate({
+      name: String(form.get('name')),
+      description: String(form.get('description') ?? ''),
+    });
   }
 
   return (
@@ -88,6 +93,19 @@ function NewProjectDialog({
           <div className="space-y-2">
             <Label htmlFor="project-name">Name</Label>
             <Input id="project-name" name="name" maxLength={200} required autoFocus />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="project-description">Description (optional)</Label>
+            <textarea
+              id="project-description"
+              name="description"
+              maxLength={2000}
+              rows={3}
+              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            <p className="text-xs text-muted-foreground">
+              If AI is enabled, a model summarizes it; you can confirm or correct the summary.
+            </p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

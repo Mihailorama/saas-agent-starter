@@ -1,0 +1,27 @@
+{
+  "$comment": "Models the AI gateway (services/worker-py/worker/ai.py) may call, per contour (AI_CONTOUR) and purpose. Anything not listed is refused. Prices are per 1,000 tokens, used to compute ai_calls.cost; null means unknown (cost stays null). Anthropic prices: list prices for the first-party API as of 2026-10-06 (Haiku 5.5: prompts up to 100K tokens) - verify against the provider's price page before relying on them. The ru entry is a placeholder for a self-hosted or in-country OpenAI-compatible endpoint (OPENAI_BASE_URL): replace the model id with the one your endpoint serves.",
+  "contours": {
+    "eu": [
+      {
+        "provider": "anthropic",
+        "model": "claude-haiku-5-5",
+        "purposes": ["project.summary"],
+        "pricePer1kTokens": { "input": 0.0001, "output": 0.0005, "currency": "USD" }
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5-5",
+        "purposes": ["project.summary"],
+        "pricePer1kTokens": { "input": 0.002, "output": 0.01, "currency": "USD" }
+      }
+    ],
+    "ru": [
+      {
+        "provider": "openai_compatible",
+        "model": "example-self-hosted-model",
+        "purposes": ["project.summary"],
+        "pricePer1kTokens": null
+      }
+    ]
+  }
+}

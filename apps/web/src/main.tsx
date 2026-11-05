@@ -12,6 +12,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from '@/components/ui/sonner';
 import { authClient } from '@/lib/auth';
+import { AiCallsPage } from '@/pages/ai-calls';
+import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { Shell } from '@/pages/shell';
@@ -32,6 +34,13 @@ const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sign-in',
   component: SignInPage,
+});
+
+// Public: affected people must be able to read it without an account.
+const aiTransparencyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/ai-transparency',
+  component: AiTransparencyPage,
 });
 
 const appRoute = createRoute({
@@ -56,10 +65,17 @@ const projectRoute = createRoute({
   component: ProjectPage,
 });
 
+const aiCallsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/ai-calls',
+  component: AiCallsPage,
+});
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
-    appRoute.addChildren([projectsRoute, projectRoute]),
+    aiTransparencyRoute,
+    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute]),
   ]),
 });
 

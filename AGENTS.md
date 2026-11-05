@@ -30,7 +30,7 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
-  src/routes/*.ts     one file per resource (Zod schemas + handlers)
+  src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/s3.ts           S3 client, presigned upload/download URLs
   src/telemetry.ts    OpenTelemetry (preloaded, env-toggled)
@@ -41,10 +41,15 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   e2e/                Playwright smoke
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
+  worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
+  worker/s3.py        minimal SigV4 S3 client (AI request/response content)
+config/             ai-models.json (allowed models per contour/purpose, prices),
+                    ai-transparency.json (public /ai-transparency page)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector/Prometheus config
 scripts/            license-check.mjs (JS + Python + Rust + images)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
+docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
@@ -109,6 +114,24 @@ A Claude Code command with the same steps: `/add-resource <name>`.
    that checks the end result and that a duplicate start is rejected.
 4. The argument dataclass in Python and the TS type are the contract; change both together.
 
+## Recipe: add an AI purpose (example: `project.summary`)
+
+1. Registry: add the purpose to the allowed models in `config/ai-models.json` for every
+   contour that should offer it (with `pricePer1kTokens`, or `null` if unknown). Add a `uses`
+   entry with the same `purpose` to `config/ai-transparency.json`.
+2. Activity: in `services/worker-py/worker/activities.py`, call `self.ai.call_llm(...)` with
+   the purpose, an explicit `model` and `provider` (from a per-purpose env setting such as
+   `AI_PROJECT_SUMMARY_MODEL`; unset = feature off, never a fallback), the org and actor ids,
+   a prompt template id + version (bump the version whenever the prompt text changes) and
+   `max_tokens`. Read user content from the DB inside the activity; pass ids, not content,
+   through workflow arguments.
+3. Oversight: if the output is stored and shown, store it with `ai_status='generated'` and
+   `ai_call_id`, add confirm/correct endpoints like `projects.ts` and show `<AiBadge>` in the
+   web next to it.
+4. Tests: a pytest with a fake provider (see `tests/test_ai.py`) that checks the stored result
+   and the `ai_calls` row; API tests for the review endpoints.
+5. Write the AI system card (template in `docs/ai-act.md`). `pnpm check`.
+
 ## Conventions
 
 - Small files, colocated by feature. No speculative abstractions or empty folders.
@@ -116,6 +139,16 @@ A Claude Code command with the same steps: `/add-resource <name>`.
   pyright. Rust edition 2024, clippy clean.
 - Errors: throw `httpError(status, msg)` in handlers; never leak internals in responses.
 - Logs are structured JSON (pino / Python logging). Log ids, not payloads.
+
+## AI rules
+
+- All LLM calls go through `Gateway.call_llm` (`services/worker-py/worker/ai.py`). Never call
+  a provider SDK or HTTP API directly, and never call an LLM from the TypeScript API or web.
+- The model is always explicit: no default model in code, config or function signatures. A
+  model that is not in `config/ai-models.json` for the current `AI_CONTOUR` is refused.
+- Never put prompt or completion content in logs, span attributes, exceptions, audit rows or
+  Temporal workflow arguments. It lives only in the `ai_calls` S3 objects.
+- `ai_calls` is append-only: never grant UPDATE/DELETE on it or "fix" rows; record a new event.
 
 ## Security rules
 

@@ -1,4 +1,37 @@
-export type Project = { id: string; name: string; fingerprint: string | null; createdAt: string };
+export type AiStatus = 'generated' | 'confirmed' | 'corrected';
+export type Project = {
+  id: string;
+  name: string;
+  description: string | null;
+  fingerprint: string | null;
+  aiSummary: string | null;
+  aiStatus: AiStatus | null;
+  aiCallId: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+};
+export type AiCall = {
+  id: string;
+  actorId: string | null;
+  purpose: string;
+  provider: string;
+  requestModel: string;
+  responseModel: string | null;
+  promptTemplateId: string;
+  promptTemplateVersion: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  cost: number | null;
+  costCurrency: string | null;
+  latencyMs: number;
+  status: 'ok' | 'error';
+  errorClass: string | null;
+  traceId: string | null;
+  contour: string;
+  createdAt: string;
+};
 export type Attachment = {
   id: string;
   filename: string;

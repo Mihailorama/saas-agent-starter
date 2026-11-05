@@ -126,6 +126,12 @@ services:
       <<: *app-env
       # With --profile observability: http://otel-collector:4317 (gRPC)
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
+      AI_CONTOUR: ${AI_CONTOUR:-eu}
+      AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
+      AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }

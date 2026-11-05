@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createDb, organization, projects, withOrg } from '../src/index.ts';
+import { aiCalls, createDb, organization, projects, withOrg } from '../src/index.ts';
 
 // Connects as the restricted app role, exactly like the API.
 const { db, pool } = createDb(process.env.DATABASE_URL!);
@@ -49,5 +49,45 @@ describe('row-level security', () => {
 
     // No tenant context at all -> no rows.
     expect(await db.select().from(projects)).toEqual([]);
+  });
+});
+
+describe('ai_calls', () => {
+  const row = (orgId: string) => ({
+    orgId,
+    purpose: 'test',
+    provider: 'fake',
+    requestModel: 'fake-model',
+    promptTemplateId: 'test',
+    promptTemplateVersion: '1',
+    requestKey: `${orgId}/req.json`,
+    contentExpiresAt: new Date(),
+    latencyMs: 1,
+    status: 'ok' as const,
+    contour: 'eu',
+  });
+
+  it('is tenant-isolated and append-only for the app role', async () => {
+    const a = await newOrg();
+    const b = await newOrg();
+    const [call] = await withOrg(db, a, (tx) => tx.insert(aiCalls).values(row(a)).returning());
+    await withOrg(db, b, (tx) => tx.insert(aiCalls).values(row(b)));
+
+    const seenByA = await withOrg(db, a, (tx) => tx.select().from(aiCalls));
+    expect(seenByA.map((c) => c.id)).toEqual([call!.id]);
+    expect(await db.select().from(aiCalls)).toEqual([]);
+    await expect(withOrg(db, a, (tx) => tx.insert(aiCalls).values(row(b)))).rejects.toMatchObject({
+      cause: { message: expect.stringMatching(/row-level security/) },
+    });
+
+    // No UPDATE/DELETE grant at all, even on the tenant's own rows.
+    await expect(
+      withOrg(db, a, (tx) =>
+        tx.update(aiCalls).set({ status: 'error' }).where(eq(aiCalls.id, call!.id)),
+      ),
+    ).rejects.toMatchObject({ cause: { message: expect.stringMatching(/permission denied/) } });
+    await expect(
+      withOrg(db, a, (tx) => tx.delete(aiCalls).where(eq(aiCalls.id, call!.id))),
+    ).rejects.toMatchObject({ cause: { message: expect.stringMatching(/permission denied/) } });
   });
 });
