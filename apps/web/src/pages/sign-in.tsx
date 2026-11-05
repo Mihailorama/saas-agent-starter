@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
@@ -6,12 +7,27 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { api } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
 export function SignInPage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [pending, setPending] = useState(false);
+  const { data: config } = useQuery({
+    queryKey: ['auth-config'],
+    queryFn: () => api<{ sso: boolean }>('/api/auth-config'),
+  });
+
+  async function onSso() {
+    setPending(true);
+    // Redirects to the IdP; Better Auth handles /api/auth/callback/oidc and returns to '/'.
+    const { error } = await authClient.signIn.social({ provider: 'oidc', callbackURL: '/' });
+    if (error) {
+      setPending(false);
+      toast.error(error.message ?? 'Single sign-on failed');
+    }
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -74,6 +90,17 @@ export function SignInPage() {
                 {signUp ? 'Create account' : 'Sign in'}
               </Button>
             </form>
+            {config?.sso && !signUp && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 w-full"
+                disabled={pending}
+                onClick={onSso}
+              >
+                Sign in with SSO
+              </Button>
+            )}
             <p className="mt-4 text-center text-sm text-muted-foreground">
               {signUp ? 'Already have an account?' : 'New here?'}{' '}
               <button

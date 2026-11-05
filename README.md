@@ -72,13 +72,44 @@ AI-generated summary that members can confirm or correct; admins see every call 
 
 ## SSO
 
-- **OIDC** (Okta, Entra ID, Google Workspace, Keycloak...): set `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
-  `OIDC_CLIENT_SECRET`; the API enables Better Auth's generic OAuth plugin with provider id
-  `oidc` (`authClient.signIn.oauth2({ providerId: 'oidc' })` on the client).
+- **OIDC** (any provider: Authentik, Okta, Entra ID, Google Workspace, Keycloak...): set
+  `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and restart the API. The sign-in page
+  then shows "Sign in with SSO" (Better Auth's generic OAuth plugin, provider id `oidc`,
+  authorization code + PKCE S256; on the client: `authClient.signIn.social({ provider: 'oidc' })`).
+  Register this redirect URI at the IdP: `${BETTER_AUTH_URL}/api/auth/callback/oidc`.
+  First SSO login creates the user; they then create or are invited to an organization like any
+  other user. Accounts are not auto-linked to an existing email/password user unless the IdP
+  sends `email_verified: true`.
 - **SAML** or per-organization IdPs: add Better Auth's `@better-auth/sso` plugin to
   `apps/api/src/auth.ts`, regenerate the auth schema and run `pnpm db:generate`.
 - Need a standalone IdP instead (user federation, admin console)? Run Keycloak and connect it
   over OIDC as above. See `docs/adr/0003-auth.md`.
+
+<details>
+<summary>Example: Authentik (tested with 2026.8)</summary>
+
+In Authentik, create an **OAuth2/OpenID Provider**:
+
+- Client type: Confidential. Authorization flow: `default-provider-authorization-implicit-consent`
+  (or explicit consent). Invalidation flow: `default-provider-invalidation-flow`.
+- Grant types: **authorization_code** (and refresh_token). Recent Authentik versions reject the
+  authorize request with `invalid_request` when this list is empty, which is the default for
+  providers created through the API.
+- Redirect URI (strict): `https://app.example.com/api/auth/callback/oidc`
+  (locally `http://localhost:5173/api/auth/callback/oidc`).
+- Scopes: the default `openid`, `email`, `profile` mappings. Signing key: any key pair
+  (RS256 ID tokens).
+
+Then create an **Application** bound to that provider (slug e.g. `my-app`), and optionally bind
+a group to it to restrict who can sign in. App env:
+
+```sh
+OIDC_ISSUER=https://auth.example.com/application/o/my-app/   # trailing slash is fine
+OIDC_CLIENT_ID=<provider client id>
+OIDC_CLIENT_SECRET=<provider client secret>
+```
+
+</details>
 
 ## Layout and decisions
 

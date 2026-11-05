@@ -6,6 +6,7 @@ import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 
 // Optional SSO: set OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET to enable "Sign in with SSO".
+// Callback (register it at the IdP): ${BETTER_AUTH_URL}/api/auth/callback/oidc. PKCE is on.
 const oidc =
   env.OIDC_ISSUER && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET
     ? [
@@ -15,13 +16,15 @@ const oidc =
               providerId: 'oidc',
               clientId: env.OIDC_CLIENT_ID,
               clientSecret: env.OIDC_CLIENT_SECRET,
-              discoveryUrl: `${env.OIDC_ISSUER}/.well-known/openid-configuration`,
+              // Issuers often end with '/' (Authentik, Keycloak realms do not): avoid '//.well-known'.
+              discoveryUrl: `${env.OIDC_ISSUER.replace(/\/+$/, '')}/.well-known/openid-configuration`,
               scopes: ['openid', 'email', 'profile'],
             },
           ],
         }),
       ]
     : [];
+export const ssoEnabled = oidc.length > 0;
 
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,

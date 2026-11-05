@@ -13,7 +13,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { Redis } from 'ioredis';
-import { auth } from './auth.ts';
+import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
@@ -102,6 +102,8 @@ export async function buildApp() {
       config: { rateLimit: { max, timeWindow: '1 minute' } },
       handler: authHandler,
     });
+  // Public: tells the sign-in page whether to offer "Sign in with SSO".
+  app.get('/api/auth-config', { schema: { hide: true } }, async () => ({ sso: ssoEnabled }));
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
