@@ -72,6 +72,8 @@ describe('platform', () => {
     expect((await app.inject('/readyz')).statusCode).toBe(200);
     const spec = (await app.inject('/openapi.json')).json();
     expect(Object.keys(spec.paths)).toContain('/api/projects/');
+    // SSO is off unless OIDC_* is set (tests run without it).
+    expect((await app.inject('/api/auth-config')).json()).toEqual({ sso: false });
   });
 
   it('rejects anonymous and cross-origin requests', async () => {
