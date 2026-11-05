@@ -101,7 +101,7 @@ function OrgSwitcher() {
             <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
               <Building2 className="size-4" />
             </span>
-            <span className="flex-1 truncate text-left text-sm font-medium">
+            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium">
               {active?.name ?? 'Select organization'}
             </span>
             <ChevronsUpDown className="size-4 text-muted-foreground" />
@@ -176,7 +176,7 @@ function UserMenu() {
 
 const navLink =
   'flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
-const navActive = 'bg-accent font-medium !text-foreground';
+const navActive = 'bg-accent font-medium text-foreground!';
 
 export function Shell() {
   const { data: orgs, isPending } = authClient.useListOrganizations();
@@ -242,7 +242,7 @@ export function Shell() {
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 items-center gap-2 border-b px-4 md:hidden">
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <OrgSwitcher />
           </div>
           <div className="w-44">

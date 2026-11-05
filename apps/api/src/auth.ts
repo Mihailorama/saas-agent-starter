@@ -34,7 +34,7 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: { enabled: true, minPasswordLength: 12 },
   plugins: [organization(), ...oidc],
-  // Rate limiting is done by @fastify/rate-limit backed by Valkey (shared across replicas).
+  // Rate limiting is done by @fastify/rate-limit backed by Redis (shared across replicas).
   rateLimit: { enabled: false },
   advanced: {
     useSecureCookies: env.NODE_ENV === 'production',

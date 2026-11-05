@@ -18,6 +18,8 @@ const ALLOWED = new Set([
   'BlueOak-1.0.0',
   'PostgreSQL',
   'Python-2.0',
+  // File-level copyleft only; see docs/adr/0005-license-policy.md (we never modify dependency files).
+  'MPL-2.0',
 ]);
 // Non-SPDX strings some Python packages publish, mapped to SPDX ids.
 const ALIASES = {
@@ -55,6 +57,8 @@ export function allowed(expr) {
 }
 
 const bad = [];
+const mpl = []; // allowed, but listed so the file-level copyleft deps stay visible
+const isMpl = (license) => /MPL-2\.0|Mozilla Public License 2\.0/.test(license);
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 1e8 });
 
 // JS: every installed package, dev included.
@@ -63,6 +67,7 @@ let jsCount = 0;
 for (const [license, pkgs] of Object.entries(js)) {
   jsCount += pkgs.length;
   if (!allowed(license)) bad.push(...pkgs.map((p) => `js  ${p.name}@${p.versions} (${license})`));
+  else if (isMpl(license)) mpl.push(...pkgs.map((p) => `js  ${p.name}@${p.versions} (${license})`));
 }
 
 // Python: everything in the worker venv, tooling included. A PEP 639 License-Expression
@@ -77,8 +82,10 @@ const py = JSON.parse(
   ),
 );
 const known = (v) => v && v !== 'UNKNOWN';
-// A classifier naming a copyleft/source-available family vetoes a permissive-looking field.
-const copyleft = /GPL|MPL|Mozilla|EUPL|SSPL|Server Side|Business Source|Commons Clause/i;
+// A classifier naming a disallowed copyleft/source-available family vetoes an allowed-looking
+// field. MPL 2.0 is allowed; MPL 1.x is not.
+const copyleft =
+  /GPL|MPL 1\.|Mozilla Public License 1\.|EUPL|SSPL|Server Side|Business Source|Commons Clause/i;
 for (const p of py) {
   const expr = p['License-Expression'];
   const [field, classifier] = [p['License-Metadata'], p['License-Classifier']];
@@ -87,6 +94,7 @@ for (const p of py) {
     : !copyleft.test(classifier) && [field, classifier].some((l) => known(l) && allowed(l));
   const shown = known(expr) ? expr : `${p['License-Metadata']} / ${p['License-Classifier']}`;
   if (!ok) bad.push(`py  ${p.Name}@${p.Version} (${shown})`);
+  else if (isMpl(shown)) mpl.push(`py  ${p.Name}@${p.Version} (${shown})`);
 }
 
 // Images: each must be documented with its license.
@@ -108,6 +116,7 @@ for (const image of images) {
 }
 
 console.log(`js: ${jsCount} packages, python: ${py.length} packages, images: ${images.size}`);
+if (mpl.length) console.log(`MPL-2.0 (allowed, unmodified):\n  ${mpl.join('\n  ')}`);
 
 // Rust: cargo-deny applies the same allowlist (deny.toml) and RustSec advisories.
 const rust = spawnSync('cargo', ['deny', '--log-level', 'error', 'check'], { stdio: 'inherit' });

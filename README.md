@@ -3,10 +3,10 @@
 Multi-tenant SaaS starter built for AI-agent coding (Claude Code, Codex): strict types,
 one-command quality gate, small colocated files and an `AGENTS.md` that tells agents
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
-obligations, and every code dependency is permissive (enforced in CI).
+obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
 - **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles), Drizzle + Postgres
-  Row-Level Security, audit log, Valkey-backed rate limits, S3 presigned uploads.
+  Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
   Rust hot paths via PyO3 with a pure-Python fallback.
@@ -23,7 +23,7 @@ Prerequisites: Docker, Node 22.18+ with pnpm (`corepack enable`), [uv](https://d
 Rust via [rustup](https://rustup.rs) (for the worker extension and the full gate).
 
 ```sh
-docker compose up -d --wait postgres valkey s3 temporal-ui
+docker compose up -d --wait postgres redis s3 temporal-ui
 pnpm i
 pnpm db:migrate
 pnpm dev                 # web http://localhost:5173, API http://localhost:3000
@@ -36,9 +36,9 @@ computed it with the Rust extension and wrote it back. Watch it in the Temporal 
 http://localhost:8233. API schema: http://localhost:3000/openapi.json.
 
 Everything in containers instead: `docker compose up -d --build`, then http://localhost:8080.
-Tracing and metrics: add `--profile observability` and set `API_OTEL_ENDPOINT=http://otel-collector:4318`
-and `WORKER_OTEL_ENDPOINT=http://otel-collector:4317`; Jaeger at http://localhost:16686,
-Prometheus at http://localhost:9090.
+Tracing and metrics: add `--profile observability` and set
+`API_OTEL_ENDPOINT=http://otel-collector:4318` and `WORKER_OTEL_ENDPOINT=http://otel-collector:4318`
+(both OTLP/HTTP); Jaeger at http://localhost:16686, Prometheus at http://localhost:9090.
 
 ## Quality gate
 
@@ -58,7 +58,7 @@ All config is environment variables, validated at startup (the API exits on inva
 See `.env.example`; put local overrides in `.env` (gitignored). In production set at least
 `NODE_ENV=production`, a random `BETTER_AUTH_SECRET` (32+ chars), `BETTER_AUTH_URL`,
 `DATABASE_URL` (restricted app role) and `MIGRATION_DATABASE_URL` (schema owner, used only by
-`pnpm db:migrate` / the `migrate` container), `VALKEY_URL`, `TEMPORAL_ADDRESS`, and `S3_*`
+`pnpm db:migrate` / the `migrate` container), `REDIS_URL`, `TEMPORAL_ADDRESS`, and `S3_*`
 (omit `S3_ENDPOINT` for AWS S3).
 
 ## AI

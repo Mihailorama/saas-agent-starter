@@ -18,8 +18,8 @@ const schema = z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
     DATABASE_URL: z.url(),
-    /** Redis-compatible (Valkey) store for rate limiting. */
-    VALKEY_URL: z.string().default('redis://localhost:6379'),
+    /** Redis store for rate limiting. */
+    REDIS_URL: z.string().default('redis://localhost:6379'),
     TEMPORAL_ADDRESS: z.string().default('localhost:7233'),
     TEMPORAL_NAMESPACE: z.string().default('default'),
     TEMPORAL_TASK_QUEUE: z.string().default('projects'),
