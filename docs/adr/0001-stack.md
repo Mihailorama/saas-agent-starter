@@ -23,4 +23,5 @@ already know them.
 ## Consequences
 
 - One language for API and UI; Python and Rust are added only where they pay off (ADR 0006).
-- Tailwind stays on v3 because v4's engine depends on an MPL-licensed package (ADR 0005).
+- Tailwind v4 (CSS-first config via `@tailwindcss/vite`) and Vite 8; their `lightningcss`
+  dependency is MPL-2.0, which the license policy allows when unmodified (ADR 0005).

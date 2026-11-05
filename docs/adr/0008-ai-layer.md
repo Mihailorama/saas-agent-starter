@@ -84,8 +84,11 @@ from its docs and repository, checked 2026-11-05:
   ([OpenTelemetry docs](https://langfuse.com/integrations/native/opentelemetry)). It maps
   `gen_ai.request.model`/`gen_ai.response.model` to the model and `gen_ai.usage.*` to usage.
 
-The worker exports OTLP over gRPC, so route it through the OTel Collector of the
-`observability` profile and add an HTTP exporter in `infra/otel/collector.yaml`:
+The worker exports OTLP over HTTP, so it can send straight to Langfuse
+(`OTEL_EXPORTER_OTLP_ENDPOINT=https://langfuse.example.com/api/public/otel` plus
+`OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<base64 pk:sk>`). To keep Jaeger as well,
+route it through the OTel Collector of the `observability` profile and add an HTTP exporter in
+`infra/otel/collector.yaml`:
 
 ```yaml
 exporters:

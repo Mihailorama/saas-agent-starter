@@ -9,7 +9,7 @@ dependencies = [
   "asyncpg>=0.32",
   "httpx2>=2.16.0",
   "openai>=3.46.0",
-  "opentelemetry-exporter-otlp-proto-grpc>=1.45",
+  "opentelemetry-exporter-otlp-proto-http>=1.45",
   "opentelemetry-sdk>=1.45",
   "saas-core",
   "temporalio>=1.35",

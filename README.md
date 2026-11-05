@@ -3,7 +3,7 @@
 Multi-tenant SaaS starter built for AI-agent coding (Claude Code, Codex): strict types,
 one-command quality gate, small colocated files and an `AGENTS.md` that tells agents
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
-obligations, and every code dependency is permissive (enforced in CI).
+obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
 - **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles), Drizzle + Postgres
   Row-Level Security, audit log, Valkey-backed rate limits, S3 presigned uploads.
@@ -36,9 +36,9 @@ computed it with the Rust extension and wrote it back. Watch it in the Temporal 
 http://localhost:8233. API schema: http://localhost:3000/openapi.json.
 
 Everything in containers instead: `docker compose up -d --build`, then http://localhost:8080.
-Tracing and metrics: add `--profile observability` and set `API_OTEL_ENDPOINT=http://otel-collector:4318`
-and `WORKER_OTEL_ENDPOINT=http://otel-collector:4317`; Jaeger at http://localhost:16686,
-Prometheus at http://localhost:9090.
+Tracing and metrics: add `--profile observability` and set
+`API_OTEL_ENDPOINT=http://otel-collector:4318` and `WORKER_OTEL_ENDPOINT=http://otel-collector:4318`
+(both OTLP/HTTP); Jaeger at http://localhost:16686, Prometheus at http://localhost:9090.
 
 ## Quality gate
 

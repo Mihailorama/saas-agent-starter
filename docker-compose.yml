@@ -124,7 +124,7 @@ services:
     build: { context: ., dockerfile: services/worker-py/Dockerfile }
     environment:
       <<: *app-env
-      # With --profile observability: http://otel-collector:4317 (gRPC)
+      # With --profile observability: http://otel-collector:4318 (OTLP/HTTP, like the API)
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}

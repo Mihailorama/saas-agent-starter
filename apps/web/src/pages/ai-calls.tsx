@@ -149,7 +149,7 @@ export function AiCallsPage() {
             id="f-status"
             value={filters.status}
             onChange={set('status')}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-sm"
+            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
           >
             <option value="">Any</option>
             <option value="ok">ok</option>

@@ -5,9 +5,6 @@ updates:
     schedule: { interval: weekly }
     groups: { npm: { patterns: ["*"], update-types: [minor, patch] } }
     ignore:
-      # Newer majors depend on lightningcss (MPL-2.0), see docs/adr/0005-license-policy.md.
-      - { dependency-name: tailwindcss, update-types: [version-update:semver-major] }
-      - { dependency-name: vite, update-types: [version-update:semver-major] }
       # Types track the Node runtime major (22).
       - { dependency-name: "@types/node", update-types: [version-update:semver-major] }
   - package-ecosystem: uv

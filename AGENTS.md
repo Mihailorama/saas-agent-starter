@@ -159,7 +159,13 @@ A Claude Code command with the same steps: `/add-resource <name>`.
   and drops query strings.
 - Validate all input with Zod/dataclasses; never build SQL with string concatenation.
 - New dependencies must pass `pnpm check:licenses` (allowlist in `scripts/license-check.mjs` and
-  `deny.toml`). Never add an exception to make the gate pass; ask a human.
+  `deny.toml`): permissive licenses plus MPL-2.0 (file-level copyleft, no obligations on our
+  code while unmodified). GPL/LGPL/AGPL/EUPL/SSPL/BUSL and other copyleft or source-available
+  licenses stay banned. Never add an exception to make the gate pass; ask a human
+  (docs/adr/0005-license-policy.md).
+- We never modify dependency files: no `pnpm patch`/`patch-package`, no edits in
+  `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
+  go upstream (issue or PR); until a release lands, work around it in our own code.
 - No real secrets, client names or private data in the repo, ever. Example values use
   `example.com` and `local-dev-*`.
 
@@ -167,5 +173,7 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 
 - Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`.
 - Commit `.env`, credentials, media/binary files, or generated `dist/`, `target/`, `.venv/`.
-- Add Next.js/Vercel-specific code, GPL/AGPL/SSPL/BSL code dependencies, or Redis (use Valkey).
+- Add Next.js/Vercel-specific code, GPL/LGPL/AGPL/SSPL/BSL code dependencies, or Redis
+  (use Valkey).
+- Patch, fork-in-place or edit a dependency's files (fixes go upstream).
 - Push to `main` without `pnpm check` green, or force-push.
