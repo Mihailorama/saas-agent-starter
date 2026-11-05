@@ -40,7 +40,8 @@ fact is impossible if calls are scattered across the code base.
   `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `error.type`, plus
   `gen_ai.input.messages_ref` / `gen_ai.output.messages_ref` pointing at the S3 objects. The
   content attributes (`gen_ai.input.messages`, `gen_ai.output.messages`) are opt-in in the
-  conventions and deliberately not set. The span joins the Temporal workflow trace, and its
+  conventions and deliberately not set. The GenAI conventions are still at "Development"
+  stability, so attribute names may change; `worker/ai.py` is the one place to update. The span joins the Temporal workflow trace, and its
   trace/span id is stored on the row, so a row leads to its trace and back.
 - **Human oversight.** AI output stored on an entity carries `ai_status`
   (`generated` | `confirmed` | `corrected`), `reviewed_by`, `reviewed_at` and `ai_call_id`.

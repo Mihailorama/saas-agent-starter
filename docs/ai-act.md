@@ -46,8 +46,9 @@ Article references follow the Act as amended by the Digital Omnibus on AI,
 ## RU contour
 
 Set `AI_CONTOUR=ru` for deployments serving Russia. The EU AI Act does not govern them;
-Russian law does, notably Federal Law No. 152-FZ "On Personal Data", including the requirement
-to record and store Russian citizens' personal data in databases located in Russia. Use an
+Russian law does, notably Federal Law No. 152-FZ "On Personal Data", including Art. 18(5):
+when collecting personal data of Russian citizens, the operator records and stores it in
+databases located in Russia (with the exceptions that article lists). Use an
 in-country or self-hosted OpenAI-compatible endpoint (`OPENAI_BASE_URL`), register only those
 models under `ru` in `config/ai-models.json`, and keep the database and the content bucket in
 Russia. The gateway refuses models not registered for the current contour, so an EU model
