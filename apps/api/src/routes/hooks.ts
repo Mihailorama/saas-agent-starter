@@ -20,7 +20,9 @@ const Hook = z.object({
 type Issue = { title: string; label: string; body: string };
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
-const scrub = (s: string) => s.replace(/[^\s@]+@[^\s@]+\.[^\s@]+/g, '[email]');
+// Bounded, unambiguous pattern (no polynomial backtracking on hostile input).
+const EMAIL = /[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+/g;
+const scrub = (s: string) => s.slice(0, 10_000).replace(EMAIL, '[email]');
 const posthogUrl = (path: string) =>
   env.POSTHOG_APP_HOST && env.POSTHOG_PROJECT_ID
     ? `${env.POSTHOG_APP_HOST}/project/${env.POSTHOG_PROJECT_ID}/${path}`

@@ -152,7 +152,7 @@ export function setConsent(granted: boolean) {
 }
 
 // Email addresses and UUIDs never leave the browser in event props.
-const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
+const EMAIL = /[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+/g;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const scrub = (props: Props): Props =>
   Object.fromEntries(
