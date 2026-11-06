@@ -18,16 +18,17 @@
     "typecheck:fast": "pnpm -r typecheck:fast",
     "test": "pnpm -r test",
     "e2e": "pnpm --filter web e2e",
-    "check:ts": "biome ci . && pnpm typecheck && pnpm test",
+    "check:ts": "biome ci . && pnpm typecheck:fast && pnpm test",
     "check:rust": "cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test",
     "check:py": "cd services/worker-py && uv sync --locked && uv run ruff format --check && uv run ruff check && pyright && uv run pytest -q",
     "check:licenses": "node scripts/license-check.mjs",
-    "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm e2e"
+    "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm e2e",
+    "check:release": "pnpm check && pnpm typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",
     "pyright": "1.1.414",
     "tsrs": "0.22.0-ts7.1.0-beta",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }
