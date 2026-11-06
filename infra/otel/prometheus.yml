@@ -1,4 +1,5 @@
 # App metrics arrive via OTLP from the collector; Temporal server is scraped directly.
+rule_files: [/etc/prometheus/alerts.yml]
 scrape_configs:
   - job_name: temporal
     static_configs:

@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -39,21 +39,11 @@ async def broken(model: str, messages: Sequence[Message], max_tokens: int) -> Co
     raise TimeoutError
 
 
-@pytest.fixture(scope="session")
-async def s3() -> AsyncIterator[S3]:
-    s3 = S3(
-        endpoint=settings.S3_ENDPOINT,
-        region=settings.S3_REGION,
-        access_key=settings.S3_ACCESS_KEY_ID,
-        secret_key=settings.S3_SECRET_ACCESS_KEY,
-        bucket=settings.AI_CONTENT_BUCKET,
-    )
-    await s3.ensure_bucket()
+@pytest.fixture(scope="module", autouse=True)
+def tracing() -> None:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(spans))
     trace.set_tracer_provider(provider)
-    yield s3
-    await s3.close()
 
 
 @pytest.fixture

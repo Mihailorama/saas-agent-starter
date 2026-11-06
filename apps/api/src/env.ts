@@ -28,6 +28,16 @@ const schema = z
     S3_PUBLIC_ENDPOINT: z.url().optional(),
     S3_REGION: z.string().default('us-east-1'),
     S3_BUCKET: z.string().default('attachments'),
+    /** Bucket the worker stores LLM request/response content in (worker AI_CONTENT_BUCKET). */
+    AI_CONTENT_BUCKET: z.string().default('ai-calls'),
+    /** Trace UI link for an ai_calls row, `{traceId}` is replaced (Jaeger, Grafana, Langfuse). */
+    TRACE_URL_TEMPLATE: z.string().optional(),
+    /**
+     * Full LLM-ops profile: the browser sends user feedback to Langfuse with the public key
+     * (it can only create scores). Origin the browser reaches Langfuse on. Unset = off.
+     */
+    LANGFUSE_PUBLIC_URL: z.union([z.url(), z.literal('')]).optional(),
+    LANGFUSE_PUBLIC_KEY: z.string().optional(),
     S3_ACCESS_KEY_ID: z.string().min(1),
     S3_SECRET_ACCESS_KEY: z.string().min(1),
     /** Set to true behind a reverse proxy so req.ip comes from X-Forwarded-For. */

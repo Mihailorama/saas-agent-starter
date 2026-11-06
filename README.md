@@ -68,7 +68,14 @@ Off until you pick a model: set `AI_PROJECT_SUMMARY_PROVIDER=anthropic`,
 `OPENAI_BASE_URL` / `OPENAI_API_KEY` and a model registered for your `AI_CONTOUR` in
 `config/ai-models.json`), then restart the worker. New projects with a description get an
 AI-generated summary that members can confirm or correct; admins see every call under
-"AI calls". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
+"LLM Ops". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
+
+Quality loop ([ADR 0009](docs/adr/0009-llm-ops.md)): prompts are versioned files in `prompts/`,
+`pnpm eval` runs the Promptfoo golden sets in `evals/` (real model with `ANTHROPIC_API_KEY`,
+recorded outputs without), a daily drift check grades a sample of calls with an LLM judge
+(`AI_JUDGE_PROVIDER` / `AI_JUDGE_MODEL`), and the LLM Ops page compares score, cost and latency
+per prompt version. `docker compose --profile llmops up -d` adds Langfuse (about 1.9 GiB RAM,
+see [docs/STACK.md](docs/STACK.md)).
 
 ## SSO
 

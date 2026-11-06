@@ -1,11 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { aiCalls, auditLog, projects, withOrg } from '@app/db';
+import { aiCalls, aiDatasetItems, aiScores, auditLog, projects, withOrg } from '@app/db';
+import {
+  CreateBucketCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
 import { db, pool } from '../src/db.ts';
-import { allowedOrigins } from '../src/env.ts';
+import { allowedOrigins, env } from '../src/env.ts';
+import { exportPending } from '../src/eval-pull.ts';
 import { ensureBucket } from '../src/s3.ts';
 import {
   closeTemporal,
@@ -74,6 +81,8 @@ describe('platform', () => {
     expect(Object.keys(spec.paths)).toContain('/api/projects/');
     // SSO is off unless OIDC_* is set (tests run without it).
     expect((await app.inject('/api/auth-config')).json()).toEqual({ sso: false });
+    // Langfuse feedback is off unless LANGFUSE_PUBLIC_URL/KEY are set.
+    expect((await app.inject('/api/client-config')).json()).toEqual({ langfuse: null });
   });
 
   it('rejects anonymous and cross-origin requests', async () => {
@@ -241,7 +250,7 @@ describe('AI summary review', () => {
     expect(early.statusCode).toBe(409);
 
     // The worker stores a summary (simulated here).
-    const aiCall = await recordAiCall(org);
+    const aiCall = await recordAiCall(org, { traceId: 'b'.repeat(32), spanId: 'c'.repeat(16) });
     await withOrg(db, org, (tx) =>
       tx
         .update(projects)
@@ -256,6 +265,8 @@ describe('AI summary review', () => {
       aiStatus: 'confirmed',
       aiCallId: aiCall.id,
       reviewedBy: owner.id,
+      // For the browser's Langfuse feedback score (Full profile).
+      aiTrace: { traceId: 'b'.repeat(32), spanId: 'c'.repeat(16) },
     });
 
     const url = `/api/projects/${project.id}/ai-summary/correct`;
@@ -270,6 +281,13 @@ describe('AI summary review', () => {
     await createOrg(stranger);
     expect((await call(stranger, 'POST', url, { summary: 'x' })).statusCode).toBe(404);
     expect((await call(null, 'POST', url, { summary: 'x' })).statusCode).toBe(401);
+
+    // Each review is a user score on the call: confirm = 1, correct = 0.
+    const scores = await withOrg(db, org, (tx) => tx.select().from(aiScores));
+    expect(scores.map((s) => [s.callId, s.source, s.name, s.value, s.actorId])).toEqual([
+      [aiCall.id, 'user', 'review', 1, owner.id],
+      [aiCall.id, 'user', 'review', 0, owner.id],
+    ]);
 
     const audit = await withOrg(db, org, (tx) => tx.select().from(auditLog));
     expect(audit.map((a) => [a.action, a.target, a.actorId])).toEqual(
@@ -333,5 +351,141 @@ describe('AI calls log', () => {
     await createOrg(stranger);
     expect((await call(stranger, 'GET', base)).statusCode).toBe(403);
     expect((await call(null, 'GET', base)).statusCode).toBe(401);
+  });
+});
+
+describe('LLM Ops', () => {
+  const s3 = new S3Client({
+    region: env.S3_REGION,
+    endpoint: env.S3_ENDPOINT,
+    forcePathStyle: true,
+    credentials: { accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY },
+  });
+  const put = (key: string, doc: object) =>
+    s3.send(
+      new PutObjectCommand({ Bucket: env.AI_CONTENT_BUCKET, Key: key, Body: JSON.stringify(doc) }),
+    );
+
+  it('shows call detail, content (audited), scores, version stats and the golden set', async () => {
+    await s3
+      .send(new HeadBucketCommand({ Bucket: env.AI_CONTENT_BUCKET }))
+      .catch(() => s3.send(new CreateBucketCommand({ Bucket: env.AI_CONTENT_BUCKET })));
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    const base = `/api/orgs/${org}/ai-calls`;
+    const v1 = await recordAiCall(org, {
+      requestKey: `${org}/v1/request.json`,
+      responseKey: `${org}/v1/response.json`,
+      traceId: 'a'.repeat(32),
+    });
+    const v2 = await recordAiCall(org, {
+      promptTemplateVersion: '2',
+      cost: 0.00004,
+      responseKey: `${org}/v2/response.json`,
+    });
+    const failed = await recordAiCall(org, { status: 'error', responseKey: null, cost: null });
+    await put(v1.requestKey, { messages: [{ role: 'user', content: 'Project: Apollo' }] });
+    await put(v1.responseKey!, { text: 'A Moon landing.' });
+    await withOrg(db, org, (tx) =>
+      tx.insert(aiScores).values([
+        { orgId: org, callId: v1.id, source: 'judge', name: 'quality', value: 0.5 },
+        { orgId: org, callId: v1.id, source: 'user', name: 'review', value: 1 },
+        { orgId: org, callId: v2.id, source: 'judge', name: 'quality', value: 0.9 },
+      ]),
+    );
+
+    const detail = await call(owner, 'GET', `${base}/${v1.id}`);
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      id: v1.id,
+      datasetItem: null,
+      scores: [
+        { source: 'judge', name: 'quality', value: 0.5 },
+        { source: 'user', name: 'review', value: 1 },
+      ],
+    });
+    expect((await call(owner, 'GET', `${base}/${randomUUID()}`)).statusCode).toBe(404);
+
+    const content = await call(owner, 'GET', `${base}/${v1.id}/content`);
+    expect(content.json()).toEqual({
+      request: { messages: [{ role: 'user', content: 'Project: Apollo' }] },
+      response: { text: 'A Moon landing.' },
+    });
+    const missing = await call(owner, 'GET', `${base}/${v2.id}/content`); // expired objects
+    expect(missing.json()).toEqual({ request: null, response: null });
+
+    const stats = (await call(owner, 'GET', `${base}/stats?days=7`)).json();
+    const byVersion = Object.fromEntries(
+      stats.versions.map((v: { version: string }) => [v.version, v]),
+    );
+    expect(byVersion['1']).toMatchObject({
+      template: 'project.summary',
+      calls: 2,
+      errorRate: 0.5,
+      judgeScore: 0.5,
+      judged: 1,
+      userScore: 1,
+      reviewed: 1,
+    });
+    expect(byVersion['2']).toMatchObject({ calls: 1, judgeScore: 0.9, avgCost: 0.00004 });
+    expect(stats.days).toEqual([
+      expect.objectContaining({ purpose: 'project.summary', calls: 3, errors: 1 }),
+    ]);
+
+    const add = (id: string) => call(owner, 'POST', `${base}/${id}/dataset`);
+    const added = await add(v1.id);
+    expect(added.statusCode).toBe(201);
+    expect(added.json()).toMatchObject({ status: 'pending', addedBy: owner.id });
+    expect((await add(v1.id)).statusCode).toBe(409); // once per call
+    expect((await add(failed.id)).statusCode).toBe(409); // no output to keep
+    const items = await withOrg(db, org, (tx) => tx.select().from(aiDatasetItems));
+    expect(items.map((i) => [i.callId, i.purpose, i.status])).toEqual([
+      [v1.id, 'project.summary', 'pending'],
+    ]);
+
+    // eval:pull exports pending items as Promptfoo test cases, once.
+    expect(await exportPending(org)).toEqual([
+      {
+        purpose: 'project.summary',
+        test: {
+          description: `call ${v1.id}`,
+          vars: { input: 'Project: Apollo', recorded_output: 'A Moon landing.' },
+          metadata: { callId: v1.id, model: 'claude-haiku-5-5', prompt: 'project.summary v1' },
+        },
+      },
+    ]);
+    expect(await exportPending(org)).toEqual([]);
+    const [exported] = await withOrg(db, org, (tx) => tx.select().from(aiDatasetItems));
+    expect(exported).toMatchObject({ status: 'exported', exportedAt: expect.any(Date) });
+
+    const audit = await withOrg(db, org, (tx) => tx.select().from(auditLog));
+    expect(audit.map((a) => [a.action, a.target])).toEqual(
+      expect.arrayContaining([
+        ['ai_dataset.exported', v1.id],
+        ['ai_call.content_viewed', v1.id],
+        ['POST /api/orgs/:orgId/ai-calls/:id/dataset', v1.id],
+      ]),
+    );
+
+    // Admin only, active org only, tenant-isolated.
+    const memberUser = await signUp();
+    await auth.api.addMember({
+      body: { userId: memberUser.id, organizationId: org, role: 'member' },
+    });
+    await call(memberUser, 'POST', '/api/auth/organization/set-active', { organizationId: org });
+    for (const url of [`${base}/${v1.id}`, `${base}/${v1.id}/content`, `${base}/stats`]) {
+      expect((await call(memberUser, 'GET', url)).statusCode).toBe(403);
+    }
+    expect((await call(memberUser, 'POST', `${base}/${v2.id}/dataset`)).statusCode).toBe(403);
+    const stranger = await signUp();
+    const other = await createOrg(stranger);
+    expect((await call(stranger, 'GET', `${base}/${v1.id}`)).statusCode).toBe(403);
+    expect((await call(stranger, 'GET', `/api/orgs/${other}/ai-calls/${v1.id}`)).statusCode).toBe(
+      404,
+    );
+    expect((await call(stranger, 'GET', `/api/orgs/${other}/ai-calls/stats`)).json()).toEqual({
+      versions: [],
+      days: [],
+    });
   });
 });

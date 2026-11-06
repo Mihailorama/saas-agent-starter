@@ -12,8 +12,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toaster } from '@/components/ui/sonner';
 import { authClient } from '@/lib/auth';
-import { AiCallsPage } from '@/pages/ai-calls';
+import { AiCallPage } from '@/pages/ai-call';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
+import { LlmOpsPage } from '@/pages/llm-ops';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { Shell } from '@/pages/shell';
@@ -65,17 +66,32 @@ const projectRoute = createRoute({
   component: ProjectPage,
 });
 
+const llmOpsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/llm-ops',
+  component: LlmOpsPage,
+});
+
+const aiCallRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/llm-ops/calls/$callId',
+  component: AiCallPage,
+});
+
+// Old links to the AI call log.
 const aiCallsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/ai-calls',
-  component: AiCallsPage,
+  beforeLoad: () => {
+    throw redirect({ to: '/llm-ops' });
+  },
 });
 
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
     aiTransparencyRoute,
-    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute]),
+    appRoute.addChildren([projectsRoute, projectRoute, llmOpsRoute, aiCallRoute, aiCallsRoute]),
   ]),
 });
 

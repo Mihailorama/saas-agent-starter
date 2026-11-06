@@ -95,6 +95,64 @@ export const aiCalls = pgTable(
   ],
 );
 
+/**
+ * Quality scores of LLM calls (docs/adr/0009-llm-ops.md). Append-only like ai_calls: a new
+ * judgement is a new row. `user` = human review (confirm/correct), `judge` = LLM-as-a-judge
+ * (drift workflow; the judge's own call is `judge_call_id`), `rule` = deterministic check.
+ * No content here: the judge's reasoning stays in that call's S3 response object.
+ */
+export const aiScores = pgTable(
+  'ai_scores',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    callId: uuid('call_id')
+      .notNull()
+      .references(() => aiCalls.id, { onDelete: 'cascade' }),
+    source: text('source', { enum: ['user', 'judge', 'rule'] }).notNull(),
+    name: text('name').notNull(),
+    value: numeric('value', { precision: 10, scale: 4, mode: 'number' }).notNull(),
+    comment: text('comment'),
+    actorId: text('actor_id'),
+    judgeCallId: uuid('judge_call_id').references(() => aiCalls.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index().on(t.orgId, t.callId),
+    index().on(t.orgId, t.createdAt),
+    check('ai_scores_source', sql`${t.source} in ('user', 'judge', 'rule')`),
+    tenantIsolation(),
+  ],
+);
+
+/**
+ * Calls an admin picked for the golden eval set ("Add to golden set"). `pnpm eval:pull`
+ * exports pending items to Promptfoo test cases and marks them exported.
+ */
+export const aiDatasetItems = pgTable(
+  'ai_dataset_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    callId: uuid('call_id')
+      .notNull()
+      .unique()
+      .references(() => aiCalls.id, { onDelete: 'cascade' }),
+    purpose: text('purpose').notNull(),
+    status: text('status', { enum: ['pending', 'exported'] })
+      .notNull()
+      .default('pending'),
+    addedBy: text('added_by'),
+    exportedAt: timestamp('exported_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index().on(t.orgId, t.status),
+    check('ai_dataset_items_status', sql`${t.status} in ('pending', 'exported')`),
+    tenantIsolation(),
+  ],
+);
+
 /** Files in S3. The object key is derived from ids; access is checked via this row (RLS). */
 export const attachments = pgTable(
   'attachments',

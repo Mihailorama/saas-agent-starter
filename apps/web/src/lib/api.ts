@@ -32,6 +32,48 @@ export type AiCall = {
   contour: string;
   createdAt: string;
 };
+export type AiScore = {
+  id: string;
+  source: 'user' | 'judge' | 'rule';
+  name: string;
+  value: number;
+  comment: string | null;
+  actorId: string | null;
+  judgeCallId: string | null;
+  createdAt: string;
+};
+export type AiCallDetail = AiCall & {
+  requestKey: string;
+  responseKey: string | null;
+  contentExpiresAt: string;
+  spanId: string | null;
+  scores: AiScore[];
+  datasetItem: { id: string; status: 'pending' | 'exported'; createdAt: string } | null;
+  traceUrl: string | null;
+};
+export type VersionStats = {
+  purpose: string;
+  template: string;
+  version: string;
+  model: string;
+  calls: number;
+  errorRate: number;
+  avgCost: number | null;
+  avgLatencyMs: number;
+  judgeScore: number | null;
+  judged: number;
+  userScore: number | null;
+  reviewed: number;
+};
+export type DayStats = {
+  day: string;
+  purpose: string;
+  calls: number;
+  errors: number;
+  cost: number | null;
+  judgeScore: number | null;
+  userScore: number | null;
+};
 export type Attachment = {
   id: string;
   filename: string;

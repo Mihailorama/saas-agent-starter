@@ -4,6 +4,7 @@ import asyncpg
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from worker import prompts
 from worker.ai import Gateway, Message
 from worker.text import simhash
 
@@ -29,11 +30,13 @@ class ModelChoice:
 
 
 SUMMARY_PURPOSE = "project.summary"
-SUMMARY_TEMPLATE = ("project.summary", "1")  # bump the version when the prompt changes
-SUMMARY_PROMPT = (
-    "Summarize the project description you are given in one plain sentence of at most"
-    " 30 words. Answer with the sentence only."
-)
+# prompts/project.summary/system.v1.md. New prompt text = new file + bump this (AGENTS.md).
+SUMMARY_PROMPT = ("project.summary/system", 1)
+
+
+def summary_input(name: str, description: str) -> str:
+    """The user message; evals/project.summary stores exactly this as `input`."""
+    return f"Project: {name}\n\n{description}"
 
 
 class Activities:
@@ -93,18 +96,19 @@ class Activities:
         if project["ai_summary"] is not None or not project["description"]:
             return project["ai_summary"]
 
+        prompt = prompts.load(*SUMMARY_PROMPT)
         result = await self.ai.call_llm(
             SUMMARY_PURPOSE,
             [
-                Message("system", SUMMARY_PROMPT),
-                Message("user", f"Project: {project['name']}\n\n{project['description']}"),
+                Message("system", prompt.text),
+                Message("user", summary_input(project["name"], project["description"])),
             ],
             model=self.summary_model.model,
             provider=self.summary_model.provider,
             org_id=event.orgId,
             actor_id=event.actorId,
-            prompt_template_id=SUMMARY_TEMPLATE[0],
-            prompt_template_version=SUMMARY_TEMPLATE[1],
+            prompt_template_id=prompt.id,
+            prompt_template_version=prompt.version,
             max_tokens=2048,
         )
         async with self.pool.acquire() as conn, conn.transaction():

@@ -181,7 +181,7 @@ const navActive = 'bg-accent font-medium text-foreground!';
 export function Shell() {
   const { data: orgs, isPending } = authClient.useListOrganizations();
   const { data: member } = authClient.useActiveMember();
-  const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
+  const onLlmOps = useLocation({ select: (l) => l.pathname.startsWith('/llm-ops') });
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
 
@@ -221,12 +221,12 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, !onAiCalls && navActive)}>
+          <Link to="/" className={cn(navLink, !onLlmOps && navActive)}>
             <FolderKanban className="size-4" /> Projects
           </Link>
           {isAdmin && (
-            <Link to="/ai-calls" className={navLink} activeProps={{ className: navActive }}>
-              <ScrollText className="size-4" /> AI calls
+            <Link to="/llm-ops" className={cn(navLink, onLlmOps && navActive)}>
+              <ScrollText className="size-4" /> LLM Ops
             </Link>
           )}
         </nav>

@@ -36,25 +36,35 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
+                      + LLM Ops (stats, call detail, content, golden set)
+  src/scores.ts       user scores (ai_scores) + score metric
+  src/eval-pull.ts    `pnpm eval:pull`: golden-set items -> Promptfoo cases
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/s3.ts           S3 client, presigned upload/download URLs
   src/telemetry.ts    OpenTelemetry (preloaded, env-toggled)
   test/               integration tests against the real compose services
 apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwind
-  src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail
+  src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail,
+                      llm-ops (charts, prompt versions, AI call log), ai-call (call detail)
   src/components/ui/  shadcn/ui components (copied source; edit freely)
   e2e/                Playwright smoke
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
+  worker/prompts.py   versioned prompt loader (prompts/<purpose>/<name>.v<N>.md)
+  worker/judge.py     drift check: LLM judge + rule scores (DriftCheckWorkflow, daily schedule)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page)
+prompts/            prompt templates, one immutable file per version; lock.json pins hashes
+evals/              Promptfoo golden sets per purpose (`pnpm eval`, scripts/eval.mjs)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
-infra/              Temporal setup, SeaweedFS (dev S3), OTel collector/Prometheus config
+infra/              Temporal setup, SeaweedFS (dev S3), OTel collector/Prometheus config + alert
+                    rules (otel/alerts.yml), ClickHouse tuning for Langfuse (langfuse/)
 scripts/            license-check.mjs (JS + Python + Rust + images)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
+docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
@@ -126,18 +136,58 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 1. Registry: add the purpose to the allowed models in `config/ai-models.json` for every
    contour that should offer it (with `pricePer1kTokens`, or `null` if unknown). Add a `uses`
    entry with the same `purpose` to `config/ai-transparency.json`.
-2. Activity: in `services/worker-py/worker/activities.py`, call `self.ai.call_llm(...)` with
+2. Prompt: write `prompts/<purpose>/<name>.v1.md` and add its hash to `prompts/lock.json`
+   (the failing test prints the line). Activity: in `services/worker-py/worker/activities.py`,
+   `prompt = prompts.load("<purpose>/<name>", 1)` and call `self.ai.call_llm(...)` with
    the purpose, an explicit `model` and `provider` (from a per-purpose env setting such as
    `AI_PROJECT_SUMMARY_MODEL`; unset = feature off, never a fallback), the org and actor ids,
-   a prompt template id + version (bump the version whenever the prompt text changes) and
+   `prompt_template_id=prompt.id`, `prompt_template_version=prompt.version` and
    `max_tokens`. Read user content from the DB inside the activity; pass ids, not content,
    through workflow arguments.
 3. Oversight: if the output is stored and shown, store it with `ai_status='generated'` and
    `ai_call_id`, add confirm/correct endpoints like `projects.ts` and show `<AiBadge>` in the
    web next to it.
 4. Tests: a pytest with a fake provider (see `tests/test_ai.py`) that checks the stored result
-   and the `ai_calls` row; API tests for the review endpoints.
-5. Write the AI system card (template in `docs/ai-act.md`). `pnpm check`.
+   and the `ai_calls` row; API tests for the review endpoints. Review endpoints also write a
+   user score (`addUserScore` in `apps/api/src/scores.ts`).
+5. Eval: `evals/<purpose>/promptfooconfig.json` + `dataset.jsonl` (copy `project.summary`),
+   a judge prompt `prompts/judge/<purpose>.v1.md` (`{{input}}`, `{{output}}`, JSON answer with
+   `score` 0..1) and, for the drift check, an entry in `JUDGES` (and `RULES`) in
+   `worker/judge.py`. `tests/test_prompts.py` fails if a prompted purpose has no eval.
+6. Write the AI system card (template in `docs/ai-act.md`). `pnpm check`.
+
+## Recipe: add a prompt version
+
+A prompt is code: reviewed, tested, evaluated. Never edit a released `.v<N>.md`.
+
+1. Copy `prompts/<purpose>/<name>.v<N>.md` to `.v<N+1>.md` and change it. Add its hash to
+   `prompts/lock.json` (the failing `tests/test_prompts.py` prints the line).
+2. Point the eval at it (`gate.prompt.version` in `evals/<purpose>/promptfooconfig.json`) and
+   run `pnpm eval` with `ANTHROPIC_API_KEY` set. It must pass `gate.minScore`; compare with the
+   previous version's score in the PR description.
+3. Switch the code to the new version (e.g. `SUMMARY_PROMPT` in `activities.py`). Old rows keep
+   the old version, so the LLM Ops page compares both side by side after deploy.
+4. With the Full profile, `pnpm langfuse:prompts` publishes it to Langfuse (label `v<N+1>`).
+
+## Recipe: add eval cases
+
+1. Synthetic: append a line to `evals/<purpose>/dataset.jsonl`:
+   `{"description": "...", "vars": {"input": "<exact user message>", "recorded_output": "<a good answer>"}}`.
+   No real customer data, names or secrets.
+2. From production: an org admin clicks "Add to golden set" on a call (LLM Ops > call); then
+   `pnpm eval:pull --org <orgId>` writes `evals/<purpose>/pulled.jsonl` (gitignored). Rewrite
+   each case so it contains no personal or customer data, then move it to `dataset.jsonl`.
+3. Case-specific checks go into the line's own `assert` list (Promptfoo syntax); shared ones
+   into `defaultTest.assert`. `pnpm eval` (or `pnpm eval --fake-llm` without a key) must pass.
+
+## When to promote to Full (Langfuse)
+
+Lite answers "did quality, cost or latency change, and since which prompt version". Turn on
+`--profile llmops` (docs/adr/0009-llm-ops.md) only when non-engineers review outputs daily
+(annotation queues), prompts are iterated in a playground, multi-step agent traces need
+drill-down, or many purposes need dataset experiments. It costs about 1.9 GiB RAM and a
+ClickHouse to run (docs/STACK.md); at real traffic give it its own host. Postgres stays the
+record either way.
 
 ## Conventions
 
@@ -155,7 +205,12 @@ A Claude Code command with the same steps: `/add-resource <name>`.
   model that is not in `config/ai-models.json` for the current `AI_CONTOUR` is refused.
 - Never put prompt or completion content in logs, span attributes, exceptions, audit rows or
   Temporal workflow arguments. It lives only in the `ai_calls` S3 objects.
-- `ai_calls` is append-only: never grant UPDATE/DELETE on it or "fix" rows; record a new event.
+- `ai_calls` and `ai_scores` are append-only: never grant UPDATE/DELETE on them or "fix" rows;
+  record a new event.
+- Prompts live only in `prompts/` (never inline strings in code) and are loaded with an explicit
+  version. A prompt change is a new version file with a passing eval (recipe above).
+- `pnpm eval` with a key calls paid models; `pnpm check` must stay key-free (it runs
+  `pnpm eval --fake-llm`).
 
 ## Security rules
 

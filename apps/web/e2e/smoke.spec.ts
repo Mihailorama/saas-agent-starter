@@ -22,8 +22,10 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('link', { name: 'Difference Engine' })).toBeVisible();
 
-  // The owner is an org admin and sees the AI call log (empty: no AI configured in tests).
-  await page.getByRole('link', { name: 'AI calls' }).click();
+  // The owner is an org admin and sees LLM Ops (empty: no AI configured in tests).
+  await page.getByRole('link', { name: 'LLM Ops' }).click();
+  await expect(page.getByRole('heading', { name: 'LLM Ops' })).toBeVisible();
+  await expect(page.getByText('No prompt versions used in this period.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'AI calls' })).toBeVisible();
   await expect(page.getByText('No AI calls match these filters.')).toBeVisible();
 });

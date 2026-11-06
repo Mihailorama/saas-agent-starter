@@ -22,8 +22,11 @@
     "check:rust": "cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test",
     "check:py": "cd services/worker-py && uv sync --locked && uv run ruff format --check && uv run ruff check && pyright && uv run pytest -q",
     "check:licenses": "node scripts/license-check.mjs",
-    "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm e2e",
-    "check:release": "pnpm check && pnpm typecheck"
+    "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm eval --fake-llm && pnpm e2e",
+    "check:release": "pnpm check && pnpm typecheck",
+    "eval:pull": "pnpm --filter api eval:pull",
+    "eval": "node scripts/eval.mjs",
+    "langfuse:prompts": "node scripts/langfuse-publish-prompts.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",

@@ -5,6 +5,7 @@ import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { presignDownload, presignUpload } from '../s3.ts';
+import { addUserScore } from '../scores.ts';
 import { startProjectCreated } from '../temporal.ts';
 import { httpError, requireRole, withTenant } from '../tenant.ts';
 
@@ -129,14 +130,26 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
 
   // Human oversight of the AI summary: confirm it as is, or replace it with a correction.
   // The original model output stays in ai_calls + S3; both actions are audit-logged.
+  // Each review is also a user score on the call (ai_scores): confirm = 1, correct = 0.
+  // The response carries the call's trace ids so the browser can send the same feedback to
+  // Langfuse when the Full profile is on (lib/langfuse.ts).
   const reviewSummary = (req: FastifyRequest, id: string, summary?: string) =>
     withTenant(req, async (tx) => {
       const [current] = await tx
-        .select({ aiSummary: projects.aiSummary })
+        .select({ aiSummary: projects.aiSummary, aiCallId: projects.aiCallId })
         .from(projects)
         .where(eq(projects.id, id));
       if (!current) throw httpError(404, 'not found');
       if (current.aiSummary === null) throw httpError(409, 'no AI summary to review');
+      const scored = current.aiCallId
+        ? await addUserScore(tx, {
+            orgId: req.tenant.orgId,
+            callId: current.aiCallId,
+            name: 'review',
+            value: summary === undefined ? 1 : 0,
+            actorId: req.tenant.userId,
+          })
+        : null;
       const [row] = await tx
         .update(projects)
         .set({
@@ -147,9 +160,13 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
         })
         .where(eq(projects.id, id))
         .returning();
-      return projectDto(row!);
+      const trace = scored?.traceId ? { traceId: scored.traceId, spanId: scored.spanId } : null;
+      return { ...projectDto(row!), aiTrace: trace };
     });
-  const reviewResponses = { 200: Project, 404: ErrorBody, 409: ErrorBody };
+  const Reviewed = Project.extend({
+    aiTrace: z.object({ traceId: z.string(), spanId: z.string().nullable() }).nullable(),
+  });
+  const reviewResponses = { 200: Reviewed, 404: ErrorBody, 409: ErrorBody };
 
   app.post(
     '/:id/ai-summary/confirm',

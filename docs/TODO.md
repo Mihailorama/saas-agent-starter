@@ -17,3 +17,17 @@
   thousands of rows; stream with a server-side cursor before orgs reach ~100k calls.
 - **`audit_log` is not append-only** for the app role, unlike `ai_calls`. Consider adding it
   to the append-only list in `packages/db/src/migrate.ts` (check nothing updates it first).
+- **Drift sampler loops over all orgs** (`services/worker-py/worker/judge.py`,
+  `sample_for_drift`): one query per organization because RLS needs `app.org_id`. Fine for
+  hundreds of orgs; past that, add a SECURITY DEFINER sampling function owned by a dedicated
+  role, or shard the schedule per org.
+- **Golden-set pull needs DB + S3 credentials** (`pnpm eval:pull`, `apps/api/src/eval-pull.ts`).
+  Fine for the operator; if product teams should pull without infra access, add an admin export
+  endpoint behind an API key.
+- **Langfuse is a copy, not reconciled.** Judge scores (worker) and browser feedback are pushed
+  best effort; a Langfuse outage loses those copies (Postgres keeps the record). If Langfuse
+  becomes a reporting source, add a backfill job from `ai_scores` (ids are stable, pushes
+  upsert).
+- **Open owner decision: does the small single-server tier run Langfuse?** (ADR 0009 "Open").
+  Measured cost about 1.9 GiB RAM (docs/STACK.md). Until decided, user feedback reaches
+  Langfuse only on the Full profile.

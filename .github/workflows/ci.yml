@@ -41,6 +41,26 @@ jobs:
       - if: failure()
         run: docker compose logs --tail 100
 
+  # Real-model eval of the golden sets (docs/adr/0009-llm-ops.md). Costs money, so it runs only
+  # when the ANTHROPIC_API_KEY secret exists (never on fork PRs). `pnpm check` already runs the
+  # key-free variant (`pnpm eval --fake-llm`) in the check job.
+  eval:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - if: env.ANTHROPIC_API_KEY == ''
+        run: echo "::notice::eval skipped, no ANTHROPIC_API_KEY secret"
+      - if: env.ANTHROPIC_API_KEY != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: env.ANTHROPIC_API_KEY != ''
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - if: env.ANTHROPIC_API_KEY != ''
+        run: node scripts/eval.mjs
+
   docker-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

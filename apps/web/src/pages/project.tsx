@@ -18,6 +18,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { type Attachment, api, formatBytes, formatDate, type Project } from '@/lib/api';
+import { type AiTrace, sendFeedback } from '@/lib/langfuse';
 
 async function upload(projectId: string, file: File) {
   const { uploadUrl } = await api<{ uploadUrl: string }>(`/api/projects/${projectId}/attachments`, {
@@ -43,11 +44,13 @@ function AiSummaryCard({ project }: { project: Project }) {
   const [editing, setEditing] = useState(false);
   const review = useMutation({
     mutationFn: (summary?: string) =>
-      api<Project>(
+      api<Project & { aiTrace: AiTrace | null }>(
         `/api/projects/${project.id}/ai-summary/${summary === undefined ? 'confirm' : 'correct'}`,
         { method: 'POST', json: summary === undefined ? {} : { summary } },
       ),
-    onSuccess: (updated) => {
+    onSuccess: ({ aiTrace, ...updated }) => {
+      // Confirm = thumbs up (1), correct = thumbs down (0); also stored as an ai_scores row.
+      void sendFeedback(aiTrace, updated.aiStatus === 'confirmed' ? 1 : 0);
       queryClient.setQueryData(['projects', project.id], updated);
       queryClient.invalidateQueries({ queryKey: ['projects'], exact: true });
       setEditing(false);

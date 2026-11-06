@@ -104,6 +104,13 @@ export async function buildApp() {
     });
   // Public: tells the sign-in page whether to offer "Sign in with SSO".
   app.get('/api/auth-config', { schema: { hide: true } }, async () => ({ sso: ssoEnabled }));
+  // Public: Langfuse origin + public key for browser feedback scores (Full LLM-ops profile).
+  app.get('/api/client-config', { schema: { hide: true } }, async () => ({
+    langfuse:
+      env.LANGFUSE_PUBLIC_URL && env.LANGFUSE_PUBLIC_KEY
+        ? { baseUrl: env.LANGFUSE_PUBLIC_URL, publicKey: env.LANGFUSE_PUBLIC_KEY }
+        : null,
+  }));
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);

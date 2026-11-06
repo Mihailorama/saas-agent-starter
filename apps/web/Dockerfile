@@ -10,7 +10,7 @@ RUN pnpm --filter web build
 
 # Static files + /api reverse proxy; runs as non-root on port 8080.
 FROM nginxinc/nginx-unprivileged:1.29-alpine
-ENV S3_PUBLIC_ORIGIN=http://localhost:8333
+ENV S3_PUBLIC_ORIGIN=http://localhost:8333 LANGFUSE_PUBLIC_ORIGIN=
 COPY apps/web/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 EXPOSE 8080

@@ -1,0 +1,44 @@
+# Example alert rules for the LLM quality loop (docs/adr/0009-llm-ops.md). Metrics arrive via
+# OTLP from the worker and the API (worker/ai.py, apps/api/src/scores.ts). Tune thresholds and
+# windows to your traffic; route them with Alertmanager (not part of this starter).
+groups:
+  - name: llm-ops
+    rules:
+      - alert: LlmJudgeScoreLow
+        # Judge scores come from the daily drift check, so look at a day-long window.
+        expr: |
+          sum by (purpose, prompt_template, prompt_version, model) (increase(app_ai_score_sum{source="judge"}[1d]))
+            / sum by (purpose, prompt_template, prompt_version, model) (increase(app_ai_score_count{source="judge"}[1d]))
+            < 0.7
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Judge score of {{ $labels.purpose }} {{ $labels.prompt_template }} v{{ $labels.prompt_version }} ({{ $labels.model }}) is {{ $value | humanize }}"
+      - alert: LlmUserRejectionsHigh
+        # User review: confirm = 1, correct = 0. More than half corrected over a day.
+        expr: |
+          sum by (purpose, prompt_version) (increase(app_ai_score_sum{source="user"}[1d]))
+            / sum by (purpose, prompt_version) (increase(app_ai_score_count{source="user"}[1d]))
+            < 0.5
+          and sum by (purpose, prompt_version) (increase(app_ai_score_count{source="user"}[1d])) >= 10
+        labels: { severity: warning }
+        annotations:
+          summary: "Users correct most {{ $labels.purpose }} v{{ $labels.prompt_version }} outputs"
+      - alert: LlmErrorRateHigh
+        expr: |
+          sum by (purpose, model) (rate(app_ai_calls_total{status="error"}[15m]))
+            / sum by (purpose, model) (rate(app_ai_calls_total[15m]))
+            > 0.1
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.purpose }} on {{ $labels.model }}: {{ $value | humanizePercentage }} of LLM calls fail"
+      - alert: LlmCostSpike
+        # Cost of the last hour is three times the hourly average of the last week.
+        expr: |
+          sum by (purpose, currency) (increase(app_ai_cost_total[1h]))
+            > 3 * sum by (purpose, currency) (increase(app_ai_cost_total[7d])) / 168
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM cost of {{ $labels.purpose }} is {{ $value | humanize }} {{ $labels.currency }}/h, 3x the weekly average"
