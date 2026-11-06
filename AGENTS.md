@@ -7,7 +7,8 @@ Single source of rules for coding agents (Claude Code, Codex, others) and humans
 
 `pnpm check` is green. It runs, in order: Biome (format + lint), typecheck with tsrs,
 TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
-pyright (strict), pytest, the license gate for all three ecosystems, and the Playwright smoke.
+pyright (strict), pytest, the license gate for all three ecosystems, the key-free eval
+(`pnpm eval --fake-llm`, needs Docker) and the Playwright smoke.
 It needs the local infra running (see Setup).
 
 Typecheck: day to day it is tsrs (`pnpm typecheck:fast`, Rust port of the TypeScript checker,
@@ -160,8 +161,9 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 
 A prompt is code: reviewed, tested, evaluated. Never edit a released `.v<N>.md`.
 
-1. Copy `prompts/<purpose>/<name>.v<N>.md` to `.v<N+1>.md` and change it. Add its hash to
-   `prompts/lock.json` (the failing `tests/test_prompts.py` prints the line).
+1. Copy `prompts/<purpose>/<name>.v<N>.md` to `.v<N+1>.md` and change it. Run `pnpm format`
+   (Biome also formats Markdown), then add its hash to `prompts/lock.json` (the failing
+   `tests/test_prompts.py` prints the line).
 2. Point the eval at it (`gate.prompt.version` in `evals/<purpose>/promptfooconfig.json`) and
    run `pnpm eval` with `ANTHROPIC_API_KEY` set. It must pass `gate.minScore`; compare with the
    previous version's score in the PR description.
