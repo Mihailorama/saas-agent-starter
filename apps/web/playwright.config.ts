@@ -6,10 +6,13 @@ for (const file of ['../../.env', '../../.env.example']) {
   } catch {}
 }
 
+// Override when 5173 is taken (e.g. agents running in parallel).
+const webPort = process.env.PLAYWRIGHT_PORT ?? '5173';
+
 export default defineConfig({
   testDir: 'e2e',
   retries: process.env.CI ? 1 : 0,
-  use: { baseURL: 'http://localhost:5173', trace: 'retain-on-failure' },
+  use: { baseURL: `http://localhost:${webPort}`, trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
@@ -18,8 +21,8 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: 'pnpm dev --port 5173 --strictPort',
-      url: 'http://localhost:5173',
+      command: `pnpm dev --port ${webPort} --strictPort`,
+      url: `http://localhost:${webPort}`,
       reuseExistingServer: !process.env.CI,
     },
   ],

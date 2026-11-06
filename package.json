@@ -15,6 +15,7 @@
     "db:migrate": "pnpm --filter @app/db migrate",
     "format": "biome format --write . && cargo fmt --all && cd services/worker-py && uv run ruff format",
     "typecheck": "pnpm -r typecheck",
+    "typecheck:fast": "pnpm -r typecheck:fast",
     "test": "pnpm -r test",
     "e2e": "pnpm --filter web e2e",
     "check:ts": "biome ci . && pnpm typecheck && pnpm test",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.6.5",
     "pyright": "1.1.414",
+    "tsrs": "0.22.0-ts7.1.0-beta",
     "typescript": "5.9.3"
   }
 }

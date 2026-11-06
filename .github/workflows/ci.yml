@@ -34,6 +34,9 @@ jobs:
       - run: pnpm --filter web exec playwright install --with-deps chromium
       - run: pnpm db:migrate
       - run: pnpm check
+      - name: tsrs typecheck (experimental, non-blocking; see ADR 0011)
+        continue-on-error: true
+        run: pnpm typecheck:fast
       - if: failure()
         run: docker compose logs --tail 100
 

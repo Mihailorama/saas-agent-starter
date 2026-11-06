@@ -6,6 +6,7 @@
     "dev": "node --watch --env-file=../../.env.example --env-file-if-exists=../../.env --import ./src/telemetry.ts src/index.ts",
     "start": "node --env-file=../../.env.example --env-file-if-exists=../../.env --import ./src/telemetry.ts src/index.ts",
     "typecheck": "tsc",
+    "typecheck:fast": "tsrs --noEmit -p .",
     "test": "vitest run"
   },
   "dependencies": {
