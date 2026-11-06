@@ -136,6 +136,11 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me-local-dev-secret-at-least-32-chars}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:${WEB_PORT:-8080}}
       TRUST_PROXY: "true"
+      POSTHOG_WEBHOOK_SECRET: ${POSTHOG_WEBHOOK_SECRET:-local-dev-posthog-webhook-secret}
+      POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
+      POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO: ${GITHUB_REPO:-}
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
       # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1
@@ -180,9 +185,24 @@ services:
       args: # browser DSN uses the host-visible address, e.g. http://<key>@localhost:8000/1
         VITE_SENTRY_DSN: ${WEB_SENTRY_DSN:-}
         VITE_SENTRY_RELEASE: ${GIT_SHA:-dev}
+        # analytics sinks; empty = off (docs/product-analytics.md)
+        VITE_RELEASE: ${GIT_SHA:-dev}
+        VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
+        VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
+        VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID: ${VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID:-}
+        VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID: ${VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID:-}
+        VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}
+        VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
+        VITE_GA4_ID: ${VITE_GA4_ID:-}
+        VITE_YM_ID: ${VITE_YM_ID:-}
+        VITE_YM_WEBVISOR: ${VITE_YM_WEBVISOR:-}
+        VITE_LANGFUSE_PUBLIC_KEY: ${VITE_LANGFUSE_PUBLIC_KEY:-}
+        VITE_LANGFUSE_HOST: ${VITE_LANGFUSE_HOST:-}
     environment:
       S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}"
       SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
+      # Origins of the enabled analytics sinks for the CSP, e.g. "https://*.posthog.com"
+      ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
     depends_on: [api]
     ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
 
@@ -282,6 +302,45 @@ services:
       EMAIL_URL: consolemail://
       ENABLE_USER_REGISTRATION: "true" # local dev: first user signs up in the UI
     ports: ["127.0.0.1:${GLITCHTIP_PORT:-8000}:8000"]
+
+  # Umami 3 (MIT): self-hosted product analytics for on-prem / RU / no-third-party deployments.
+  # docker compose --profile analytics up -d ; docs/product-analytics.md. Own database `umami`
+  # on our Postgres server; PRIVATE_MODE=1 makes it call nothing outside (no telemetry, no
+  # update check, no favicon service).
+  umami-db:
+    logging: *logging
+    profiles: [analytics]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'umami'" | grep -q 1 ||
+         psql -c "create role umami login password 'umami'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'umami'" | grep -q 1 ||
+         psql -c "create database umami owner umami")
+
+  umami:
+    logging: *logging
+    profiles: [analytics]
+    image: ghcr.io/umami-software/umami:3.4.1
+    depends_on: { umami-db: { condition: service_completed_successfully } }
+    init: true
+    mem_limit: 1g # measured: ~256 MiB idle, ~780 MiB peak at ~75 events/s (docs/product-analytics.md)
+    environment:
+      DATABASE_URL: postgresql://umami:umami@postgres:5432/umami
+      APP_SECRET: ${UMAMI_APP_SECRET:-local-dev-umami-app-secret}
+      PRIVATE_MODE: "1"
+      DISABLE_TELEMETRY: "1"
+      DISABLE_UPDATES: "1"
+      MCP_ENABLED: "1" # read-only /mcp for coding agents (API key auth), see .mcp.json.example
+    ports: ["127.0.0.1:${UMAMI_PORT:-3100}:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/heartbeat >/dev/null"]
+      interval: 5s
+      start_period: 60s
+      retries: 30
 
 volumes:
   pgdata:

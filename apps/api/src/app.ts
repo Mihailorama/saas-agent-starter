@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
-import { trace } from '@opentelemetry/api';
+import { isSpanContextValid, trace } from '@opentelemetry/api';
 import * as Sentry from '@sentry/node-core';
 import { fromNodeHeaders } from 'better-auth/node';
 import { sql } from 'drizzle-orm';
@@ -19,6 +19,7 @@ import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
+import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -78,6 +79,12 @@ export async function buildApp() {
     }
   });
 
+  // Lets the web attach the trace id to analytics error events (docs/product-analytics.md).
+  app.addHook('onSend', async (_req, reply) => {
+    const ctx = trace.getActiveSpan()?.spanContext();
+    if (ctx && isSpanContextValid(ctx)) reply.header('x-trace-id', ctx.traceId);
+  });
+
   app.get('/healthz', { schema: { hide: true } }, async () => ({ ok: true }));
   if (env.NODE_ENV !== 'production') {
     // Dev only: proves error reporting end to end (an event with stack trace and trace_id).
@@ -129,6 +136,7 @@ export async function buildApp() {
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
+  await app.register(hookRoutes, { prefix: '/api/hooks' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
 
   return app;

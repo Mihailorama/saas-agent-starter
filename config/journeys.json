@@ -1,0 +1,27 @@
+{
+  "$comment": "Customer journeys as code (docs/product-analytics.md). Steps are event names from config/events.json, in order. `pnpm journeys:sync` turns each journey into a PostHog funnel insight plus a threshold alert (conversion below minConversion) and an Umami funnel; `pnpm journeys:report` prints the current funnel. windowDays: how long a user has to finish the journey. minConversion: overall first-to-last-step conversion in percent below which the PostHog alert fires. maxStepSeconds: target time per step, reported (median from PostHog) but not alerted on.",
+  "journeys": [
+    {
+      "name": "activation",
+      "description": "A new visitor signs up, creates an organization and a first project.",
+      "windowDays": 1,
+      "minConversion": 30,
+      "steps": [
+        { "event": "signup_started" },
+        { "event": "signup_completed", "maxStepSeconds": 300 },
+        { "event": "org_created", "maxStepSeconds": 600 },
+        { "event": "project_created", "maxStepSeconds": 1800 }
+      ]
+    },
+    {
+      "name": "ai-summary-review",
+      "description": "A member sees an AI summary and confirms or corrects it.",
+      "windowDays": 7,
+      "minConversion": 20,
+      "steps": [
+        { "event": "ai_summary_shown" },
+        { "event": "ai_summary_reviewed", "maxStepSeconds": 3600 }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 
 test('sign up, create an organization and a project', async ({ page }) => {
+  // On-prem default: no request leaves our own hosts (analytics sinks are env-gated).
+  const hosts = new Set<string>();
+  page.on('request', (req) => hosts.add(new URL(req.url()).hostname));
   await page.goto('/');
   await expect(page).toHaveURL(/sign-in/);
 
@@ -26,6 +29,10 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await page.getByRole('link', { name: 'AI calls' }).click();
   await expect(page.getByRole('heading', { name: 'AI calls' })).toBeVisible();
   await expect(page.getByText('No AI calls match these filters.')).toBeVisible();
+
+  // No third-party sink configured in tests: nothing to consent to, no foreign hosts.
+  await expect(page.getByRole('region', { name: 'Analytics consent' })).toHaveCount(0);
+  expect([...hosts]).toEqual(['localhost']);
 });
 
 test('AI transparency page is public', async ({ page }) => {

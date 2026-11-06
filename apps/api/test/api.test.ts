@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { aiCalls, auditLog, projects, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
 import { db, pool } from '../src/db.ts';
-import { allowedOrigins } from '../src/env.ts';
+import { allowedOrigins, env } from '../src/env.ts';
 import { ensureBucket } from '../src/s3.ts';
 import {
   closeTemporal,
@@ -241,7 +241,8 @@ describe('AI summary review', () => {
     expect(early.statusCode).toBe(409);
 
     // The worker stores a summary (simulated here).
-    const aiCall = await recordAiCall(org);
+    const traceId = 'a'.repeat(32);
+    const aiCall = await recordAiCall(org, { traceId });
     await withOrg(db, org, (tx) =>
       tx
         .update(projects)
@@ -255,8 +256,12 @@ describe('AI summary review', () => {
       aiSummary: 'A Moon landing.',
       aiStatus: 'confirmed',
       aiCallId: aiCall.id,
+      aiTraceId: traceId, // feedback scores attach to this trace (docs/product-analytics.md)
       reviewedBy: owner.id,
     });
+    expect((await call(owner, 'GET', `/api/projects/${project.id}`)).json().aiTraceId).toBe(
+      traceId,
+    );
 
     const url = `/api/projects/${project.id}/ai-summary/correct`;
     expect((await call(owner, 'POST', url, { summary: '  ' })).statusCode).toBe(400);
@@ -333,5 +338,101 @@ describe('AI calls log', () => {
     await createOrg(stranger);
     expect((await call(stranger, 'GET', base)).statusCode).toBe(403);
     expect((await call(null, 'GET', base)).statusCode).toBe(401);
+  });
+});
+
+describe('PostHog webhook -> GitHub issue', () => {
+  const hook = (secret: string | null, event: object) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/hooks/posthog',
+      remoteAddress: ip(),
+      headers: secret === null ? {} : { 'x-webhook-secret': secret },
+      payload: { event },
+    });
+  const alert = {
+    event: '$insight_alert_firing',
+    properties: {
+      alert_name: 'activation below 30%',
+      insight_name: 'Journey: activation',
+      insight_id: 'AbC123',
+      state: 'Firing',
+      breaches: 'The insight value (12%) is below the lower threshold (30%)',
+    },
+  };
+  const survey = {
+    event: 'survey sent',
+    properties: {
+      $survey_name: 'Report a problem',
+      $survey_questions: [
+        {
+          id: 'q1',
+          question: 'What went wrong?',
+          response: 'Upload fails, mail me at a@example.com',
+        },
+      ],
+      $pathname: '/projects/$projectId',
+      release: 'abc123',
+    },
+  };
+
+  it('needs the shared secret', async () => {
+    expect((await hook(null, alert)).statusCode).toBe(401);
+    expect((await hook('wrong', alert)).statusCode).toBe(401);
+  });
+
+  it('dry-runs without a GitHub token and ignores unrelated events', async () => {
+    const secret = env.POSTHOG_WEBHOOK_SECRET!;
+    const planned = (await hook(secret, alert)).json();
+    expect(planned).toMatchObject({
+      action: 'dry-run',
+      label: 'cjm-regression',
+      title: '[cjm] activation below 30%',
+    });
+    expect(planned.body).toContain('below the lower threshold');
+    const feedback = (await hook(secret, survey)).json();
+    expect(feedback).toMatchObject({ action: 'dry-run', label: 'from-users' });
+    expect(feedback.body).not.toContain('a@example.com');
+    expect((await hook(secret, { event: '$pageview', properties: {} })).json()).toEqual({
+      action: 'ignored',
+    });
+    // Thumbs on AI answers stay in PostHog AI observability.
+    const thumbs = { ...survey, properties: { ...survey.properties, $ai_trace_id: 't' } };
+    expect((await hook(secret, thumbs)).json()).toEqual({ action: 'ignored' });
+  });
+
+  it('opens an issue, then comments on it for the same alert', async () => {
+    Object.assign(env, { GITHUB_TOKEN: 'test-token', GITHUB_REPO: 'example/app' });
+    const issues: { number: number; title: string }[] = [];
+    const calls: string[] = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      calls.push(
+        `${init?.method ?? 'GET'} ${url.replace('https://api.github.com/repos/example/app', '')}`,
+      );
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-token');
+      if (init?.method === 'POST' && url.endsWith('/issues')) {
+        const body = JSON.parse(String(init.body));
+        expect(body.labels).toEqual(['cjm-regression']);
+        issues.push({ number: 7, title: body.title });
+        return Response.json({ number: 7 }, { status: 201 });
+      }
+      if (init?.method === 'POST') return Response.json({}, { status: 201 });
+      return Response.json(issues);
+    });
+    try {
+      const secret = env.POSTHOG_WEBHOOK_SECRET!;
+      expect((await hook(secret, alert)).json()).toEqual({ action: 'created', issue: 7 });
+      expect((await hook(secret, alert)).json()).toEqual({ action: 'commented', issue: 7 });
+      expect(calls).toEqual([
+        'GET /issues?state=open&per_page=100&labels=cjm-regression',
+        'POST /issues',
+        'GET /issues?state=open&per_page=100&labels=cjm-regression',
+        'POST /issues/7/comments',
+      ]);
+    } finally {
+      fetchMock.mockRestore();
+      Object.assign(env, { GITHUB_TOKEN: undefined, GITHUB_REPO: undefined });
+    }
   });
 });

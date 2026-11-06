@@ -40,6 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { track } from '@/lib/analytics';
 import { api, formatDate, type Project } from '@/lib/api';
 
 const projectsQuery = { queryKey: ['projects'], queryFn: () => api<Project[]>('/api/projects') };
@@ -64,6 +65,7 @@ function NewProjectDialog({
     mutationFn: (json: { name: string; description: string }) =>
       api<Project>('/api/projects', { method: 'POST', json }),
     onSuccess: (project) => {
+      track('project_created', { has_description: Boolean(project.description) });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast.success(`Created ${project.name}`);
       onOpenChange(false);
@@ -83,7 +85,7 @@ function NewProjectDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <form onSubmit={onSubmit} className="space-y-4">
+        <form onSubmit={onSubmit} className="space-y-4" aria-label="New project">
           <DialogHeader>
             <DialogTitle>New project</DialogTitle>
             <DialogDescription>

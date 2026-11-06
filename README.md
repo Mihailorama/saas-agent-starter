@@ -14,6 +14,8 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
+- **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
+  synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
 - **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
   `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
   dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
@@ -100,6 +102,16 @@ Off until you pick a model: set `AI_PROJECT_SUMMARY_PROVIDER=anthropic`,
 `config/ai-models.json`), then restart the worker. New projects with a description get an
 AI-generated summary that members can confirm or correct; admins see every call under
 "AI calls". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
+
+## Product analytics
+
+Off until you set env. PostHog Cloud (EU or US) is the default: `VITE_POSTHOG_KEY` and
+`VITE_POSTHOG_HOST` for the web, then `pnpm journeys:sync` turns `config/journeys.json` into
+funnels, alerts, a feedback survey and webhooks that open GitHub issues for agents. Data must
+stay in place (on-prem, RU)? `docker compose --profile analytics up -d` runs Umami (MIT) on the
+same Postgres. Optional, consent-gated: GA4, Yandex Metrika. AI-answer thumbs go to PostHog AI
+observability and/or Langfuse. Events are catalogued in `config/events.json` and checked in CI.
+Details: [docs/product-analytics.md](docs/product-analytics.md).
 
 ## SSO
 

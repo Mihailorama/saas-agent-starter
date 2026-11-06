@@ -11,7 +11,9 @@ import {
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ConsentBanner } from '@/components/consent-banner';
 import { Toaster } from '@/components/ui/sonner';
+import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
@@ -27,6 +29,7 @@ const rootRoute = createRootRoute({
     <>
       <Outlet />
       <Toaster richColors closeButton />
+      <ConsentBanner />
     </>
   ),
 });
@@ -79,6 +82,10 @@ const router = createRouter({
     appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute]),
   ]),
 });
+
+initAnalytics();
+// Page views carry the route pattern (/projects/$projectId), never ids from the URL.
+router.subscribe('onResolved', () => page(router.state.matches.at(-1)?.fullPath ?? '/'));
 
 declare module '@tanstack/react-router' {
   interface Register {
