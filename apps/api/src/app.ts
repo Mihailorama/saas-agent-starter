@@ -3,6 +3,8 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
+import { trace } from '@opentelemetry/api';
+import * as Sentry from '@sentry/node-core';
 import { fromNodeHeaders } from 'better-auth/node';
 import { sql } from 'drizzle-orm';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -28,6 +30,12 @@ export async function buildApp() {
     genReqId: () => randomUUID(),
     logger: {
       level: env.LOG_LEVEL,
+      // trace_id/span_id on every line inside a span: Grafana links Loki lines to Jaeger traces.
+      formatters: { level: (label) => ({ level: label }) }, // "info", not 30: Loki detects it
+      mixin: () => {
+        const ctx = trace.getActiveSpan()?.spanContext();
+        return ctx ? { trace_id: ctx.traceId, span_id: ctx.spanId } : {};
+      },
       redact: { paths: ['*.password', '*.token', '*.secret', '*.cookie', '*.authorization'] },
       serializers: {
         // Never log query strings (auth flows put tokens there) or headers.
@@ -36,6 +44,11 @@ export async function buildApp() {
     },
   }).withTypeProvider<ZodTypeProvider>();
 
+  // 5xx and unexpected errors to the error tracker (no-op without SENTRY_DSN). Runs inside the
+  // request's span, so the event carries its trace_id (sentry.ts).
+  app.addHook('onError', async (_req, _reply, err) => {
+    if ((err.statusCode ?? 500) >= 500) Sentry.captureException(err);
+  });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorateRequest('tenant');
@@ -66,6 +79,12 @@ export async function buildApp() {
   });
 
   app.get('/healthz', { schema: { hide: true } }, async () => ({ ok: true }));
+  if (env.NODE_ENV !== 'production') {
+    // Dev only: proves error reporting end to end (an event with stack trace and trace_id).
+    app.get('/api/debug/error', { schema: { hide: true } }, async () => {
+      throw new Error('debug: test error from the API');
+    });
+  }
   app.get('/readyz', { schema: { hide: true } }, async (_req, reply) => {
     try {
       await Promise.all([db.execute(sql`select 1`), redis.ping()]);

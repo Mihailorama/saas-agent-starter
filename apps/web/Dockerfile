@@ -6,11 +6,14 @@ COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --filter web...
 COPY apps/web apps/web
 COPY config config
+# Browser error reporting (public DSN, baked into the bundle; empty = off).
+ARG VITE_SENTRY_DSN=
+ARG VITE_SENTRY_RELEASE=dev
 RUN pnpm --filter web build
 
 # Static files + /api reverse proxy; runs as non-root on port 8080.
 FROM nginxinc/nginx-unprivileged:1.29-alpine
-ENV S3_PUBLIC_ORIGIN=http://localhost:8333
+ENV S3_PUBLIC_ORIGIN=http://localhost:8333 SENTRY_PUBLIC_ORIGIN=""
 COPY apps/web/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 EXPOSE 8080

@@ -1,3 +1,4 @@
+# Traces + metrics (both twins). Logs to Loki are added by collector-logs.yaml.
 receivers:
   otlp:
     protocols:
@@ -5,6 +6,7 @@ receivers:
       http: { endpoint: 0.0.0.0:4318 }
 processors:
   batch: {}
+  memory_limiter: { check_interval: 1s, limit_percentage: 80, spike_limit_percentage: 20 }
 exporters:
   otlp_grpc/jaeger:
     endpoint: jaeger:4317
@@ -13,5 +15,11 @@ exporters:
     endpoint: http://prometheus:9090/api/v1/otlp
 service:
   pipelines:
-    traces: { receivers: [otlp], processors: [batch], exporters: [otlp_grpc/jaeger] }
-    metrics: { receivers: [otlp], processors: [batch], exporters: [otlp_http/prometheus] }
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/prometheus]

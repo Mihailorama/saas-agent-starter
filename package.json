@@ -23,7 +23,8 @@
     "check:py": "cd services/worker-py && uv sync --locked && uv run ruff format --check && uv run ruff check && pyright && uv run pytest -q",
     "check:licenses": "node scripts/license-check.mjs",
     "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm e2e",
-    "check:release": "pnpm check && pnpm typecheck"
+    "check:release": "pnpm check && pnpm typecheck",
+    "sbom": "node scripts/sbom.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",

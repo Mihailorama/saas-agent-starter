@@ -1,7 +1,14 @@
 # Local stack. Infra only:   docker compose up -d --wait postgres redis s3 temporal-ui
 # Everything:                docker compose up -d --build
-# With tracing/metrics:      docker compose --profile observability up -d
+# With logs/traces/metrics:  docker compose --profile observability up -d   (Grafana :3001)
+# Permissive-only twin:      add -f docker-compose.yml -f compose.permissive.yaml (ADR 0010)
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
+
+# Every service: the json-file log driver stamps compose project + service into each line,
+# so the collector ships only this project's logs to Loki, labelled by service.
+x-logging: &logging
+  driver: json-file
+  options: { labels: "com.docker.compose.project,com.docker.compose.service", max-size: 10m }
 
 x-app-env: &app-env
   NODE_ENV: ${NODE_ENV:-development}
@@ -16,6 +23,8 @@ x-app-env: &app-env
 
 services:
   postgres:
+    logging: *logging
+    mem_limit: 512m
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: postgres
@@ -30,6 +39,8 @@ services:
 
   # Redis: rate-limit store.
   redis:
+    logging: *logging
+    mem_limit: 64m
     image: redis:8-alpine
     ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     healthcheck:
@@ -39,6 +50,8 @@ services:
 
   # S3-compatible object storage for local dev (SeaweedFS). Production: any S3 via env.
   s3:
+    logging: *logging
+    mem_limit: 256m
     image: chrislusf/seaweedfs:4.52
     command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0
     ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
@@ -52,6 +65,8 @@ services:
 
   # Temporal, per temporalio/samples-server compose (postgres variant), on our Postgres server.
   temporal-setup:
+    logging: *logging
+    mem_limit: 128m
     image: temporalio/admin-tools:1.32.0
     depends_on: { postgres: { condition: service_healthy } }
     environment: { POSTGRES_SEEDS: postgres, POSTGRES_USER: postgres, SQL_PASSWORD: postgres }
@@ -59,6 +74,8 @@ services:
     entrypoint: ["/bin/sh", "/setup.sh"]
 
   temporal:
+    logging: *logging
+    mem_limit: 512m
     image: temporalio/server:1.32.0
     depends_on: { temporal-setup: { condition: service_completed_successfully } }
     environment:
@@ -82,6 +99,8 @@ services:
       retries: 60
 
   temporal-namespace:
+    logging: *logging
+    mem_limit: 128m
     image: temporalio/admin-tools:1.32.0
     depends_on: { temporal: { condition: service_healthy } }
     restart: on-failure:10
@@ -93,19 +112,25 @@ services:
          temporal operator namespace create -n default --address temporal:7233)
 
   temporal-ui:
+    logging: *logging
+    mem_limit: 128m
     image: temporalio/ui:2.54.1
     depends_on: { temporal-namespace: { condition: service_completed_successfully } }
     environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_UI_PORT: "8233" }
     ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8233"]
 
   migrate:
+    logging: *logging
+    mem_limit: 256m
     build: { context: ., dockerfile: apps/api/Dockerfile }
     command: ["node", "packages/db/src/migrate.ts"]
     environment: *app-env
     depends_on: { postgres: { condition: service_healthy } }
 
   api:
-    build: { context: ., dockerfile: apps/api/Dockerfile }
+    logging: *logging
+    mem_limit: 384m
+    build: { context: ., dockerfile: apps/api/Dockerfile, args: { GIT_SHA: "${GIT_SHA:-dev}" } }
     environment:
       <<: *app-env
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me-local-dev-secret-at-least-32-chars}
@@ -113,6 +138,9 @@ services:
       TRUST_PROXY: "true"
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
+      # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1
+      SENTRY_DSN: ${API_SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -121,11 +149,18 @@ services:
     ports: ["127.0.0.1:${API_PORT:-3000}:3000"]
 
   worker:
-    build: { context: ., dockerfile: services/worker-py/Dockerfile }
+    logging: *logging
+    mem_limit: 384m
+    build:
+      context: .
+      dockerfile: services/worker-py/Dockerfile
+      args: { GIT_SHA: "${GIT_SHA:-dev}" }
     environment:
       <<: *app-env
       # With --profile observability: http://otel-collector:4318 (OTLP/HTTP, like the API)
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
+      SENTRY_DSN: ${WORKER_SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
       AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}
@@ -137,30 +172,118 @@ services:
       temporal-namespace: { condition: service_completed_successfully }
 
   web:
-    build: { context: ., dockerfile: apps/web/Dockerfile }
-    environment: { S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}" }
+    logging: *logging
+    mem_limit: 64m
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args: # browser DSN uses the host-visible address, e.g. http://<key>@localhost:8000/1
+        VITE_SENTRY_DSN: ${WEB_SENTRY_DSN:-}
+        VITE_SENTRY_RELEASE: ${GIT_SHA:-dev}
+    environment:
+      S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}"
+      SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
     depends_on: [api]
     ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
 
+  # --- observability profile: OTel Collector -> Jaeger (traces), Prometheus (metrics),
+  # Loki (logs); Grafana is the single pane. compose.permissive.yaml drops Loki + Grafana.
   otel-collector:
     profiles: [observability]
-    image: otel/opentelemetry-collector:0.164.0
-    command: ["--config=/etc/otel/collector.yaml"]
-    volumes: ["./infra/otel/collector.yaml:/etc/otel/collector.yaml:ro"]
-    ports: ["127.0.0.1:4317:4317", "127.0.0.1:4318:4318"]
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    logging: *logging
+    mem_limit: 384m
+    user: "0" # reads /var/lib/docker/containers (root-owned); mounted read-only
+    command: ["--config=/etc/otel/collector.yaml", "--config=/etc/otel/collector-logs.yaml"]
+    environment: { COMPOSE_PROJECT: "${COMPOSE_PROJECT_NAME:-saas-agent-starter}" }
+    volumes:
+      - ./infra/otel:/etc/otel:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    ports:
+      - "127.0.0.1:${OTEL_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
 
   jaeger:
     profiles: [observability]
     image: jaegertracing/jaeger:2.23.0
-    ports: ["127.0.0.1:16686:16686"]
+    logging: *logging
+    mem_limit: 512m # in-memory trace store; restart drops traces
+    ports: ["127.0.0.1:${JAEGER_PORT:-16686}:16686"]
 
   prometheus:
     profiles: [observability]
     image: prom/prometheus:v3.15.1
+    logging: *logging
+    mem_limit: 512m
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-otlp-receiver"]
-    volumes: ["./infra/otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
-    ports: ["127.0.0.1:9090:9090"]
+    volumes:
+      - ./infra/otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/otel/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
+
+  loki:
+    profiles: [observability]
+    image: grafana/loki:3.7.9
+    logging: *logging
+    mem_limit: 512m
+    volumes: [lokidata:/loki]
+
+  grafana:
+    profiles: [observability]
+    image: grafana/grafana:13.3.0
+    logging: *logging
+    mem_limit: 512m
+    depends_on: [loki, prometheus, jaeger]
+    environment:
+      # Local dev only (port bound to 127.0.0.1): no login, everyone is admin.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Loki "Errors for this trace" link; Sentry: https://<org>.sentry.io/issues/
+      ERROR_TRACKER_ISSUES_URL: ${ERROR_TRACKER_ISSUES_URL:-http://localhost:${GLITCHTIP_PORT:-8000}/local/issues}
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:${GRAFANA_PORT:-3001}:3000"]
+
+  # --- glitchtip profile: Sentry-compatible error tracker (MIT), tier S. Own database on the
+  # app's Postgres server, Redis db 1. Bigger installs: Sentry (SaaS or self-hosted), same SDKs.
+  glitchtip-db:
+    profiles: [glitchtip]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 64m
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        psql -h postgres -U postgres -tAc "select 1 from pg_database where datname='glitchtip'" | grep -q 1 ||
+        psql -h postgres -U postgres -c "create database glitchtip"
+
+  glitchtip:
+    profiles: [glitchtip]
+    image: glitchtip/glitchtip:6.2.6
+    logging: *logging
+    mem_limit: 512m # docs: 256 MB minimum all-in-one, 512 MB recommended
+    depends_on:
+      glitchtip-db: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    environment:
+      SERVER_ROLE: all_in_one # web + worker in one process
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/glitchtip
+      VALKEY_URL: redis://redis:6379/1
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-local-dev-glitchtip-secret-key}
+      GLITCHTIP_DOMAIN: http://localhost:${GLITCHTIP_PORT:-8000}
+      DEFAULT_FROM_EMAIL: glitchtip@example.com
+      EMAIL_URL: consolemail://
+      ENABLE_USER_REGISTRATION: "true" # local dev: first user signs up in the UI
+    ports: ["127.0.0.1:${GLITCHTIP_PORT:-8000}:8000"]
 
 volumes:
   pgdata:
   s3data:
+  lokidata:

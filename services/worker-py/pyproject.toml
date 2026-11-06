@@ -12,6 +12,7 @@ dependencies = [
   "opentelemetry-exporter-otlp-proto-http>=1.45",
   "opentelemetry-sdk>=1.45",
   "saas-core",
+  "sentry-sdk>=2.74",
   "temporalio>=1.35",
 ]
 

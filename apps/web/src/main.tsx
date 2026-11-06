@@ -1,4 +1,5 @@
 import './index.css';
+import '@/lib/sentry';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRoute,

@@ -23,4 +23,4 @@ Status: accepted
 - OpenTelemetry in the API (HTTP, Fastify, pg, ioredis instrumentation), the Python worker and
   the Temporal SDK interceptors; export via OTLP. The `observability` compose profile runs the
   OTel Collector, Jaeger (traces) and Prometheus (metrics, also scraping the Temporal server).
-  Grafana and Loki (dashboards, logs) will join the profile in a later change.
+  Grafana and Loki (dashboards, logs) joined the profile in ADR 0010.
