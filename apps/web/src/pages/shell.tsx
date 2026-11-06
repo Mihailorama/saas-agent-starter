@@ -13,7 +13,7 @@ import {
   Sparkles,
   Sun,
 } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { identify, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -60,13 +61,14 @@ function CreateOrgForm({ onDone }: { onDone?: () => void }) {
     const { error } = await authClient.organization.create({ name, slug });
     setPending(false);
     if (error) return toast.error(error.message ?? 'Could not create organization');
+    track('org_created');
     await queryClient.invalidateQueries();
     toast.success(`Created ${name}`);
     onDone?.();
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
+    <form onSubmit={onSubmit} className="space-y-4" aria-label="New organization">
       <div className="space-y-2">
         <Label htmlFor="org-name">Organization name</Label>
         <Input id="org-name" name="name" placeholder="Acme Inc." required autoFocus />
@@ -164,6 +166,7 @@ function UserMenu() {
         <DropdownMenuItem
           onSelect={async () => {
             await authClient.signOut();
+            identify(undefined);
             navigate({ to: '/sign-in' });
           }}
         >
@@ -181,7 +184,12 @@ const navActive = 'bg-accent font-medium text-foreground!';
 export function Shell() {
   const { data: orgs, isPending } = authClient.useListOrganizations();
   const { data: member } = authClient.useActiveMember();
-  const onLlmOps = useLocation({ select: (l) => l.pathname.startsWith('/llm-ops') });
+  const { data: session } = authClient.useSession();
+  const userId = session?.user.id;
+  useEffect(() => {
+    if (userId) identify(userId);
+  }, [userId]);
+  const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
 
@@ -221,12 +229,12 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, !onLlmOps && navActive)}>
+          <Link to="/" className={cn(navLink, !onAiCalls && navActive)}>
             <FolderKanban className="size-4" /> Projects
           </Link>
           {isAdmin && (
-            <Link to="/llm-ops" className={cn(navLink, onLlmOps && navActive)}>
-              <ScrollText className="size-4" /> LLM Ops
+            <Link to="/ai-calls" className={navLink} activeProps={{ className: navActive }}>
+              <ScrollText className="size-4" /> AI calls
             </Link>
           )}
         </nav>

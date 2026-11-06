@@ -3,7 +3,7 @@ server {
   root /usr/share/nginx/html;
   server_tokens off;
 
-  add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ${S3_PUBLIC_ORIGIN} ${LANGFUSE_PUBLIC_ORIGIN}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' ${ANALYTICS_ORIGINS}; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${ANALYTICS_ORIGINS}; connect-src 'self' ${S3_PUBLIC_ORIGIN} ${SENTRY_PUBLIC_ORIGIN} ${ANALYTICS_ORIGINS}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
   add_header X-Content-Type-Options nosniff always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;

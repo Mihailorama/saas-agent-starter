@@ -1,0 +1,65 @@
+{
+  "$comment": "Product analytics event catalog (docs/product-analytics.md). Every track('<name>', props) call in apps/web must use a name listed here and only the props declared for it; `pnpm check:events` enforces that in CI. Prop types: string | number | boolean. `pii: true` means the event may identify a person: it is sent to self-hosted sinks only (Umami), never to third-party sinks (PostHog Cloud, GA4, Yandex Metrika). Rage clicks, dead clicks, web vitals and exceptions are not listed: PostHog autocaptures them ($rageclick, $dead_click, $web_vitals, $exception); Umami covers web vitals and heatmaps itself.",
+  "events": {
+    "page_view": {
+      "description": "SPA route change. `route` is the route pattern (e.g. /projects/$projectId), never the concrete URL.",
+      "pii": false,
+      "props": { "route": "string" }
+    },
+    "signup_started": {
+      "description": "The sign-up form was opened on the sign-in page.",
+      "pii": false,
+      "props": {}
+    },
+    "signup_completed": {
+      "description": "Account created (email/password).",
+      "pii": false,
+      "props": {}
+    },
+    "signin_completed": {
+      "description": "Signed in (email/password).",
+      "pii": false,
+      "props": {}
+    },
+    "org_created": {
+      "description": "An organization was created from the onboarding card or the org switcher.",
+      "pii": false,
+      "props": {}
+    },
+    "project_created": {
+      "description": "A project was created.",
+      "pii": false,
+      "props": { "has_description": "boolean" }
+    },
+    "ai_summary_shown": {
+      "description": "An AI summary was displayed to a member for review.",
+      "pii": false,
+      "props": { "purpose": "string" }
+    },
+    "ai_summary_reviewed": {
+      "description": "A member confirmed or corrected an AI summary.",
+      "pii": false,
+      "props": { "purpose": "string", "action": "string" }
+    },
+    "ai_feedback": {
+      "description": "Thumbs up/down on an AI result. Also sent as a Langfuse score and a PostHog AI-observability survey response when configured.",
+      "pii": false,
+      "props": { "purpose": "string", "rating": "number", "trace_id": "string" }
+    },
+    "api_error": {
+      "description": "An API call the user triggered failed. `path` has ids replaced by :id; `trace_id` links to the OpenTelemetry trace and the Sentry/GlitchTip event.",
+      "pii": false,
+      "props": { "method": "string", "path": "string", "status": "number", "trace_id": "string" }
+    },
+    "form_error": {
+      "description": "Browser form validation blocked a submit (required, too short...). Field names only, never values.",
+      "pii": false,
+      "props": { "form": "string", "field": "string", "reason": "string" }
+    },
+    "consent_set": {
+      "description": "The user answered the analytics consent banner.",
+      "pii": false,
+      "props": { "analytics": "boolean" }
+    }
+  }
+}

@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { attachments, projects } from '@app/db';
-import { and, desc, eq } from 'drizzle-orm';
+import { aiCalls, attachments, projects, type Tx } from '@app/db';
+import { and, desc, eq, getTableColumns } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { presignDownload, presignUpload } from '../s3.ts';
-import { addUserScore } from '../scores.ts';
 import { startProjectCreated } from '../temporal.ts';
 import { httpError, requireRole, withTenant } from '../tenant.ts';
 
@@ -17,6 +16,8 @@ const Project = z.object({
   aiSummary: z.string().nullable(),
   aiStatus: z.enum(['generated', 'confirmed', 'corrected']).nullable(),
   aiCallId: z.uuid().nullable(),
+  /** Trace id of the AI call; user feedback scores attach to it (docs/product-analytics.md). */
+  aiTraceId: z.string().nullable(),
   reviewedBy: z.string().nullable(),
   reviewedAt: z.string().nullable(),
   createdAt: z.string(),
@@ -49,8 +50,17 @@ const toDto = <T extends { createdAt: Date }>({ createdAt, ...rest }: T) => ({
   ...rest,
   createdAt: createdAt.toISOString(),
 });
-const projectDto = ({ orgId: _, reviewedAt, ...p }: typeof projects.$inferSelect) =>
-  toDto({ ...p, reviewedAt: reviewedAt?.toISOString() ?? null });
+type ProjectRow = typeof projects.$inferSelect & { aiTraceId?: string | null };
+const projectDto = ({ orgId: _, reviewedAt, aiTraceId, ...p }: ProjectRow) =>
+  toDto({ ...p, aiTraceId: aiTraceId ?? null, reviewedAt: reviewedAt?.toISOString() ?? null });
+/** Projects with the trace id of their AI call (same tenant, RLS applies to both tables). */
+const selectProjects = (tx: Tx) =>
+  tx
+    .select({ ...getTableColumns(projects), aiTraceId: aiCalls.traceId })
+    .from(projects)
+    .leftJoin(aiCalls, eq(aiCalls.id, projects.aiCallId));
+const loadProject = async (tx: Tx, id: string) =>
+  (await selectProjects(tx).where(eq(projects.id, id)))[0];
 const attachmentDto = ({ orgId: _, projectId: __, ...a }: typeof attachments.$inferSelect) =>
   toDto(a);
 const objectKey = (a: { orgId: string; projectId: string; id: string }) =>
@@ -62,7 +72,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get('/', { ...member, schema: { tags, response: { 200: z.array(Project) } } }, async (req) =>
     withTenant(req, async (tx) =>
-      (await tx.select().from(projects).orderBy(desc(projects.createdAt))).map(projectDto),
+      (await selectProjects(tx).orderBy(desc(projects.createdAt))).map(projectDto),
     ),
   );
 
@@ -102,7 +112,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
     { ...member, schema: { tags, params: Id, response: { 200: Project, 404: ErrorBody } } },
     async (req) =>
       withTenant(req, async (tx) => {
-        const [row] = await tx.select().from(projects).where(eq(projects.id, req.params.id));
+        const row = await loadProject(tx, req.params.id);
         if (!row) throw httpError(404, 'not found');
         return projectDto(row);
       }),
@@ -122,35 +132,23 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
             }),
           })
           .where(eq(projects.id, req.params.id))
-          .returning();
+          .returning({ id: projects.id });
         if (!row) throw httpError(404, 'not found');
-        return projectDto(row);
+        return projectDto((await loadProject(tx, row.id))!);
       }),
   );
 
   // Human oversight of the AI summary: confirm it as is, or replace it with a correction.
   // The original model output stays in ai_calls + S3; both actions are audit-logged.
-  // Each review is also a user score on the call (ai_scores): confirm = 1, correct = 0.
-  // The response carries the call's trace ids so the browser can send the same feedback to
-  // Langfuse when the Full profile is on (lib/langfuse.ts).
   const reviewSummary = (req: FastifyRequest, id: string, summary?: string) =>
     withTenant(req, async (tx) => {
       const [current] = await tx
-        .select({ aiSummary: projects.aiSummary, aiCallId: projects.aiCallId })
+        .select({ aiSummary: projects.aiSummary })
         .from(projects)
         .where(eq(projects.id, id));
       if (!current) throw httpError(404, 'not found');
       if (current.aiSummary === null) throw httpError(409, 'no AI summary to review');
-      const scored = current.aiCallId
-        ? await addUserScore(tx, {
-            orgId: req.tenant.orgId,
-            callId: current.aiCallId,
-            name: 'review',
-            value: summary === undefined ? 1 : 0,
-            actorId: req.tenant.userId,
-          })
-        : null;
-      const [row] = await tx
+      await tx
         .update(projects)
         .set({
           aiStatus: summary === undefined ? 'confirmed' : 'corrected',
@@ -158,15 +156,10 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
           reviewedAt: new Date(),
           ...(summary !== undefined && { aiSummary: summary }),
         })
-        .where(eq(projects.id, id))
-        .returning();
-      const trace = scored?.traceId ? { traceId: scored.traceId, spanId: scored.spanId } : null;
-      return { ...projectDto(row!), aiTrace: trace };
+        .where(eq(projects.id, id));
+      return projectDto((await loadProject(tx, id))!);
     });
-  const Reviewed = Project.extend({
-    aiTrace: z.object({ traceId: z.string(), spanId: z.string().nullable() }).nullable(),
-  });
-  const reviewResponses = { 200: Reviewed, 404: ErrorBody, 409: ErrorBody };
+  const reviewResponses = { 200: Project, 404: ErrorBody, 409: ErrorBody };
 
   app.post(
     '/:id/ai-summary/confirm',

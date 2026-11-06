@@ -1,12 +1,13 @@
-// `pnpm eval:pull --org <orgId>`: turns the org's pending golden-set items ("Add to golden set"
-// on the LLM Ops page) into Promptfoo test cases in evals/<purpose>/pulled.jsonl and marks them
-// exported. pulled.jsonl is gitignored on purpose: it holds real prompts and outputs. Review and
-// anonymize each case, then move it into evals/<purpose>/dataset.jsonl (AGENTS.md recipe).
+// `pnpm eval:pull --org <orgId> --purpose <purpose> [--call <id>]... [--days 7] [--limit 20]`:
+// turns logged LLM calls (ai_calls + their S3 content) into Promptfoo test cases appended to
+// evals/<purpose>/pulled.jsonl. That file is gitignored on purpose: it holds real prompts and
+// outputs. Review and anonymize each case, then move it into dataset.jsonl (AGENTS.md recipe).
+// Every exported call is audit-logged.
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { aiCalls, aiDatasetItems, auditLog, withOrg } from '@app/db';
-import { eq, inArray } from 'drizzle-orm';
+import { aiCalls, auditLog, withOrg } from '@app/db';
+import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { db, pool } from './db.ts';
 import { getAiContent } from './s3.ts';
 
@@ -16,54 +17,54 @@ export type TestCase = {
   vars: { input: string; recorded_output: string };
   metadata: Record<string, string>;
 };
+export type PullOptions = { purpose: string; callIds?: string[]; days?: number; limit?: number };
 
-/** Pending items of one org as Promptfoo test cases, marked exported in the same transaction. */
-export async function exportPending(orgId: string): Promise<{ purpose: string; test: TestCase }[]> {
+/** Successful calls of one org and purpose as Promptfoo cases; skips calls whose content expired. */
+export async function exportCalls(orgId: string, o: PullOptions): Promise<TestCase[]> {
   return withOrg(db, orgId, async (tx) => {
+    const since = new Date(Date.now() - (o.days ?? 7) * 86_400_000);
     const rows = await tx
-      .select({ item: aiDatasetItems, call: aiCalls })
-      .from(aiDatasetItems)
-      .innerJoin(aiCalls, eq(aiCalls.id, aiDatasetItems.callId))
-      .where(eq(aiDatasetItems.status, 'pending'))
-      .for('update', { of: aiDatasetItems });
-    const out: { purpose: string; test: TestCase }[] = [];
-    for (const { call } of rows) {
+      .select()
+      .from(aiCalls)
+      .where(
+        and(
+          eq(aiCalls.purpose, o.purpose),
+          eq(aiCalls.status, 'ok'),
+          o.callIds?.length ? inArray(aiCalls.id, o.callIds) : gte(aiCalls.createdAt, since),
+        ),
+      )
+      .orderBy(desc(aiCalls.createdAt))
+      .limit(o.limit ?? 20);
+    const out: TestCase[] = [];
+    for (const call of rows) {
       const request = (await getAiContent(call.requestKey)) as { messages: Message[] } | null;
       const response = call.responseKey
         ? ((await getAiContent(call.responseKey)) as { text: string } | null)
         : null;
-      if (!request || !response) continue; // content expired: stays pending, nothing to export
+      if (!request || !response) continue;
       out.push({
-        purpose: call.purpose,
-        test: {
-          description: `call ${call.id}`,
-          vars: {
-            input: request.messages
-              .filter((m) => m.role === 'user')
-              .map((m) => m.content)
-              .join('\n\n'),
-            recorded_output: response.text,
-          },
-          metadata: {
-            callId: call.id,
-            model: call.responseModel ?? call.requestModel,
-            prompt: `${call.promptTemplateId} v${call.promptTemplateVersion}`,
-          },
+        description: `call ${call.id}`,
+        vars: {
+          input: request.messages
+            .filter((m) => m.role === 'user')
+            .map((m) => m.content)
+            .join('\n\n'),
+          recorded_output: response.text,
+        },
+        metadata: {
+          callId: call.id,
+          model: call.responseModel ?? call.requestModel,
+          prompt: `${call.promptTemplateId} v${call.promptTemplateVersion}`,
         },
       });
     }
-    const exported = out.map((o) => o.test.metadata.callId!);
-    if (exported.length) {
-      await tx
-        .update(aiDatasetItems)
-        .set({ status: 'exported', exportedAt: new Date() })
-        .where(inArray(aiDatasetItems.callId, exported));
+    if (out.length) {
       await tx.insert(auditLog).values(
-        exported.map((callId) => ({
+        out.map((c) => ({
           orgId,
           actorId: 'eval:pull',
-          action: 'ai_dataset.exported',
-          target: callId,
+          action: 'ai_call.exported_for_eval',
+          target: c.metadata.callId!,
         })),
       );
     }
@@ -72,19 +73,32 @@ export async function exportPending(orgId: string): Promise<{ purpose: string; t
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { values } = parseArgs({ options: { org: { type: 'string' } } });
-  if (!values.org) throw new Error('usage: pnpm eval:pull --org <orgId>');
-  const root = new URL('../../../evals/', import.meta.url);
-  const cases = await exportPending(values.org);
-  for (const { purpose, test } of cases) {
-    const dir = new URL(`${purpose}/`, root);
-    mkdirSync(dir, { recursive: true });
-    appendFileSync(new URL('pulled.jsonl', dir), `${JSON.stringify(test)}\n`);
+  const { values } = parseArgs({
+    options: {
+      org: { type: 'string' },
+      purpose: { type: 'string' },
+      call: { type: 'string', multiple: true },
+      days: { type: 'string' },
+      limit: { type: 'string' },
+    },
+  });
+  if (!values.org || !values.purpose) {
+    throw new Error('usage: pnpm eval:pull --org <orgId> --purpose <purpose> [--call <id>]...');
   }
+  const cases = await exportCalls(values.org, {
+    purpose: values.purpose,
+    callIds: values.call,
+    days: values.days ? Number(values.days) : undefined,
+    limit: values.limit ? Number(values.limit) : undefined,
+  });
+  const dir = new URL(`../../../evals/${values.purpose}/`, import.meta.url);
+  mkdirSync(dir, { recursive: true });
+  for (const test of cases)
+    appendFileSync(new URL('pulled.jsonl', dir), `${JSON.stringify(test)}\n`);
   console.log(
-    `eval:pull: ${cases.length} case(s) appended to evals/<purpose>/pulled.jsonl (gitignored).` +
-      ' They contain real prompts and outputs: review and anonymize before moving them into' +
-      ' dataset.jsonl.',
+    `eval:pull: ${cases.length} case(s) appended to evals/${values.purpose}/pulled.jsonl` +
+      ' (gitignored). They contain real prompts and outputs: review and anonymize before' +
+      ' moving them into dataset.jsonl.',
   );
   await pool.end();
 }

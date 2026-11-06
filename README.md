@@ -14,8 +14,13 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
+- **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
+  synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
 - **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
-  optional Jaeger + Prometheus profile, CI with gitleaks, osv-scanner, CodeQL, Dependabot.
+  `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
+  dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
+  permissive-license twin of the whole stack, SBOMs + third-party notices, CI with gitleaks,
+  osv-scanner, CodeQL, Dependabot.
 
 ## 5-minute quickstart
 
@@ -36,9 +41,37 @@ computed it with the Rust extension and wrote it back. Watch it in the Temporal 
 http://localhost:8233. API schema: http://localhost:3000/openapi.json.
 
 Everything in containers instead: `docker compose up -d --build`, then http://localhost:8080.
-Tracing and metrics: add `--profile observability` and set
-`API_OTEL_ENDPOINT=http://otel-collector:4318` and `WORKER_OTEL_ENDPOINT=http://otel-collector:4318`
-(both OTLP/HTTP); Jaeger at http://localhost:16686, Prometheus at http://localhost:9090.
+
+### Logs, traces, metrics, errors
+
+```sh
+# in .env (compose reads it):
+API_OTEL_ENDPOINT=http://otel-collector:4318
+WORKER_OTEL_ENDPOINT=http://otel-collector:4318
+docker compose --profile observability up -d --build
+```
+
+Grafana http://localhost:3001 (no login, local only): dashboards API, Temporal server, Worker,
+LLM; Explore -> Loki for logs (`{service_name="api"}`), each line with a `trace_id` links to
+its trace. Jaeger http://localhost:16686, Prometheus http://localhost:9090 (alert rules at
+`/alerts`). Resource budget: [docs/STACK.md](docs/STACK.md).
+
+Error tracking (GlitchTip, Sentry-compatible): `docker compose --profile glitchtip up -d`,
+open http://localhost:8000, sign up, create an organization `local` and projects (Node.js for the API, Python for the worker, JavaScript for the web app), then set their DSNs in `.env`
+(`API_SENTRY_DSN` / `WORKER_SENTRY_DSN` with host `glitchtip:8000`, `WEB_SENTRY_DSN` with
+`localhost:8000` plus `WEB_SENTRY_ORIGIN=http://localhost:8000`) and rebuild with
+`GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build api worker web`. For Sentry
+use its DSNs instead. `GET /api/debug/error` (non-production only) throws a test error.
+Browser source maps (not uploaded by default): build with `vite build --sourcemap hidden`, then
+`glitchtip-cli sourcemaps inject ./dist` and `glitchtip-cli sourcemaps upload ./dist --org <org>
+--project web` (Sentry: `sentry-cli sourcemaps inject` / `upload`), and delete the `.map` files
+before building the image. Both CLIs are separate tools, not dependencies (`sentry-cli` is
+FSL-licensed).
+
+Permissive-license twin (no AGPL/SSPL containers: Valkey instead of Redis, no Loki/Grafana):
+`docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observability up -d`.
+What changes: [docs/LICENSES.md](docs/LICENSES.md#permissive-twin-replacement-map).
+SBOMs (CycloneDX, per image) + `THIRD_PARTY_NOTICES.md`: `pnpm run sbom` -> `dist/sbom/`.
 
 ## Quality gate
 
@@ -68,14 +101,27 @@ Off until you pick a model: set `AI_PROJECT_SUMMARY_PROVIDER=anthropic`,
 `OPENAI_BASE_URL` / `OPENAI_API_KEY` and a model registered for your `AI_CONTOUR` in
 `config/ai-models.json`), then restart the worker. New projects with a description get an
 AI-generated summary that members can confirm or correct; admins see every call under
-"LLM Ops". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
+"AI calls". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
 
-Quality loop ([ADR 0009](docs/adr/0009-llm-ops.md)): prompts are versioned files in `prompts/`,
-`pnpm eval` runs the Promptfoo golden sets in `evals/` (real model with `ANTHROPIC_API_KEY`,
-recorded outputs without), a daily drift check grades a sample of calls with an LLM judge
-(`AI_JUDGE_PROVIDER` / `AI_JUDGE_MODEL`), and the LLM Ops page compares score, cost and latency
-per prompt version. `docker compose --profile llmops up -d` adds Langfuse (about 1.9 GiB RAM,
-see [docs/STACK.md](docs/STACK.md)).
+## Product analytics
+
+Off until you set env. PostHog Cloud (EU or US) is the default: `VITE_POSTHOG_KEY` and
+`VITE_POSTHOG_HOST` for the web, then `pnpm journeys:sync` turns `config/journeys.json` into
+funnels, alerts, a feedback survey and webhooks that open GitHub issues for agents. Data must
+stay in place (on-prem, RU)? `docker compose --profile analytics up -d` runs Umami (MIT) on the
+same Postgres. Optional, consent-gated: GA4, Yandex Metrika. AI-answer thumbs go to PostHog AI
+observability and/or Langfuse. Events are catalogued in `config/events.json` and checked in CI.
+Details: [docs/product-analytics.md](docs/product-analytics.md).
+
+## LLM-ops
+
+Quality loop ([ADR 0009](docs/adr/0009-llm-ops.md)): prompts are versioned files in `prompts/`;
+`pnpm eval` runs the Promptfoo golden sets in `evals/` (key-free; `pnpm eval:real` runs the real
+model and judge through your Claude subscription via the `claude` CLI); with `POSTHOG_API_KEY`
+and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (privacy mode on), so
+the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
+(`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
+(about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
 
 ## SSO
 

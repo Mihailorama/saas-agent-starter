@@ -1,8 +1,15 @@
 # Local stack. Infra only:   docker compose up -d --wait postgres redis s3 temporal-ui
 # Everything:                docker compose up -d --build
-# With tracing/metrics:      docker compose --profile observability up -d
-# With Langfuse (Full LLM-ops, docs/adr/0009-llm-ops.md): docker compose --profile llmops up -d
+# With logs/traces/metrics:  docker compose --profile observability up -d   (Grafana :3001)
+# Permissive-only twin:      add -f docker-compose.yml -f compose.permissive.yaml (ADR 0010)
+# With LLM-ops Full (Langfuse, ADR 0009): docker compose --profile llmops up -d
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
+
+# Every service: the json-file log driver stamps compose project + service into each line,
+# so the collector ships only this project's logs to Loki, labelled by service.
+x-logging: &logging
+  driver: json-file
+  options: { labels: "com.docker.compose.project,com.docker.compose.service", max-size: 10m }
 
 x-app-env: &app-env
   NODE_ENV: ${NODE_ENV:-development}
@@ -17,6 +24,8 @@ x-app-env: &app-env
 
 services:
   postgres:
+    logging: *logging
+    mem_limit: 512m
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: postgres
@@ -31,6 +40,8 @@ services:
 
   # Redis: rate-limit store.
   redis:
+    logging: *logging
+    mem_limit: 64m
     image: redis:8-alpine
     ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     healthcheck:
@@ -40,6 +51,8 @@ services:
 
   # S3-compatible object storage for local dev (SeaweedFS). Production: any S3 via env.
   s3:
+    logging: *logging
+    mem_limit: 256m
     image: chrislusf/seaweedfs:4.52
     command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0
     ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
@@ -53,6 +66,8 @@ services:
 
   # Temporal, per temporalio/samples-server compose (postgres variant), on our Postgres server.
   temporal-setup:
+    logging: *logging
+    mem_limit: 128m
     image: temporalio/admin-tools:1.32.0
     depends_on: { postgres: { condition: service_healthy } }
     environment: { POSTGRES_SEEDS: postgres, POSTGRES_USER: postgres, SQL_PASSWORD: postgres }
@@ -60,6 +75,8 @@ services:
     entrypoint: ["/bin/sh", "/setup.sh"]
 
   temporal:
+    logging: *logging
+    mem_limit: 512m
     image: temporalio/server:1.32.0
     depends_on: { temporal-setup: { condition: service_completed_successfully } }
     environment:
@@ -83,6 +100,8 @@ services:
       retries: 60
 
   temporal-namespace:
+    logging: *logging
+    mem_limit: 128m
     image: temporalio/admin-tools:1.32.0
     depends_on: { temporal: { condition: service_healthy } }
     restart: on-failure:10
@@ -94,30 +113,40 @@ services:
          temporal operator namespace create -n default --address temporal:7233)
 
   temporal-ui:
+    logging: *logging
+    mem_limit: 128m
     image: temporalio/ui:2.54.1
     depends_on: { temporal-namespace: { condition: service_completed_successfully } }
     environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_UI_PORT: "8233" }
     ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8233"]
 
   migrate:
+    logging: *logging
+    mem_limit: 256m
     build: { context: ., dockerfile: apps/api/Dockerfile }
     command: ["node", "packages/db/src/migrate.ts"]
     environment: *app-env
     depends_on: { postgres: { condition: service_healthy } }
 
   api:
-    build: { context: ., dockerfile: apps/api/Dockerfile }
+    logging: *logging
+    mem_limit: 384m
+    build: { context: ., dockerfile: apps/api/Dockerfile, args: { GIT_SHA: "${GIT_SHA:-dev}" } }
     environment:
       <<: *app-env
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me-local-dev-secret-at-least-32-chars}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:${WEB_PORT:-8080}}
       TRUST_PROXY: "true"
+      POSTHOG_WEBHOOK_SECRET: ${POSTHOG_WEBHOOK_SECRET:-local-dev-posthog-webhook-secret}
+      POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
+      POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO: ${GITHUB_REPO:-}
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
-      TRACE_URL_TEMPLATE: ${TRACE_URL_TEMPLATE:-}
-      # With --profile llmops: browsers send user feedback scores to Langfuse (public key only).
-      LANGFUSE_PUBLIC_URL: ${LANGFUSE_PUBLIC_URL:-}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1
+      SENTRY_DSN: ${API_SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -126,23 +155,28 @@ services:
     ports: ["127.0.0.1:${API_PORT:-3000}:3000"]
 
   worker:
-    build: { context: ., dockerfile: services/worker-py/Dockerfile }
+    logging: *logging
+    mem_limit: 384m
+    build:
+      context: .
+      dockerfile: services/worker-py/Dockerfile
+      args: { GIT_SHA: "${GIT_SHA:-dev}" }
     environment:
       <<: *app-env
       # With --profile observability: http://otel-collector:4318 (OTLP/HTTP, like the API)
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
-      # With --profile llmops: spans to Langfuse (see .env.example, "Full LLM-ops").
+      SENTRY_DSN: ${WORKER_SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
+      # LLM observability (ADR 0009): each call as a PostHog $ai_generation when set.
+      POSTHOG_API_KEY: ${POSTHOG_API_KEY:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
+      POSTHOG_PRIVACY_MODE: ${POSTHOG_PRIVACY_MODE:-true}
+      # With --profile llmops: spans to Langfuse (see .env.example, "LLM-ops Full").
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${WORKER_OTEL_TRACES_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${WORKER_OTEL_TRACES_HEADERS:-}
-      LANGFUSE_HOST: ${LANGFUSE_INTERNAL_HOST:-}
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
       AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}
-      AI_JUDGE_PROVIDER: ${AI_JUDGE_PROVIDER:-}
-      AI_JUDGE_MODEL: ${AI_JUDGE_MODEL:-}
-      AI_DRIFT_CRON: ${AI_DRIFT_CRON:-0 3 * * *}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
@@ -151,33 +185,170 @@ services:
       temporal-namespace: { condition: service_completed_successfully }
 
   web:
-    build: { context: ., dockerfile: apps/web/Dockerfile }
+    logging: *logging
+    mem_limit: 64m
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args: # browser DSN uses the host-visible address, e.g. http://<key>@localhost:8000/1
+        VITE_SENTRY_DSN: ${WEB_SENTRY_DSN:-}
+        VITE_SENTRY_RELEASE: ${GIT_SHA:-dev}
+        # analytics sinks; empty = off (docs/product-analytics.md)
+        VITE_RELEASE: ${GIT_SHA:-dev}
+        VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
+        VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
+        VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID: ${VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID:-}
+        VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID: ${VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID:-}
+        VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}
+        VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
+        VITE_GA4_ID: ${VITE_GA4_ID:-}
+        VITE_YM_ID: ${VITE_YM_ID:-}
+        VITE_YM_WEBVISOR: ${VITE_YM_WEBVISOR:-}
+        VITE_LANGFUSE_PUBLIC_KEY: ${VITE_LANGFUSE_PUBLIC_KEY:-}
+        VITE_LANGFUSE_HOST: ${VITE_LANGFUSE_HOST:-}
     environment:
       S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}"
-      LANGFUSE_PUBLIC_ORIGIN: ${LANGFUSE_PUBLIC_URL:-} # CSP connect-src for feedback scores
+      SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
+      # Origins of the enabled analytics sinks for the CSP, e.g. "https://*.posthog.com"
+      ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
     depends_on: [api]
     ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
 
+  # --- observability profile: OTel Collector -> Jaeger (traces), Prometheus (metrics),
+  # Loki (logs); Grafana is the single pane. compose.permissive.yaml drops Loki + Grafana.
   otel-collector:
     profiles: [observability]
-    image: otel/opentelemetry-collector:0.164.0
-    command: ["--config=/etc/otel/collector.yaml"]
-    volumes: ["./infra/otel/collector.yaml:/etc/otel/collector.yaml:ro"]
-    ports: ["127.0.0.1:4317:4317", "127.0.0.1:4318:4318"]
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    logging: *logging
+    mem_limit: 384m
+    user: "0" # reads /var/lib/docker/containers (root-owned); mounted read-only
+    command: ["--config=/etc/otel/collector.yaml", "--config=/etc/otel/collector-logs.yaml"]
+    environment: { COMPOSE_PROJECT: "${COMPOSE_PROJECT_NAME:-saas-agent-starter}" }
+    volumes:
+      - ./infra/otel:/etc/otel:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    ports:
+      - "127.0.0.1:${OTEL_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
 
   jaeger:
     profiles: [observability]
     image: jaegertracing/jaeger:2.23.0
-    ports: ["127.0.0.1:16686:16686"]
+    logging: *logging
+    mem_limit: 512m # in-memory trace store; restart drops traces
+    ports: ["127.0.0.1:${JAEGER_PORT:-16686}:16686"]
 
   prometheus:
     profiles: [observability]
     image: prom/prometheus:v3.15.1
+    logging: *logging
+    mem_limit: 512m
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.enable-otlp-receiver"]
     volumes:
       - ./infra/otel/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/otel/alerts.yml:/etc/prometheus/alerts.yml:ro
-    ports: ["127.0.0.1:9090:9090"]
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
+
+  loki:
+    profiles: [observability]
+    image: grafana/loki:3.7.9
+    logging: *logging
+    mem_limit: 512m
+    volumes: [lokidata:/loki]
+
+  grafana:
+    profiles: [observability]
+    image: grafana/grafana:13.3.0
+    logging: *logging
+    mem_limit: 512m
+    depends_on: [loki, prometheus, jaeger]
+    environment:
+      # Local dev only (port bound to 127.0.0.1): no login, everyone is admin.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Loki "Errors for this trace" link; Sentry: https://<org>.sentry.io/issues/
+      ERROR_TRACKER_ISSUES_URL: ${ERROR_TRACKER_ISSUES_URL:-http://localhost:${GLITCHTIP_PORT:-8000}/local/issues}
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:${GRAFANA_PORT:-3001}:3000"]
+
+  # --- glitchtip profile: Sentry-compatible error tracker (MIT), tier S. Own database on the
+  # app's Postgres server, Redis db 1. Bigger installs: Sentry (SaaS or self-hosted), same SDKs.
+  glitchtip-db:
+    profiles: [glitchtip]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 64m
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        psql -h postgres -U postgres -tAc "select 1 from pg_database where datname='glitchtip'" | grep -q 1 ||
+        psql -h postgres -U postgres -c "create database glitchtip"
+
+  glitchtip:
+    profiles: [glitchtip]
+    image: glitchtip/glitchtip:6.2.6
+    logging: *logging
+    mem_limit: 512m # docs: 256 MB minimum all-in-one, 512 MB recommended
+    depends_on:
+      glitchtip-db: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    environment:
+      SERVER_ROLE: all_in_one # web + worker in one process
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/glitchtip
+      VALKEY_URL: redis://redis:6379/1
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-local-dev-glitchtip-secret-key}
+      GLITCHTIP_DOMAIN: http://localhost:${GLITCHTIP_PORT:-8000}
+      DEFAULT_FROM_EMAIL: glitchtip@example.com
+      EMAIL_URL: consolemail://
+      ENABLE_USER_REGISTRATION: "true" # local dev: first user signs up in the UI
+    ports: ["127.0.0.1:${GLITCHTIP_PORT:-8000}:8000"]
+
+  # Umami 3 (MIT): self-hosted product analytics for on-prem / RU / no-third-party deployments.
+  # docker compose --profile analytics up -d ; docs/product-analytics.md. Own database `umami`
+  # on our Postgres server; PRIVATE_MODE=1 makes it call nothing outside (no telemetry, no
+  # update check, no favicon service).
+  umami-db:
+    logging: *logging
+    profiles: [analytics]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'umami'" | grep -q 1 ||
+         psql -c "create role umami login password 'umami'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'umami'" | grep -q 1 ||
+         psql -c "create database umami owner umami")
+
+  umami:
+    logging: *logging
+    profiles: [analytics]
+    image: ghcr.io/umami-software/umami:3.4.1
+    depends_on: { umami-db: { condition: service_completed_successfully } }
+    init: true
+    mem_limit: 1g # measured: ~256 MiB idle, ~780 MiB peak at ~75 events/s (docs/product-analytics.md)
+    environment:
+      DATABASE_URL: postgresql://umami:umami@postgres:5432/umami
+      APP_SECRET: ${UMAMI_APP_SECRET:-local-dev-umami-app-secret}
+      PRIVATE_MODE: "1"
+      DISABLE_TELEMETRY: "1"
+      DISABLE_UPDATES: "1"
+      MCP_ENABLED: "1" # read-only /mcp for coding agents (API key auth), see .mcp.json.example
+    ports: ["127.0.0.1:${UMAMI_PORT:-3100}:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/heartbeat >/dev/null"]
+      interval: 5s
+      start_period: 60s
+      retries: 30
 
   # Full LLM-ops profile: Langfuse v4 (MIT core) on our Postgres server (own database), our
   # Redis (own db index) and our S3 (own bucket), plus ClickHouse. Langfuse's optional AI
@@ -224,7 +395,7 @@ services:
       s3: { condition: service_healthy }
     environment: &langfuse-env
       NODE_OPTIONS: --max-old-space-size=768
-      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3100}
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3200}
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
       SALT: local-dev-langfuse-salt
       ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
@@ -270,7 +441,7 @@ services:
       LANGFUSE_INIT_USER_EMAIL: admin@example.com
       LANGFUSE_INIT_USER_NAME: Admin
       LANGFUSE_INIT_USER_PASSWORD: local-dev-password
-    ports: ["127.0.0.1:${LANGFUSE_PORT:-3100}:3000"]
+    ports: ["127.0.0.1:${LANGFUSE_PORT:-3200}:3000"]
     healthcheck:
       # Next.js binds to the container hostname, not localhost.
       test: ["CMD-SHELL", "wget -qO- http://$${HOSTNAME}:3000/api/public/health >/dev/null"]
@@ -290,9 +461,9 @@ services:
       HOME: /tmp
       PROMPTFOO_DISABLE_TELEMETRY: "1"
       PROMPTFOO_DISABLE_UPDATE: "1"
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
 volumes:
   pgdata:
   s3data:
+  lokidata:
   clickhousedata:

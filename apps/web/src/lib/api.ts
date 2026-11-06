@@ -1,3 +1,5 @@
+import { track } from '@/lib/analytics';
+
 export type AiStatus = 'generated' | 'confirmed' | 'corrected';
 export type Project = {
   id: string;
@@ -7,6 +9,8 @@ export type Project = {
   aiSummary: string | null;
   aiStatus: AiStatus | null;
   aiCallId: string | null;
+  /** OpenTelemetry trace of the AI call; feedback scores attach to it (Langfuse, PostHog). */
+  aiTraceId: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
   createdAt: string;
@@ -32,48 +36,6 @@ export type AiCall = {
   contour: string;
   createdAt: string;
 };
-export type AiScore = {
-  id: string;
-  source: 'user' | 'judge' | 'rule';
-  name: string;
-  value: number;
-  comment: string | null;
-  actorId: string | null;
-  judgeCallId: string | null;
-  createdAt: string;
-};
-export type AiCallDetail = AiCall & {
-  requestKey: string;
-  responseKey: string | null;
-  contentExpiresAt: string;
-  spanId: string | null;
-  scores: AiScore[];
-  datasetItem: { id: string; status: 'pending' | 'exported'; createdAt: string } | null;
-  traceUrl: string | null;
-};
-export type VersionStats = {
-  purpose: string;
-  template: string;
-  version: string;
-  model: string;
-  calls: number;
-  errorRate: number;
-  avgCost: number | null;
-  avgLatencyMs: number;
-  judgeScore: number | null;
-  judged: number;
-  userScore: number | null;
-  reviewed: number;
-};
-export type DayStats = {
-  day: string;
-  purpose: string;
-  calls: number;
-  errors: number;
-  cost: number | null;
-  judgeScore: number | null;
-  userScore: number | null;
-};
 export type Attachment = {
   id: string;
   filename: string;
@@ -84,13 +46,25 @@ export type Attachment = {
 
 /** JSON fetch against our API. Throws with the server's error message on non-2xx. */
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+  const method = init?.method ?? 'GET';
+  const failed = (status: number, traceId: string | null) =>
+    track('api_error', {
+      method,
+      path: path.split('?')[0]!.replace(/[0-9a-f-]{36}/gi, ':id'),
+      status,
+      trace_id: traceId ?? '',
+    });
   const res = await fetch(path, {
     ...init,
     credentials: 'include',
     headers: init?.json === undefined ? init?.headers : { 'content-type': 'application/json' },
     body: init?.json === undefined ? init?.body : JSON.stringify(init.json),
+  }).catch((err) => {
+    failed(0, null);
+    throw err;
   });
   if (!res.ok) {
+    failed(res.status, res.headers.get('x-trace-id'));
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? body.message ?? `Request failed (${res.status})`);
   }

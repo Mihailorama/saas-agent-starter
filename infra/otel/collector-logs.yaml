@@ -1,0 +1,49 @@
+# Container logs -> Loki. Merged over collector.yaml (second --config); the permissive twin
+# leaves it out. Reads the json-file logs of this compose project only: every service sets
+# `logging.options.labels`, so each line carries its compose project + service in `attrs`.
+receivers:
+  filelog/docker:
+    include: [/var/lib/docker/containers/*/*-json.log]
+    start_at: end
+    operators:
+      - type: json_parser # docker json-file envelope: {log, stream, time, attrs}
+        timestamp:
+          {
+            parse_from: attributes.time,
+            layout_type: gotime,
+            layout: "2006-01-02T15:04:05.999999999Z07:00",
+          }
+      - type: filter # other compose projects and unlabeled containers on the host
+        expr: 'attributes.attrs?.["com.docker.compose.project"] != "${env:COMPOSE_PROJECT}"'
+      - type: move
+        from: attributes.attrs["com.docker.compose.service"]
+        to: resource["service.name"]
+      - type: move
+        from: attributes.stream
+        to: attributes["log.iostream"]
+      - type: move
+        from: attributes.log
+        to: body
+      - type: remove
+        field: attributes.attrs
+      - type: remove
+        field: attributes.time
+      # App lines are JSON (pino, Python JsonFormatter): lift level, msg and trace context.
+      - type: json_parser
+        if: 'body matches "^\\s*\\{"'
+        parse_to: attributes
+        on_error: send_quiet
+      - type: trace_parser
+        if: "attributes.trace_id != nil"
+        trace_id: { parse_from: attributes.trace_id }
+        span_id: { parse_from: attributes.span_id }
+        on_error: send_quiet
+exporters:
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+service:
+  pipelines:
+    logs:
+      receivers: [filelog/docker]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/loki]

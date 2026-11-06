@@ -1,4 +1,5 @@
 import './index.css';
+import '@/lib/sentry';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRoute,
@@ -10,11 +11,12 @@ import {
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ConsentBanner } from '@/components/consent-banner';
 import { Toaster } from '@/components/ui/sonner';
+import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
-import { AiCallPage } from '@/pages/ai-call';
+import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
-import { LlmOpsPage } from '@/pages/llm-ops';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { Shell } from '@/pages/shell';
@@ -27,6 +29,7 @@ const rootRoute = createRootRoute({
     <>
       <Outlet />
       <Toaster richColors closeButton />
+      <ConsentBanner />
     </>
   ),
 });
@@ -66,34 +69,23 @@ const projectRoute = createRoute({
   component: ProjectPage,
 });
 
-const llmOpsRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: '/llm-ops',
-  component: LlmOpsPage,
-});
-
-const aiCallRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: '/llm-ops/calls/$callId',
-  component: AiCallPage,
-});
-
-// Old links to the AI call log.
 const aiCallsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/ai-calls',
-  beforeLoad: () => {
-    throw redirect({ to: '/llm-ops' });
-  },
+  component: AiCallsPage,
 });
 
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
     aiTransparencyRoute,
-    appRoute.addChildren([projectsRoute, projectRoute, llmOpsRoute, aiCallRoute, aiCallsRoute]),
+    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute]),
   ]),
 });
+
+initAnalytics();
+// Page views carry the route pattern (/projects/$projectId), never ids from the URL.
+router.subscribe('onResolved', () => page(router.state.matches.at(-1)?.fullPath ?? '/'));
 
 declare module '@tanstack/react-router' {
   interface Register {

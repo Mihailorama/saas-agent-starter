@@ -3,6 +3,8 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
+import { isSpanContextValid, trace } from '@opentelemetry/api';
+import * as Sentry from '@sentry/node-core';
 import { fromNodeHeaders } from 'better-auth/node';
 import { sql } from 'drizzle-orm';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -17,6 +19,7 @@ import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
+import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -28,6 +31,12 @@ export async function buildApp() {
     genReqId: () => randomUUID(),
     logger: {
       level: env.LOG_LEVEL,
+      // trace_id/span_id on every line inside a span: Grafana links Loki lines to Jaeger traces.
+      formatters: { level: (label) => ({ level: label }) }, // "info", not 30: Loki detects it
+      mixin: () => {
+        const ctx = trace.getActiveSpan()?.spanContext();
+        return ctx ? { trace_id: ctx.traceId, span_id: ctx.spanId } : {};
+      },
       redact: { paths: ['*.password', '*.token', '*.secret', '*.cookie', '*.authorization'] },
       serializers: {
         // Never log query strings (auth flows put tokens there) or headers.
@@ -36,6 +45,11 @@ export async function buildApp() {
     },
   }).withTypeProvider<ZodTypeProvider>();
 
+  // 5xx and unexpected errors to the error tracker (no-op without SENTRY_DSN). Runs inside the
+  // request's span, so the event carries its trace_id (sentry.ts).
+  app.addHook('onError', async (_req, _reply, err) => {
+    if ((err.statusCode ?? 500) >= 500) Sentry.captureException(err);
+  });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorateRequest('tenant');
@@ -65,7 +79,19 @@ export async function buildApp() {
     }
   });
 
+  // Lets the web attach the trace id to analytics error events (docs/product-analytics.md).
+  app.addHook('onSend', async (_req, reply) => {
+    const ctx = trace.getActiveSpan()?.spanContext();
+    if (ctx && isSpanContextValid(ctx)) reply.header('x-trace-id', ctx.traceId);
+  });
+
   app.get('/healthz', { schema: { hide: true } }, async () => ({ ok: true }));
+  if (env.NODE_ENV !== 'production') {
+    // Dev only: proves error reporting end to end (an event with stack trace and trace_id).
+    app.get('/api/debug/error', { schema: { hide: true } }, async () => {
+      throw new Error('debug: test error from the API');
+    });
+  }
   app.get('/readyz', { schema: { hide: true } }, async (_req, reply) => {
     try {
       await Promise.all([db.execute(sql`select 1`), redis.ping()]);
@@ -104,19 +130,13 @@ export async function buildApp() {
     });
   // Public: tells the sign-in page whether to offer "Sign in with SSO".
   app.get('/api/auth-config', { schema: { hide: true } }, async () => ({ sso: ssoEnabled }));
-  // Public: Langfuse origin + public key for browser feedback scores (Full LLM-ops profile).
-  app.get('/api/client-config', { schema: { hide: true } }, async () => ({
-    langfuse:
-      env.LANGFUSE_PUBLIC_URL && env.LANGFUSE_PUBLIC_KEY
-        ? { baseUrl: env.LANGFUSE_PUBLIC_URL, publicKey: env.LANGFUSE_PUBLIC_KEY }
-        : null,
-  }));
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
+  await app.register(hookRoutes, { prefix: '/api/hooks' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
 
   return app;

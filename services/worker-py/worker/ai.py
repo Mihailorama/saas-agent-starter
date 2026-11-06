@@ -32,37 +32,19 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
 from worker import settings
+from worker.posthog import PostHogAi
 from worker.s3 import S3
 
 log = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.ai")
 meter = metrics.get_meter("worker.ai")
-# Prometheus (via OTLP): app_ai_calls_total, app_ai_cost_total, app_ai_latency_ms_*,
-# app_ai_score_* (infra/otel/alerts.yml). Labels are ids and model names, never content.
-calls_counter = meter.create_counter("app_ai_calls", description="LLM calls by outcome")
-cost_counter = meter.create_counter("app_ai_cost", description="LLM cost in cost_currency")
-latency_histogram = meter.create_histogram("app_ai_latency_ms", description="LLM call latency")
-score_histogram = meter.create_histogram(
-    "app_ai_score",
-    description="Quality scores (0..1) of LLM calls by source (judge, rule, user)",
-    explicit_bucket_boundaries_advisory=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+# Names and labels agreed with the Grafana "LLM" dashboard and alerts (AGENTS.md "Observability").
+# Labels are low-cardinality only, never ids or content.
+calls_counter = meter.create_counter("ai_calls", description="LLM calls by outcome")
+latency_histogram = meter.create_histogram(
+    "ai_call_latency_seconds", description="LLM call latency in seconds"
 )
-
-
-def record_score(
-    *, purpose: str, template: str, version: str, model: str, source: str, name: str, value: float
-) -> None:
-    score_histogram.record(
-        value,
-        {
-            "purpose": purpose,
-            "prompt_template": template,
-            "prompt_version": version,
-            "model": model,
-            "source": source,
-            "name": name,
-        },
-    )
+cost_counter = meter.create_counter("ai_cost_usd", description="LLM cost in USD")
 
 
 @dataclass(frozen=True)
@@ -143,8 +125,9 @@ class Gateway:
         registry: Registry,
         providers: dict[str, Provider],
         retention_days: int,
+        posthog: PostHogAi | None = None,
     ) -> None:
-        self.pool, self.s3, self.contour = pool, s3, contour
+        self.pool, self.s3, self.contour, self.posthog = pool, s3, contour, posthog
         self.registry, self.providers = registry, providers
         self.retention = timedelta(days=retention_days)
 
@@ -240,6 +223,8 @@ class Gateway:
                     "error_class": type(err).__qualname__,
                 }
                 await self._insert(row)
+                if self.posthog:
+                    await self.posthog.capture_generation(row, messages, None)
                 raise
             row["latency_ms"] = _ms(started)
 
@@ -280,28 +265,16 @@ class Gateway:
                 ) / 1000
                 row["cost_currency"] = allowed.price.currency
             await self._insert(row)
+        if self.posthog:
+            await self.posthog.capture_generation(row, messages, completion.text)
         return LlmResult(call_id, completion.text)
 
     async def _insert(self, row: dict[str, Any]) -> None:
-        labels = {
-            "purpose": row["purpose"],
-            "provider": row["provider"],
-            "model": row["request_model"],
-            "prompt_template": row["prompt_template_id"],
-            "prompt_version": row["prompt_template_version"],
-            "status": row["status"],
-        }
-        calls_counter.add(1, labels)
-        latency_histogram.record(row["latency_ms"], labels)
-        if row.get("cost") is not None:
-            cost_counter.add(
-                float(row["cost"]),
-                {
-                    "purpose": row["purpose"],
-                    "model": row["request_model"],
-                    "currency": row["cost_currency"],
-                },
-            )
+        model = {"purpose": row["purpose"], "model": row["request_model"]}
+        calls_counter.add(1, {**model, "provider": row["provider"], "status": row["status"]})
+        latency_histogram.record(row["latency_ms"] / 1000, model)
+        if row.get("cost") is not None and row.get("cost_currency") == "USD":
+            cost_counter.add(float(row["cost"]), model)
         columns = list(row)
         async with self.pool.acquire() as conn, conn.transaction():
             await conn.execute("select set_config('app.org_id', $1, true)", row["org_id"])

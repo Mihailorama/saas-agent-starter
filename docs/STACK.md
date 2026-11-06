@@ -1,70 +1,60 @@
-# Stack footprint on one server
+# Stack
 
-Measured 2026-11-06 on an 8 vCPU / 23.5 GiB Linux VM (kernel 6.8, Docker 29.6), shared with
-unrelated containers, compose project with all app services in containers
-(`docker compose up -d --build`). Warm-up: the Playwright smoke (sign up, create org, create
-project, LLM Ops page, transparency page) run 3 times against the containerized web/API (5 times
-for Full), then `docker stats --no-stream` after 1 to 3 minutes idle. Numbers are `docker stats`
-MEM USAGE (cgroup memory without inactive page cache). No LLM key was set, so no model was
-called; the worker still exported its Temporal spans. Not measured: real LLM traffic, many
-concurrent users, Langfuse UI sessions, ClickHouse merges after weeks of data. Treat the numbers
-as a floor, and keep the limits below as the budget.
+## Resource budget
 
-## Lite (default, no LLM-ops services)
+`docker stats --no-stream` snapshot, 2026-11-06, after ~45 minutes of uptime and a few
+sign-up / create-project flows: the whole default stack (built `api`, `worker`, `web`) plus the
+`observability` and `glitchtip` profiles, on an 8-core x86_64 Linux host. One-shot containers
+(`migrate`, `temporal-setup`, `temporal-namespace`, `glitchtip-db`) have exited and are not
+listed. "Limit" is the `mem_limit` in `docker-compose.yml`, set to roughly 1.5-4x the
+observed use; raise it when a service is OOM-killed (`docker compose ps` shows exit code 137).
 
-| Container   |     MiB |
-| ----------- | ------: |
-| temporal    |     124 |
-| worker      |     120 |
-| postgres    |      96 |
-| api         |      85 |
-| s3          |      71 |
-| web (nginx) |      14 |
-| redis       |       8 |
-| temporal-ui |       7 |
-| **Total**   | **525** |
+| Service        | Profile       | Memory used (MiB) | Limit (MiB) | CPU (idle) |
+| -------------- | ------------- | ----------------: | ----------: | ---------: |
+| postgres       | default       |               147 |         512 |       6.4% |
+| redis          | default       |                 6 |          64 |       2.9% |
+| s3 (SeaweedFS) | default       |                52 |         256 |       5.1% |
+| temporal       | default       |               120 |         512 |       5.3% |
+| temporal-ui    | default       |                 8 |         128 |       0.0% |
+| api            | default       |               142 |         384 |       0.0% |
+| worker         | default       |               129 |         384 |       0.1% |
+| web (nginx)    | default       |                 8 |          64 |       0.0% |
+| otel-collector | observability |               111 |         384 |       6.1% |
+| jaeger         | observability |                30 |         512 |       0.2% |
+| prometheus     | observability |               108 |         512 |       1.0% |
+| loki           | observability |               116 |         512 |       1.7% |
+| grafana        | observability |               305 |         512 |       2.5% |
+| glitchtip      | glitchtip     |               182 |         512 |       2.6% |
 
-LLM-ops Lite adds no container: prompts, scores, the drift workflow and metrics live in the
-existing worker, API and Postgres. Promptfoo runs only while `pnpm eval` runs (a short-lived
-container, not counted).
+Totals (used / limit): default stack ~612 / 2304 MiB, observability ~670 / 2432 MiB,
+GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.1 GiB. Jaeger keeps traces in memory, so its
+use grows with traffic until the limit; Prometheus and Loki grow with retention (volumes, not
+RAM, for Loki). The permissive twin drops Loki and Grafana (~420 MiB used); Valkey uses about
+what Redis does.
 
-## Full (`--profile llmops`, Langfuse 4.76.0)
+Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
+few flows, then
+`docker stats --no-stream $(docker compose --profile observability --profile glitchtip ps -q)`.
 
-| Container               |                    After warm-up, MiB | After 10k spans, MiB |              Limit (compose) |
-| ----------------------- | ------------------------------------: | -------------------: | ---------------------------: |
-| langfuse-web            |                                   679 |                  701 | 1536 MiB (Node heap 768 MiB) |
-| clickhouse              |                                   658 |           669 to 690 |                     1536 MiB |
-| langfuse-worker         |                                   455 |                  513 | 1024 MiB (Node heap 768 MiB) |
-| postgres                | 111 (+15 for the `langfuse` database) |                      |                              |
-| s3, worker, api, others |               as in Lite (+12 for s3) |                      |                              |
-| **Total stack**         |                              **2352** |       about **2450** |                              |
+## LLM-ops tiers (ADR 0009)
 
-Langfuse's own share is about 1.8 GiB after warm-up and about 1.9 GiB after a burst of 10,000
-spans sent in 2.7 s (the client's span queue dropped part of them, so fewer arrived; the
-Langfuse worker peaked at about 200 % CPU while ingesting). Measured with a 1 GiB limit on
-langfuse-web, raised to 1.5 GiB afterwards for headroom. No container was OOM-killed.
+- **S tier (one 8 CPU / 24 GB server): PostHog Cloud by default.** Generations, feedback and
+  online judges live in PostHog; the stack adds no container and no RAM (the worker posts one
+  small HTTP event per LLM call). Promptfoo runs only during `pnpm eval` (a short-lived
+  container).
+- **Langfuse (`--profile llmops`), optional**, when data must not leave the servers (client
+  requirement, RU contour). Measured 2026-11-06 on the same kind of 8 vCPU / 23.5 GiB host,
+  `docker stats` after an e2e warm-up (5 runs) and again after a burst of 10,000 spans sent in
+  2.7 s (the client queue dropped part of them):
 
-## Verdict for a 24 GB / 8 CPU box
+  | Container       | After warm-up, MiB | After the burst, MiB |                  `mem_limit` |
+  | --------------- | -----------------: | -------------------: | ---------------------------: |
+  | langfuse-web    |                679 |                  701 | 1536 MiB (Node heap 768 MiB) |
+  | clickhouse      |                658 |           669 to 690 |                     1536 MiB |
+  | langfuse-worker |                455 |                  513 | 1024 MiB (Node heap 768 MiB) |
 
-- **Lite fits easily**: about 0.5 GiB for the whole stack, leaving the box to the app's real
-  load (Postgres cache, worker concurrency).
-- **Full fits by memory**: about 2.5 GiB for the whole stack, about 4 GiB if every Langfuse
-  container grows to its limit. It runs, and we saw no OOM.
-- **But Full on that box is below Langfuse's own guidance**: Langfuse asks for at least 4 cores
-  and 16 GiB for a Docker Compose VM, ClickHouse alone 2 CPU / 8 GiB, and calls a
-  single-container ClickHouse "development only" (ADR 0009). Our limits work for low traffic
-  (thousands of traces a day). Ingestion bursts compete for CPU with the app, and ClickHouse
-  needs its own backups and disk. For production traffic put Langfuse on its own host or use
-  managed Langfuse, and keep this server on Lite.
-- Whether the small tier runs Langfuse at all is an open owner decision (ADR 0009).
-
-## Reproduce
-
-```sh
-docker compose up -d --build --wait                          # Lite
-PLAYWRIGHT_PORT=8080 PORT=3000 pnpm --filter web exec playwright test   # warm-up, x3
-docker stats --no-stream
-docker compose --profile llmops up -d --wait                 # Full (set the llmops vars from .env.example)
-```
-
-With a non-default `WEB_PORT`, set `BETTER_AUTH_URL` to the same origin before `up`.
+  Langfuse's share is about **1.8 to 1.9 GiB** (plus about 15 MiB in Postgres for its database);
+  the Langfuse worker peaked at about 200 % CPU while ingesting; nothing was OOM-killed. It fits
+  a 24 GB box by memory, but Langfuse's own guidance is at least 4 cores / 16 GiB and it calls a
+  single-container ClickHouse "development only"; at real traffic give it its own host. Whether
+  the S tier runs it at all is an open owner decision (ADR 0009).

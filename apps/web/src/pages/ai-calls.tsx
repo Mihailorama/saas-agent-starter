@@ -1,5 +1,4 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Link } from '@tanstack/react-router';
 import { type ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Download } from 'lucide-react';
 import { useState } from 'react';
@@ -31,25 +30,10 @@ const columns: ColumnDef<AiCall>[] = [
     accessorKey: 'createdAt',
     header: 'Time',
     cell: ({ row }) => (
-      <Link
-        to="/llm-ops/calls/$callId"
-        params={{ callId: row.original.id }}
-        className="whitespace-nowrap underline-offset-4 hover:underline"
-      >
-        {dateTime(row.original.createdAt)}
-      </Link>
+      <span className="whitespace-nowrap">{dateTime(row.original.createdAt)}</span>
     ),
   },
   { accessorKey: 'purpose', header: 'Purpose' },
-  {
-    id: 'prompt',
-    header: 'Prompt',
-    cell: ({ row }) => (
-      <span className="font-mono text-xs">
-        {row.original.promptTemplateId} v{row.original.promptTemplateVersion}
-      </span>
-    ),
-  },
   {
     id: 'model',
     header: 'Model',
@@ -100,8 +84,8 @@ const columns: ColumnDef<AiCall>[] = [
   { accessorKey: 'contour', header: 'Contour' },
 ];
 
-/** Org-admin audit view of every LLM call (EU AI Act record-keeping), on the LLM Ops page. */
-export function AiCallsSection() {
+/** Org-admin audit view of every LLM call (EU AI Act record-keeping). */
+export function AiCallsPage() {
   const { data: org } = authClient.useActiveOrganization();
   const [filters, setFilters] = useState<Filters>({
     purpose: '',
@@ -134,13 +118,13 @@ export function AiCallsSection() {
   const total = calls.data?.total ?? 0;
 
   return (
-    <section className="space-y-4">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">AI calls</h2>
+          <h1 className="text-2xl font-semibold tracking-tight">AI calls</h1>
           <p className="text-sm text-muted-foreground">
-            Every model call made for this organization. Open a call to see its scores; prompts and
-            outputs stay in object storage and are loaded only on request.
+            Every model call made for this organization. Prompts and outputs are kept in object
+            storage and are not shown here.
           </p>
         </div>
         <Button variant="outline" asChild>
@@ -257,6 +241,6 @@ export function AiCallsSection() {
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 }

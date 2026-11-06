@@ -14,9 +14,9 @@
     {
       "purpose": "judge",
       "title": "Quality checks of AI output",
-      "what": "A sample of recent AI outputs is graded daily by a second language model against fixed, versioned criteria, so that quality drops are noticed. The grade is used for monitoring only and never changes what you see.",
+      "what": "We check the quality of AI output: before a change ships, against a fixed set of made-up examples, and, if enabled, by letting a second language model grade a small sample of recent outputs against fixed, versioned criteria in our quality tool. The grade is used for monitoring only and never changes what you see.",
       "data": "The same input and output as the original AI use (for project summaries: the project name, description and the generated summary).",
-      "oversight": "Grades are visible to organization admins next to each AI call; people's confirmations and corrections are recorded as scores too."
+      "oversight": "Grades and your confirmations or corrections are reviewed by our team in the quality tool (PostHog or a self-hosted Langfuse); they never change a result on their own."
     }
   ],
   "contest": [

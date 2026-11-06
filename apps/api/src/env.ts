@@ -30,14 +30,6 @@ const schema = z
     S3_BUCKET: z.string().default('attachments'),
     /** Bucket the worker stores LLM request/response content in (worker AI_CONTENT_BUCKET). */
     AI_CONTENT_BUCKET: z.string().default('ai-calls'),
-    /** Trace UI link for an ai_calls row, `{traceId}` is replaced (Jaeger, Grafana, Langfuse). */
-    TRACE_URL_TEMPLATE: z.string().optional(),
-    /**
-     * Full LLM-ops profile: the browser sends user feedback to Langfuse with the public key
-     * (it can only create scores). Origin the browser reaches Langfuse on. Unset = off.
-     */
-    LANGFUSE_PUBLIC_URL: z.union([z.url(), z.literal('')]).optional(),
-    LANGFUSE_PUBLIC_KEY: z.string().optional(),
     S3_ACCESS_KEY_ID: z.string().min(1),
     S3_SECRET_ACCESS_KEY: z.string().min(1),
     /** Set to true behind a reverse proxy so req.ip comes from X-Forwarded-For. */
@@ -48,14 +40,32 @@ const schema = z
     /** Extra browser origins allowed to call the API with credentials. */
     CORS_ORIGINS: list,
     OTEL_EXPORTER_OTLP_ENDPOINT: z.union([z.url(), z.literal('')]).optional(),
+    /** Error tracking (Sentry protocol: Sentry or GlitchTip); empty = off. Read in sentry.ts. */
+    SENTRY_DSN: z.union([z.url(), z.literal('')]).optional(),
     OIDC_ISSUER: z.url().optional(),
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),
+    // Alert-to-issue loop (docs/product-analytics.md). Empty secret = webhook disabled (401);
+    // no GitHub token/repo = dry run.
+    POSTHOG_WEBHOOK_SECRET: z.string().optional(),
+    /** PostHog app host for links in issues, e.g. https://eu.posthog.com */
+    POSTHOG_APP_HOST: z.union([z.url(), z.literal('')]).optional(),
+    POSTHOG_PROJECT_ID: z.string().optional(),
+    GITHUB_TOKEN: z.string().optional(),
+    /** owner/name of the repository that receives the issues. */
+    GITHUB_REPO: z.string().optional(),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
     path: ['BETTER_AUTH_SECRET'],
-  });
+  })
+  .refine(
+    (e) => e.NODE_ENV !== 'production' || !e.POSTHOG_WEBHOOK_SECRET?.startsWith('local-dev'),
+    {
+      message: 'POSTHOG_WEBHOOK_SECRET still has the example value',
+      path: ['POSTHOG_WEBHOOK_SECRET'],
+    },
+  );
 
 const parsed = schema.safeParse(process.env);
 if (!parsed.success) {

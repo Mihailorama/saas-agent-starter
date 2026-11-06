@@ -15,13 +15,6 @@
       "when": 1793896942648,
       "tag": "0001_safe_jack_murdock",
       "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1793975300131,
-      "tag": "0002_square_echo",
-      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,20 @@
+# Permissive-licensed twin (ADR 0010): only Apache/BSD/MIT/PostgreSQL-licensed containers.
+#   docker compose -f docker-compose.yml -f compose.permissive.yaml [--profile observability] up -d
+# or put COMPOSE_FILE=docker-compose.yml:compose.permissive.yaml in .env.
+# The app does not change: same service names, ports and env. What you lose: docs/LICENSES.md.
+services:
+  redis: # Valkey (BSD-3-Clause) instead of Redis 8 (RSALv2/SSPLv1/AGPLv3); same protocol
+    image: valkey/valkey:9.1-alpine
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+
+  # No Loki/Grafana (AGPL-3.0): traces in the Jaeger UI, metrics + alerts in the Prometheus UI,
+  # logs via `docker compose logs`. The collector skips its Loki log pipeline.
+  otel-collector:
+    command: !override ["--config=/etc/otel/collector.yaml"]
+    volumes: !override [./infra/otel:/etc/otel:ro]
+    user: !reset null
+  loki:
+    profiles: !override [agpl-disabled]
+  grafana:
+    profiles: !override [agpl-disabled]

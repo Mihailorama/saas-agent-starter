@@ -24,6 +24,10 @@ TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 TEMPORAL_TASK_QUEUE = os.environ.get("TEMPORAL_TASK_QUEUE", "projects")
 OTEL_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+# Error tracking (Sentry protocol: Sentry or GlitchTip). Empty DSN = off.
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+SENTRY_ENVIRONMENT = os.environ.get("SENTRY_ENVIRONMENT", "development")
+SENTRY_RELEASE = os.environ.get("SENTRY_RELEASE", "")
 
 # Object storage (any S3-compatible endpoint; empty = AWS S3 in S3_REGION).
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
@@ -45,15 +49,11 @@ AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
 # OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
 
-# LLM-ops (docs/adr/0009-llm-ops.md). Judge model for the drift check: unset = drift check off.
-AI_JUDGE_PROVIDER = os.environ.get("AI_JUDGE_PROVIDER", "")
-AI_JUDGE_MODEL = os.environ.get("AI_JUDGE_MODEL", "")
-AI_DRIFT_CRON = os.environ.get("AI_DRIFT_CRON", "0 3 * * *")  # daily 03:00 UTC
-AI_DRIFT_SAMPLE = int(os.environ.get("AI_DRIFT_SAMPLE", "20"))  # calls per purpose and org
-AI_DRIFT_LOOKBACK_HOURS = int(os.environ.get("AI_DRIFT_LOOKBACK_HOURS", "48"))
 # Traces only (e.g. Langfuse's OTLP endpoint, which takes no metrics); overrides the base URL.
 OTEL_TRACES_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
-# Full profile (`--profile llmops`): scores are also pushed to Langfuse. Empty = off.
-LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "")
-LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
-LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
+# LLM observability in PostHog (docs/adr/0009-llm-ops.md): each call as an $ai_generation event.
+# Project API key + ingestion host (https://eu.i.posthog.com or https://us.i.posthog.com).
+# Unset = nothing is sent. Privacy mode (default on) leaves prompt and output text out.
+POSTHOG_API_KEY = os.environ.get("POSTHOG_API_KEY", "")
+POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
+POSTHOG_PRIVACY_MODE = os.environ.get("POSTHOG_PRIVACY_MODE", "true").lower() != "false"
