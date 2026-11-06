@@ -5,14 +5,15 @@ Single source of rules for coding agents (Claude Code, Codex, others) and humans
 
 ## Definition of done
 
-`pnpm check` is green. It runs, in order: Biome (format + lint), `tsc --noEmit`,
+`pnpm check` is green. It runs, in order: Biome (format + lint), typecheck with tsrs,
 TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
 pyright (strict), pytest, the license gate for all three ecosystems, and the Playwright smoke.
 It needs the local infra running (see Setup).
 
-Inner loop: `pnpm typecheck:fast` runs tsrs (Rust port of the TypeScript checker, 4-10x faster)
-for quick feedback while editing. It is experimental: `tsc` inside `pnpm check` stays the
-source of truth. If the two disagree, trust `tsc` and note the case in docs/TODO.md. Do not finish a task with it red, and do not
+Typecheck: day to day it is tsrs (`pnpm typecheck:fast`, Rust port of the TypeScript checker,
+fastest and lightest). Releases are also checked with the official TypeScript 7 compiler (`tsc`,
+Go): `pnpm check:release` locally, and CI does it on every `v*` tag. If tsrs and tsc disagree,
+tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do not finish a task with it red, and do not
 "fix" it by skipping, deleting or weakening a test, lint rule or license entry.
 
 ## Setup
@@ -76,7 +77,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
-- tsrs (Apache-2.0, Oxc/Cloudflare, beta): fast inner-loop typecheck only; tsc gates (ADR 0011).
+- TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
+  checks, tsc on releases as the authoritative check (ADR 0011).
 
 ## Where code goes (TS vs Python vs Rust)
 
