@@ -51,8 +51,10 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
-infra/              Temporal setup, SeaweedFS (dev S3), OTel collector/Prometheus config
-scripts/            license-check.mjs (JS + Python + Rust + images)
+infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
+                    rules (infra/otel), Grafana datasources + dashboards (infra/grafana)
+compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
+scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 ```
@@ -73,7 +75,10 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Temporal: durable workflows with retries/timeouts, typed SDKs for TS and Python, Web UI.
 - Redis (official image, via ioredis): shared rate-limit store across API replicas.
 - S3 API via the AWS SDK: works with AWS, R2, MinIO, SeaweedFS (local dev uses SeaweedFS).
-- OpenTelemetry: one vendor-neutral standard for traces/metrics in TS, Python and Temporal.
+- OpenTelemetry: one vendor-neutral standard for traces/metrics in TS, Python and Temporal;
+  Collector -> Jaeger/Prometheus/Loki, Grafana as the single pane (ADR 0010).
+- Sentry protocol for errors: Sentry SDKs (MIT) in web/API/worker; GlitchTip (MIT) locally,
+  Sentry SaaS/self-hosted for bigger installs. Only the DSN differs.
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
@@ -145,7 +150,45 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 - TypeScript strict, ESM, `.ts` import extensions on the server. Python 3.12, typed, strict
   pyright. Rust edition 2024, clippy clean.
 - Errors: throw `httpError(status, msg)` in handlers; never leak internals in responses.
-- Logs are structured JSON (pino / Python logging). Log ids, not payloads.
+- Logs are structured JSON (pino / Python logging). Log ids, not payloads. See Observability.
+
+## Observability
+
+Run it: `docker compose --profile observability up -d` with `API_OTEL_ENDPOINT` and
+`WORKER_OTEL_ENDPOINT` set to `http://otel-collector:4318` (Grafana :3001). Design: ADR 0010.
+
+Logging rules:
+
+- One JSON object per line on stdout/stderr: pino in the API (`app.log`/`req.log`), the
+  `logging` module in the worker (`worker/log.py` formats it). No `console.log`/`print`.
+- `trace_id`/`span_id` are added automatically inside a span; do not add them by hand, and do
+  not log outside the request/activity when you can log inside it.
+- Never log secrets, tokens, cookies, headers, request/response bodies, query strings, prompt
+  or completion content, or personal data. Log ids (org, project, ai call, workflow) and
+  counts. The same goes for span attributes and metric labels (labels: low cardinality only,
+  never ids of users or content).
+- Errors: report through the Sentry SDK only (it is already initialised; the API reports 5xx
+  from its `onError` hook, the worker every failed activity). Do not hand-roll error
+  reporting, error webhooks or "error" tables. Log the error too (with ids), but never put
+  content in the exception message.
+
+Metric names agreed for the AI layer (dashboard `LLM`, alert `AiScoreDrop`), emitted by the
+worker over OTLP: `ai_calls_total` (counter; labels `purpose`, `model`, `provider`, `status`),
+`ai_call_latency_seconds` (histogram; `purpose`, `model`), `ai_cost_usd_total` (counter;
+`purpose`, `model`), `ai_score_avg` (gauge, 0..1; `purpose`). Keep these names and labels.
+
+Add a dashboard: build it in Grafana (anonymous admin in local dev), Export -> "Export as
+JSON" with "Export for sharing externally" off, set a stable `uid`, use datasource uid
+`prometheus`/`loki`/`jaeger`, save it as `infra/grafana/dashboards/<uid>.json`. Use
+`$__rate_interval` in `rate()` (SDKs push every 60s). Restart Grafana to load it.
+
+Add an alert: a Prometheus rule in `infra/otel/alerts.yml` (works without Grafana), with
+`for:`, a `severity` label and a `summary`. Check it with
+`docker compose exec prometheus promtool check rules /etc/prometheus/alerts.yml`.
+
+New infrastructure container: list it with its license in docs/LICENSES.md (the gate fails
+otherwise); if it is not permissive, give it a twin in `compose.permissive.yaml` and a row in
+the replacement map.
 
 ## AI rules
 

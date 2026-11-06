@@ -38,6 +38,8 @@ const schema = z
     /** Extra browser origins allowed to call the API with credentials. */
     CORS_ORIGINS: list,
     OTEL_EXPORTER_OTLP_ENDPOINT: z.union([z.url(), z.literal('')]).optional(),
+    /** Error tracking (Sentry protocol: Sentry or GlitchTip); empty = off. Read in sentry.ts. */
+    SENTRY_DSN: z.union([z.url(), z.literal('')]).optional(),
     OIDC_ISSUER: z.url().optional(),
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),

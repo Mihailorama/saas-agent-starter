@@ -15,7 +15,10 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
 - **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
-  optional Jaeger + Prometheus profile, CI with gitleaks, osv-scanner, CodeQL, Dependabot.
+  `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
+  dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
+  permissive-license twin of the whole stack, SBOMs + third-party notices, CI with gitleaks,
+  osv-scanner, CodeQL, Dependabot.
 
 ## 5-minute quickstart
 
@@ -36,9 +39,37 @@ computed it with the Rust extension and wrote it back. Watch it in the Temporal 
 http://localhost:8233. API schema: http://localhost:3000/openapi.json.
 
 Everything in containers instead: `docker compose up -d --build`, then http://localhost:8080.
-Tracing and metrics: add `--profile observability` and set
-`API_OTEL_ENDPOINT=http://otel-collector:4318` and `WORKER_OTEL_ENDPOINT=http://otel-collector:4318`
-(both OTLP/HTTP); Jaeger at http://localhost:16686, Prometheus at http://localhost:9090.
+
+### Logs, traces, metrics, errors
+
+```sh
+# in .env (compose reads it):
+API_OTEL_ENDPOINT=http://otel-collector:4318
+WORKER_OTEL_ENDPOINT=http://otel-collector:4318
+docker compose --profile observability up -d --build
+```
+
+Grafana http://localhost:3001 (no login, local only): dashboards API, Temporal server, Worker,
+LLM; Explore -> Loki for logs (`{service_name="api"}`), each line with a `trace_id` links to
+its trace. Jaeger http://localhost:16686, Prometheus http://localhost:9090 (alert rules at
+`/alerts`). Resource budget: [docs/STACK.md](docs/STACK.md).
+
+Error tracking (GlitchTip, Sentry-compatible): `docker compose --profile glitchtip up -d`,
+open http://localhost:8000, sign up, create an organization `local` and projects (Node.js for the API, Python for the worker, JavaScript for the web app), then set their DSNs in `.env`
+(`API_SENTRY_DSN` / `WORKER_SENTRY_DSN` with host `glitchtip:8000`, `WEB_SENTRY_DSN` with
+`localhost:8000` plus `WEB_SENTRY_ORIGIN=http://localhost:8000`) and rebuild with
+`GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build api worker web`. For Sentry
+use its DSNs instead. `GET /api/debug/error` (non-production only) throws a test error.
+Browser source maps (not uploaded by default): build with `vite build --sourcemap hidden`, then
+`glitchtip-cli sourcemaps inject ./dist` and `glitchtip-cli sourcemaps upload ./dist --org <org>
+--project web` (Sentry: `sentry-cli sourcemaps inject` / `upload`), and delete the `.map` files
+before building the image. Both CLIs are separate tools, not dependencies (`sentry-cli` is
+FSL-licensed).
+
+Permissive-license twin (no AGPL/SSPL containers: Valkey instead of Redis, no Loki/Grafana):
+`docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observability up -d`.
+What changes: [docs/LICENSES.md](docs/LICENSES.md#permissive-twin-replacement-map).
+SBOMs (CycloneDX, per image) + `THIRD_PARTY_NOTICES.md`: `pnpm run sbom` -> `dist/sbom/`.
 
 ## Quality gate
 

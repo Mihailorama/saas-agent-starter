@@ -13,6 +13,8 @@ ENV NODE_ENV=production
 COPY --from=deps /app ./
 COPY packages/db packages/db
 COPY apps/api apps/api
+ARG GIT_SHA=dev
+ENV SENTRY_RELEASE=$GIT_SHA
 USER node
 EXPOSE 3000
 HEALTHCHECK CMD wget -qO- http://127.0.0.1:3000/healthz || exit 1

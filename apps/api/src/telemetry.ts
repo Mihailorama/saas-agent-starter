@@ -1,6 +1,7 @@
 // Preloaded with `node --import ./src/telemetry.ts` so instrumentation patches
 // modules before they load. No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
 import { register } from 'node:module';
+import './sentry.ts'; // error reporting; no-op unless SENTRY_DSN is set
 
 if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
   register('import-in-the-middle/hook.mjs', import.meta.url);

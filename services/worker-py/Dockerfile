@@ -15,5 +15,7 @@ COPY --from=build /app/services/worker-py /app/services/worker-py
 COPY config /app/config
 WORKDIR /app/services/worker-py
 ENV PATH=/app/services/worker-py/.venv/bin:$PATH PYTHONUNBUFFERED=1
+ARG GIT_SHA=dev
+ENV SENTRY_RELEASE=$GIT_SHA
 USER worker
 CMD ["python", "-m", "worker"]

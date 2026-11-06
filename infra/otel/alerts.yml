@@ -1,0 +1,30 @@
+# Example alert rules, evaluated by Prometheus (works with and without Grafana). Visible in
+# Prometheus /alerts and Grafana Alerting. Add Alertmanager to route notifications.
+groups:
+  - name: app
+    rules:
+      - alert: ApiHighErrorRate
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{job="api", http_response_status_code=~"5.."}[5m]))
+            / sum(rate(http_server_request_duration_seconds_count{job="api"}[5m])) > 0.05
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "API 5xx rate above 5% for 5 minutes" }
+      - alert: WorkerActivityFailures
+        expr: sum(rate(temporal_activity_execution_failed_total[10m])) > 0
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "Temporal activities keep failing" }
+  - name: ai
+    rules:
+      - alert: AiScoreDrop
+        # ai_score_avg: mean eval/review score per purpose (metric names: AGENTS.md "Observability").
+        expr: avg by (purpose) (ai_score_avg) < 0.8 * avg by (purpose) (avg_over_time(ai_score_avg[7d] offset 1d))
+        for: 30m
+        labels: { severity: ticket }
+        annotations: { summary: "AI score for {{ $labels.purpose }} dropped >20% vs last week" }
+      - alert: AiCostSpike
+        expr: sum(increase(ai_cost_usd_total[1h])) > 2 * sum(increase(ai_cost_usd_total[1h] offset 1d))
+        for: 1h
+        labels: { severity: ticket }
+        annotations: { summary: "AI spend this hour is more than twice the same hour yesterday" }

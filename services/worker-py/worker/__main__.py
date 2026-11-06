@@ -11,11 +11,13 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
+from temporalio.runtime import OpenTelemetryConfig, Runtime, TelemetryConfig
 from temporalio.worker import Worker
 
 from worker import settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import PROVIDERS, Gateway, load_registry
+from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.s3 import S3
 from worker.text import backend
@@ -24,21 +26,28 @@ from worker.workflows import ProjectCreatedWorkflow
 log = logging.getLogger("worker")
 
 
-def setup_tracing() -> None:
+def setup_tracing() -> Runtime | None:
+    """Traces via the OTel SDK; Temporal SDK metrics (temporal_*) via the Core runtime."""
     if not settings.OTEL_ENDPOINT:
-        return
+        return None
     provider = TracerProvider(resource=Resource.create({"service.name": "worker"}))
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     trace.set_tracer_provider(provider)
+    metrics = OpenTelemetryConfig(
+        url=f"{settings.OTEL_ENDPOINT}/v1/metrics", http=True, durations_as_seconds=True
+    )
+    return Runtime(telemetry=TelemetryConfig(metrics=metrics))
 
 
 async def main() -> None:
     configure_logging()
-    setup_tracing()
+    setup_errors()
+    runtime = setup_tracing()
     client = await Client.connect(
         settings.TEMPORAL_ADDRESS,
         namespace=settings.TEMPORAL_NAMESPACE,
         interceptors=[TracingInterceptor()],
+        runtime=runtime,
     )
     pool = await asyncpg.create_pool(settings.DATABASE_URL)
     s3 = S3(
@@ -75,6 +84,7 @@ async def main() -> None:
         workflows=[ProjectCreatedWorkflow],
         activities=[activities.fingerprint_project, activities.summarize_project],
         graceful_shutdown_timeout=timedelta(seconds=10),
+        interceptors=[ErrorInterceptor()],
     )
     async with worker:  # leaving the block finishes in-flight activities, then stops
         log.info(
