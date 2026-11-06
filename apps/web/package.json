@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc",
+    "typecheck:fast": "tsrs --noEmit -p .",
     "test": "echo 'web: covered by e2e'",
     "e2e": "playwright test"
   },
