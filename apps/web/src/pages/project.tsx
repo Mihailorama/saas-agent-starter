@@ -1,7 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { ArrowLeft, Check, Download, FileText, Pencil, Upload } from 'lucide-react';
-import { type FormEvent, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Check,
+  Download,
+  FileText,
+  Pencil,
+  ThumbsDown,
+  ThumbsUp,
+  Upload,
+} from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { AiBadge } from '@/components/ai-badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -17,6 +26,7 @@ import {
 } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { aiFeedback, track } from '@/lib/analytics';
 import { type Attachment, api, formatBytes, formatDate, type Project } from '@/lib/api';
 
 async function upload(projectId: string, file: File) {
@@ -38,9 +48,29 @@ async function upload(projectId: string, file: File) {
 }
 
 /** The AI summary with human oversight: confirm it, or correct it (both are audit-logged). */
+const PURPOSE = 'project.summary';
+
 function AiSummaryCard({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const [rated, setRated] = useState<boolean>();
+  const shown = Boolean(project.aiSummary);
+  useEffect(() => {
+    if (shown) track('ai_summary_shown', { purpose: PURPOSE });
+  }, [shown]);
+
+  function rate(up: boolean) {
+    setRated(up);
+    if (project.aiCallId) {
+      aiFeedback({
+        purpose: PURPOSE,
+        aiCallId: project.aiCallId,
+        traceId: project.aiTraceId,
+        up,
+      }).catch(() => {}); // feedback is best effort; never block the user on it
+    }
+    if (!up) setEditing(true); // a thumbs down invites the correction right away
+  }
   const review = useMutation({
     mutationFn: (summary?: string) =>
       api<Project>(
@@ -48,6 +78,7 @@ function AiSummaryCard({ project }: { project: Project }) {
         { method: 'POST', json: summary === undefined ? {} : { summary } },
       ),
     onSuccess: (updated) => {
+      track('ai_summary_reviewed', { purpose: PURPOSE, action: updated.aiStatus ?? '' });
       queryClient.setQueryData(['projects', project.id], updated);
       queryClient.invalidateQueries({ queryKey: ['projects'], exact: true });
       setEditing(false);
@@ -109,6 +140,24 @@ function AiSummaryCard({ project }: { project: Project }) {
             <p className="text-sm">{project.aiSummary}</p>
           </CardContent>
           <CardFooter className="justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Good summary"
+              aria-pressed={rated === true}
+              onClick={() => rate(true)}
+            >
+              <ThumbsUp className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Bad summary"
+              aria-pressed={rated === false}
+              onClick={() => rate(false)}
+            >
+              <ThumbsDown className="size-4" />
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
               <Pencil className="size-4" /> Correct
             </Button>

@@ -1,0 +1,19 @@
+{
+  "$comment": "Copy to .mcp.json to give coding agents read access to product analytics (docs/product-analytics.md). No secrets here: keys come from your shell env. PostHog: personal API key created with the 'MCP Server' preset; one URL for both regions. Umami: self-hosted /mcp (MCP_ENABLED=1, on in docker-compose.yml) with an Umami API key (Settings -> API keys).",
+  "mcpServers": {
+    "posthog": {
+      "type": "http",
+      "url": "https://mcp.posthog.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${POSTHOG_PERSONAL_API_KEY}",
+        "x-posthog-project-id": "${POSTHOG_PROJECT_ID}",
+        "x-posthog-read-only": "true"
+      }
+    },
+    "umami": {
+      "type": "http",
+      "url": "${UMAMI_URL}/mcp",
+      "headers": { "Authorization": "Bearer ${UMAMI_API_KEY}" }
+    }
+  }
+}

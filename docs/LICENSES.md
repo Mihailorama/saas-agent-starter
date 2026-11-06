@@ -26,6 +26,7 @@ on an image that is not. Their primary software licenses:
 | `nginxinc/nginx-unprivileged`          | web static files + `/api` proxy                    | BSD-2-Clause             |
 | `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0        |
 | `python`                               | worker runtime                                     | Python-2.0 (PSF)         |
+| `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                      |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -56,6 +57,16 @@ Notes:
   used: it depends on the `sentry` CLI package (FSL-1.1-Apache-2.0), which the code license gate
   rejects.
 - Tooling, not part of the stack: `anchore/syft` (Apache-2.0) generates the SBOMs (`pnpm run sbom`).
+
+- `ghcr.io/umami-software/umami` (Umami 3, [MIT](https://github.com/umami-software/umami/blob/master/LICENSE)):
+  self-hosted product analytics, see [docs/product-analytics.md](product-analytics.md). For an
+  on-prem delivery MIT only asks to keep the copyright notice, which the image already carries;
+  the client may run, copy and modify it freely. Its `umami-db` one-shot helper reuses the
+  `postgres` image.
+- Product-analytics code dependencies (checked by the gate like every npm package):
+  `posthog-js` is `Apache-2.0 AND MIT` (both permissive; ship the notices), `@langfuse/browser`
+  is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
+  an on-prem client gets none of them unless it sets their env vars.
 
 ## Permissive twin (replacement map)
 

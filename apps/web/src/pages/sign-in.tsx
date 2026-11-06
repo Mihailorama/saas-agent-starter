@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { track } from '@/lib/analytics';
 import { api } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
@@ -41,6 +42,8 @@ export function SignInPage() {
         : await authClient.signUp.email({ email, password, name: String(form.get('name')) });
     setPending(false);
     if (error) return toast.error(error.message ?? 'Something went wrong');
+    if (mode === 'sign-in') track('signin_completed');
+    else track('signup_completed');
     navigate({ to: '/' });
   }
 
@@ -64,7 +67,11 @@ export function SignInPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={onSubmit} className="space-y-4">
+            <form
+              onSubmit={onSubmit}
+              className="space-y-4"
+              aria-label={signUp ? 'Create account' : 'Sign in'}
+            >
               {signUp && (
                 <div className="space-y-2">
                   <Label htmlFor="name">Name</Label>
@@ -106,7 +113,10 @@ export function SignInPage() {
               <button
                 type="button"
                 className="font-medium text-foreground underline-offset-4 hover:underline"
-                onClick={() => setMode(signUp ? 'sign-in' : 'sign-up')}
+                onClick={() => {
+                  if (!signUp) track('signup_started');
+                  setMode(signUp ? 'sign-in' : 'sign-up');
+                }}
               >
                 {signUp ? 'Sign in' : 'Create an account'}
               </button>

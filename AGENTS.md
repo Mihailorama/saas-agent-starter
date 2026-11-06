@@ -5,7 +5,8 @@ Single source of rules for coding agents (Claude Code, Codex, others) and humans
 
 ## Definition of done
 
-`pnpm check` is green. It runs, in order: Biome (format + lint), typecheck with tsrs,
+`pnpm check` is green. It runs, in order: Biome (format + lint), the analytics event check
+(`check:events`, `scripts/*.test.mjs`), typecheck with tsrs,
 TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
 pyright (strict), pytest, the license gate for all three ecosystems, and the Playwright smoke.
 It needs the local infra running (see Setup).
@@ -49,12 +50,14 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
 config/             ai-models.json (allowed models per contour/purpose, prices),
-                    ai-transparency.json (public /ai-transparency page)
+                    ai-transparency.json (public /ai-transparency page),
+                    events.json (analytics event catalog), journeys.json (journeys as code)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
                     rules (infra/otel), Grafana datasources + dashboards (infra/grafana)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
-scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`)
+scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
+                    check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 ```
@@ -82,6 +85,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
+- PostHog Cloud for product analytics, replay, surveys, AI feedback; Umami (MIT) self-hosted
+  where data must stay in place (ADR 0012).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
 
@@ -199,6 +204,22 @@ the replacement map.
 - Never put prompt or completion content in logs, span attributes, exceptions, audit rows or
   Temporal workflow arguments. It lives only in the `ai_calls` S3 objects.
 - `ai_calls` is append-only: never grant UPDATE/DELETE on it or "fix" rows; record a new event.
+
+## Product analytics rules
+
+Details: docs/product-analytics.md, ADR 0012.
+
+- Every user-facing feature declares its events in `config/events.json` (name, description,
+  props, `pii`) and, if it is part of a customer journey, its steps in `config/journeys.json`.
+  Emit them only with `track('<literal name>', { declared props })` from
+  `apps/web/src/lib/analytics.ts`; `pnpm check:events` fails otherwise.
+- Never send free text, emails, names or URL ids as props; mark identifying events `pii: true`.
+- No own event tables, collectors, funnel jobs or click detectors: analytics, funnels, replay,
+  heatmaps, surveys and alerts live in PostHog (default) or Umami (self-hosted fallback).
+- Before changing a flow, read its state: `pnpm journeys:report`, or the PostHog / Umami MCP
+  (`.mcp.json.example`). After changing journeys, `pnpm journeys:sync --dry-run` shows what
+  would change in the tools. Issues labelled `cjm-regression` or `from-users` come from real
+  users: link them in the PR that fixes them.
 
 ## Security rules
 

@@ -43,11 +43,27 @@ const schema = z
     OIDC_ISSUER: z.url().optional(),
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),
+    // Alert-to-issue loop (docs/product-analytics.md). Empty secret = webhook disabled (401);
+    // no GitHub token/repo = dry run.
+    POSTHOG_WEBHOOK_SECRET: z.string().optional(),
+    /** PostHog app host for links in issues, e.g. https://eu.posthog.com */
+    POSTHOG_APP_HOST: z.union([z.url(), z.literal('')]).optional(),
+    POSTHOG_PROJECT_ID: z.string().optional(),
+    GITHUB_TOKEN: z.string().optional(),
+    /** owner/name of the repository that receives the issues. */
+    GITHUB_REPO: z.string().optional(),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
     path: ['BETTER_AUTH_SECRET'],
-  });
+  })
+  .refine(
+    (e) => e.NODE_ENV !== 'production' || !e.POSTHOG_WEBHOOK_SECRET?.startsWith('local-dev'),
+    {
+      message: 'POSTHOG_WEBHOOK_SECRET still has the example value',
+      path: ['POSTHOG_WEBHOOK_SECRET'],
+    },
+  );
 
 const parsed = schema.safeParse(process.env);
 if (!parsed.success) {

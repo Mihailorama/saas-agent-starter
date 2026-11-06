@@ -3,6 +3,7 @@ packages:
   - packages/*
 allowBuilds:
   "@swc/core": true
+  core-js: false # postinstall only prints a funding banner
   esbuild: true
   protobufjs: false
 minimumReleaseAgeExclude:
