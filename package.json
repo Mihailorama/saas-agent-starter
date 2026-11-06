@@ -28,6 +28,6 @@
     "@biomejs/biome": "2.6.5",
     "pyright": "1.1.414",
     "tsrs": "0.22.0-ts7.1.0-beta",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }
