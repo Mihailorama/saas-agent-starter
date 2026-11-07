@@ -63,6 +63,26 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Make the pre-migration backup mandatory.** `scripts/deploy.mjs` calls `pnpm run backup:now`
+  (env `DEPLOY_ENV=<env>`) between staging and migrating, but only warns and continues when the
+  script is missing (it is being added on the `backups` branch). Once it lands: fail the deploy
+  without it, agree its interface (which environment/database it backs up, where the dump goes),
+  and add pnpm setup to the `deploy` job in `.github/workflows/release.yml` (it has none today, so
+  the hook would fail there and abort the deploy). docs/deploy.md section 6.
+- **Short downtime on single-host deploys.** `docker compose up` recreates `api`/`web` in place
+  (seconds without the API; Caddy only holds requests to `web`). Zero-downtime on one host needs
+  two `api` replicas and a health-aware switch (e.g. a blue/green project pair behind Caddy).
+  Tier L on Kubernetes gets rolling updates. docs/deploy.md "Tiers".
+- **No Helm chart for tier L / customer clusters.** What it needs is listed in docs/deploy.md
+  "Kubernetes / Helm" (migrate as pre-upgrade hook Job, probes, Ingress + cert-manager, secrets).
+- **Production observability.** `compose.prod.yaml` has no observability profile; the dev one
+  (`docker-compose.yml`) mounts repo files and runs Grafana without login. Add a production
+  variant (authenticated Grafana behind Caddy, retention) or document an external backend.
+- **Release images are linux/amd64 only** (`.github/workflows/release.yml`). Add
+  `--platform linux/amd64,linux/arm64` (and QEMU/arm runners) when an arm64 host is needed.
+- **SSH transport of `scripts/deploy.mjs` is not exercised by the rehearsal** (it uses
+  `DEPLOY_HOST=local`, same script on `sh -s` instead of `ssh host sh -s`). Run the first real
+  deploy to a staging host and note the result in docs/deploy.md.
 - **Social mentions into the service desk (later, only if volume appears).** X and LinkedIn
   mentions of the product do not reach Chatwoot. When there is enough volume to matter: a
   scheduled Apify actor (one per network) that posts new mentions into a Chatwoot **API inbox**
@@ -95,10 +115,6 @@
   Consequence: the worker has no local evaluation and sends no `$feature_flag_called` exposure
   events (`services/worker-py/worker/flags.py`). Fix once approved: add the alias to `ALIASES` in
   `scripts/license-check.mjs`, `uv add posthog`, and use `Posthog(...).evaluate_flags(...)`.
-- **Tag workflows on other branches must accept `workflow_dispatch`.** Releases are created with
-  `GITHUB_TOKEN`, which starts no `push: tags` workflow; `release-please.yml` dispatches every
-  workflow that has both `tags:` and `workflow_dispatch:` (docs/releases.md). The `deploy`
-  branch's image build needs `workflow_dispatch:` added or it will not run on releases.
 - **Mailed links live in Temporal history.** `SendEmailWorkflow` gets the rendered mail, link
   included, as its argument (`apps/api/src/temporal.ts`), kept until the namespace retention
   drops it. Same trust boundary as Better Auth's `verification` table while Temporal runs on our
