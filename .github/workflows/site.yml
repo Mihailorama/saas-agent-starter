@@ -1,0 +1,47 @@
+name: Site
+
+# Marketing site (apps/site): build it and hold it to the Lighthouse budgets in
+# apps/site/lighthouserc.cjs (performance, accessibility, best practices, SEO). docs/marketing.md.
+on:
+  pull_request:
+    paths:
+      - apps/site/**
+      - apps/web/src/index.css
+      - apps/web/src/lib/analytics.ts
+      - config/events.json
+      - pnpm-lock.yaml
+      - .github/workflows/site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+      SITE_URL: http://localhost:4321 # canonical URLs must match the audited origin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter site... --filter web...
+      - run: pnpm --filter site build
+      # Lighthouse CI runs via dlx, not as a dependency: lighthouse pulls @sentry/node 11 and with
+      # it the FSL-licensed `sentry` CLI, which the code license gate rejects (docs/LICENSES.md).
+      - run: pnpm --filter site lhci
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lighthouse-reports
+          path: apps/site/.lighthouseci/reports/
+          if-no-files-found: ignore

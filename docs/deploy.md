@@ -132,6 +132,16 @@ profile) is not part of the production file yet, nor are Langfuse (`llmops`) and
 (`support`): run those separately or use their cloud offerings and set their URLs/keys; send OTLP to an existing collector with
 `OTEL_EXPORTER_OTLP_ENDPOINT` and errors to Sentry/GlitchTip with `SENTRY_DSN`.
 
+The marketing layer ([docs/marketing.md](marketing.md), `marketing` profile) is not in the
+production file either, and deploys separately: the site (`apps/site`) is static, so build it
+with its production `SITE_URL`/`SITE_APP_URL` (and the same public `VITE_*` analytics values as
+the web) and publish `apps/site/dist` on any static host or CDN, or run the `site` image behind
+your own proxy on the site's domain; then run `pnpm seo:indexnow --since <previous sha>`.
+Postiz and SerpBear are internal tools: run them with the `marketing` profile on a separate host
+(Postiz needs ~1.3 GiB, docs/STACK.md) behind HTTPS, or use Postiz's hosted plan. None of their
+settings (`SITE_*`, `INDEXNOW_KEY`, `GSC_*`, `POSTIZ_*`, `SERPBEAR_*`) are read by `api`, `worker`
+or `web`, so `compose.prod.yaml` and `deploy/env/example.env` need no entries for them.
+
 ### GitHub Actions (optional)
 
 The `deploy` job of the `Release images` workflow is inert until you opt in:
