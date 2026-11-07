@@ -33,6 +33,8 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | site (nginx)      | marketing     |                 7 |          64 |       0.0% |
 | postiz            | marketing     |             1,264 |        2048 |       ~20% |
 | serpbear          | marketing     |                71 |         512 |       0.0% |
+| twenty            | crm           |               650 |        1536 |       0.9% |
+| twenty-worker     | crm           |               792 |        1024 |       0.8% |
 
 Totals (used / limit): default stack ~612 / 2304 MiB, observability ~670 / 2432 MiB,
 GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.1 GiB. Jaeger keeps traces in memory, so its
@@ -49,6 +51,17 @@ unchanged. Marketing profile ~1.3 / 2.6 GiB (used / limit) on top of the shared 
 The `support` rows (Chatwoot CE, measured 2026-11-07 after start-up, separately from the snapshot
 above) peak at ~442 / 572 / 110 MiB under a small load: plan ~1.2 GiB for the profile
 (docs/support.md).
+
+CRM profile (2026-11-07, separate run, docs/crm.md): Twenty v2.56.1 (`twenty` server +
+`twenty-worker`) on postgres and redis only, rows above 4 minutes after start with no traffic. After
+a smoke test (workspace, API key, custom fields via `pnpm crm:sync`, people, companies, a deal and
+notes through the worker's client) server 750 MiB, worker 702 MiB; Postgres grew from ~68 to
+~121 MiB (Twenty's schema and data), Redis to 16 MiB (db 4). CRM profile ~1.45 / 2.5 GiB (used /
+limit), more than twice the default stack: run it on another host or use Twenty Cloud on a small
+server. The worker needs `NODE_OPTIONS=--max-old-space-size=768`: with Node's default heap for a
+1 GiB container it died of heap exhaustion during start-up. First start ~11 minutes (migrations) on
+this loaded host. Booking has no container (Cal.com Cloud or a separately built Cal.diy), so it
+adds nothing here.
 
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then

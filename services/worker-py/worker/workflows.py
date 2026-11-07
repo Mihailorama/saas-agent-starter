@@ -13,11 +13,13 @@ from temporalio.client import (
     SchedulePolicy,
     ScheduleSpec,
 )
-from temporalio.common import RetryPolicy
+from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
+from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
     from worker.activities import Activities, ProjectCreated
     from worker.billing import BillingActivities, BillingEvent
+    from worker.crm import CrmActivities, CrmEvent
     from worker.mail import SendEmail, send_email
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
@@ -166,9 +168,47 @@ class BillingEventWorkflow:
     @workflow.run
     async def run(self, event: BillingEvent) -> bool:
         # The DB may be down for a while; the provider already got its 200, so keep trying.
-        return await workflow.execute_activity_method(
+        applied = await workflow.execute_activity_method(
             BillingActivities.apply_billing_event,
             event,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+        )
+        # Deal stage in the CRM (docs/crm.md), only for events that changed our state: an older
+        # event that arrives late must not move the deal back. A child, so a CRM outage never
+        # holds the billing workflow open. `patched`: runs started before this code replay as-is.
+        if applied and workflow.patched("crm-sync"):
+            crm = CrmEvent(
+                kind="billing",
+                eventId=f"billing:{event.provider}:{event.eventId}",
+                orgId=event.orgId,
+                billingType=event.type,
+            )
+            await workflow.start_child_workflow(
+                CrmSyncWorkflow.run,
+                crm,
+                id=f"crm-{crm.eventId}",
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                parent_close_policy=ParentClosePolicy.ABANDON,
+            )
+        return applied
+
+
+@workflow.defn(name="CrmSyncWorkflow")
+class CrmSyncWorkflow:
+    """One source event -> the CRM. Id `crm-<eventId>`, started by the API (signup, org, PostHog
+    signal, Chatwoot, Cal.com) or by BillingEventWorkflow; duplicates are rejected."""
+
+    @workflow.run
+    async def run(self, e: CrmEvent) -> str:
+        # A CRM outage of a few hours is retried; after that the event shows as failed in the UI.
+        return await workflow.execute_activity_method(
+            CrmActivities.sync,
+            e,
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(
+                initial_interval=timedelta(seconds=5),
+                maximum_interval=timedelta(minutes=10),
+                maximum_attempts=25,
+            ),
         )

@@ -58,7 +58,24 @@ const app = {
         class="rounded-md bg-primary px-5 py-2.5 font-medium text-primary-foreground hover:opacity-90"
         >Start free</a
       >
-      <a href="/blog/" class="rounded-md border px-5 py-2.5 font-medium hover:bg-secondary">Read the blog</a>
+      {
+        site.booking ? (
+          <a
+            href={site.booking}
+            target="_blank"
+            rel="noopener"
+            data-cta="book_demo"
+            data-booking
+            class="rounded-md border px-5 py-2.5 font-medium hover:bg-secondary"
+          >
+            Book a demo
+          </a>
+        ) : (
+          <a href="/blog/" class="rounded-md border px-5 py-2.5 font-medium hover:bg-secondary">
+            Read the blog
+          </a>
+        )
+      }
     </div>
   </section>
 

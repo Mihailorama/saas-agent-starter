@@ -177,3 +177,17 @@
   each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
   task queues this server does not poll) listing the networks you do not use; measure before and
   after in docs/STACK.md, and never exclude a network you post to.
+- **Booking host is an open owner decision** (ADR 0026, docs/crm.md "Booking"). Cal.com went
+  closed source on 2026-04-14; the approved "Cal.com" is now Cal.com Cloud (US SaaS, team
+  scheduling paid) or Cal.diy (MIT, no published image, no teams, "non-production"). The code
+  speaks the shared protocol and the docs default to Cloud. Decide; if Cal.diy, add a CI job that
+  builds and scans its image (6 GB Node heap) and a `booking` profile, then measure its RAM.
+- **Permissive CRM twin.** `compose.permissive.yaml` only disables Twenty (AGPL); the sync then
+  dry-runs. Evaluate Krayin (MIT, Laravel) or Atomic CRM (MIT) behind the `Crm` protocol
+  (`services/worker-py/worker/crm.py`) if an AGPL-free delivery needs a CRM.
+- **Ids-only checks on Temporal history are vacuous.** `apps/api/test/api.test.ts` asserts
+  `JSON.stringify(await handle.fetchHistory())` does not contain the customer text, but payloads
+  are base64 there, so the check always passes. Decode the start event's input as
+  `apps/api/test/crm.test.ts` (`started()`) does.
+- **Twenty attachments are not backed up** (`twenty-data` volume, `STORAGE_TYPE=local`,
+  docs/backups.md). Point Twenty at a bucket in `BACKUP_APP_BUCKETS` once attachments matter.

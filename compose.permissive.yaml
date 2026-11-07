@@ -27,3 +27,12 @@ services:
     profiles: !override [agpl-disabled]
   postiz-namespace:
     profiles: !override [agpl-disabled]
+
+  # No Twenty (AGPL-3.0) in the crm profile: the worker's CRM sync dry-runs, or point it at a CRM
+  # you license (docs/crm.md "Swapping the CRM", docs/LICENSES.md).
+  twenty:
+    profiles: !override [agpl-disabled]
+  twenty-worker:
+    profiles: !override [agpl-disabled]
+  twenty-db:
+    profiles: !override [agpl-disabled]

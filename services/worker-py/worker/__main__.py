@@ -23,6 +23,7 @@ from worker import settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import PROVIDERS, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
+from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
@@ -40,6 +41,7 @@ from worker.text import backend
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
+    CrmSyncWorkflow,
     ProjectCreatedWorkflow,
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
@@ -171,6 +173,16 @@ async def main() -> None:
         ai_org_id=settings.SUPPORT_AI_ORG_ID,
         notify=settings.SUPPORT_NOTIFY,
     )
+    crm = CrmActivities(
+        pool=pool,
+        crm=Twenty(settings.TWENTY_API_URL, settings.TWENTY_API_KEY, http)
+        if settings.TWENTY_API_URL and settings.TWENTY_API_KEY
+        else None,
+        config=load_config(settings.CRM_FILE),
+        plans=plans,
+        chatwoot=chatwoot,
+        calcom_url=settings.CALCOM_PUBLIC_URL,
+    )
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -181,6 +193,7 @@ async def main() -> None:
         workflows=[
             ProjectCreatedWorkflow,
             BillingEventWorkflow,
+            CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
             WebhookEventWorkflow,
@@ -190,6 +203,7 @@ async def main() -> None:
             activities.fingerprint_project,
             activities.summarize_project,
             billing.apply_billing_event,
+            crm.sync,
             support.triage,
             support.issue_closed,
             webhooks.deliver_webhook,
@@ -212,13 +226,14 @@ async def main() -> None:
     async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
-            " support: chatwoot %s, tracker %s, triage model %s)",
+            " support: chatwoot %s, tracker %s, triage model %s, crm %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
             "on" if chatwoot else "dry run",
             tracker.name,
             triage_model or "off",
+            crm.crm.name if crm.crm else "dry run",
         )
         await stop.wait()
         log.info("shutting down")

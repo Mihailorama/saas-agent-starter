@@ -3,6 +3,7 @@ import { Link, Navigate, Outlet, useLocation, useNavigate } from '@tanstack/reac
 import {
   Bug,
   Building2,
+  CalendarClock,
   Check,
   ChevronsUpDown,
   Cookie,
@@ -47,6 +48,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
+import { bookingUrl, onBookingClick } from '@/lib/booking';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -224,6 +226,24 @@ function HelpMenu({ className }: { className?: string }) {
   );
 }
 
+/** Books a call with the team (Cal.com, docs/crm.md); prefilled with the signed-in user. */
+function TalkToUs({ className, label = true }: { className?: string; label?: boolean }) {
+  const { data: session } = authClient.useSession();
+  const user = session?.user;
+  return (
+    <a
+      href={bookingUrl}
+      target="_blank"
+      rel="noopener"
+      aria-label={label ? undefined : 'Talk to us'}
+      className={className}
+      onClick={(e) => onBookingClick(e, 'app', { name: user?.name, email: user?.email })}
+    >
+      <CalendarClock className="size-4" /> {label && 'Talk to us'}
+    </a>
+  );
+}
+
 const navLink =
   'flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
 const navActive = 'bg-accent font-medium text-foreground!';
@@ -315,6 +335,7 @@ export function Shell() {
             </>
           )}
         </nav>
+        {bookingUrl && <TalkToUs className={cn(navLink, 'mx-2 mb-1')} />}
         {supportEnabled && (
           <HelpMenu className="mx-2 mb-1 h-auto py-2 text-sm font-normal text-muted-foreground" />
         )}
@@ -333,6 +354,7 @@ export function Shell() {
           <div className="min-w-0 flex-1">
             <OrgSwitcher />
           </div>
+          {bookingUrl && <TalkToUs label={false} className="rounded-md p-2 hover:bg-accent" />}
           {supportEnabled && <HelpMenu />}
           <div className="w-44">
             <UserMenu />

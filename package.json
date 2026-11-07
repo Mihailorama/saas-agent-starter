@@ -33,6 +33,7 @@
     "deploy": "node scripts/deploy.mjs",
     "journeys:sync": "node scripts/journeys.mjs sync",
     "journeys:report": "node scripts/journeys.mjs report",
+    "crm:sync": "node scripts/crm.mjs sync",
     "eval:pull": "pnpm --filter api eval:pull",
     "eval": "node scripts/eval.mjs",
     "langfuse:prompts": "node scripts/langfuse-publish-prompts.mjs",

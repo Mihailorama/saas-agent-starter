@@ -97,6 +97,8 @@ services:
       - GITHUB_WEBHOOK_SECRET
       - PLANE_WEBHOOK_SECRET
       - PLANE_PROJECT_ID
+      # booking webhook -> CRM (docs/crm.md)
+      - CALCOM_WEBHOOK_SECRET
       # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
       - AI_CONTOUR=${AI_CONTOUR:-}
       - BILLING_CONTOUR
@@ -165,6 +167,11 @@ services:
       - AI_SUPPORT_TRIAGE_MODEL
       - SUPPORT_AI_ORG_ID
       - SUPPORT_NOTIFY_ON_CLOSE
+      # CRM sync (docs/crm.md); Twenty runs elsewhere (docs/deploy.md), empty = dry run
+      - TWENTY_API_URL
+      - TWENTY_API_KEY
+      - CRM_FILE
+      - CALCOM_PUBLIC_URL
       - FLAGS_ON
       - FLAGS_OFF
       - POSTHOG_KEY
@@ -186,6 +193,7 @@ services:
       SENTRY_PUBLIC_ORIGIN: ${SENTRY_PUBLIC_ORIGIN:-}
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
       SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
+      BOOKING_ORIGINS: ${BOOKING_ORIGINS:-}
       # Consent regime (docs/product-analytics.md#consent); must not be empty (nginx map value)
       CONSENT_MODE: ${CONSENT_MODE:-opt-in}
       CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}

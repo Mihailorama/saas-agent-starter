@@ -19,6 +19,10 @@ export const site = {
   appUrl: env.SITE_APP_URL || 'http://localhost:5173',
   /** Absolute URL of a 1200x630 share image hosted outside the repo (no media in git). */
   ogImage: env.SITE_OG_IMAGE || undefined,
+  /** "Book a demo" target: the Cal.com booking page (same env as the app, docs/crm.md). */
+  booking: env.VITE_CALCOM_LINK
+    ? `${(env.VITE_CALCOM_ORIGIN || 'https://app.cal.com').replace(/\/+$/, '')}/${env.VITE_CALCOM_LINK}`
+    : undefined,
   /** X/Twitter handle for twitter:site, e.g. @example. */
   twitter: env.SITE_TWITTER || undefined,
   organization: {

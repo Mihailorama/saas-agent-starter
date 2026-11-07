@@ -21,6 +21,7 @@ import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
+import { crmHookRoutes } from './routes/crm.ts';
 import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { securityRoutes } from './routes/security.ts';
@@ -201,6 +202,7 @@ export async function buildApp() {
   await app.register(webhookRoutes, { prefix: '/api/webhooks' });
   await app.register(securityRoutes, { prefix: '/api/security' });
   await app.register(supportHookRoutes, { prefix: '/api/hooks' });
+  await app.register(crmHookRoutes, { prefix: '/api/hooks' });
   await app.register(supportRoutes, { prefix: '/api/support' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.

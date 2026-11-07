@@ -72,6 +72,33 @@ export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) 
   `support-closed-${e.tracker}-${e.issueId}-${closeId}`;
 export const startSupportIssueClosed = (e: SupportIssueClosed, closeId: string) =>
   startOnce('SupportIssueClosedWorkflow', supportClosedWorkflowId(e, closeId), e);
+/** CRM sync (docs/crm.md). Contract with services/worker-py (worker/crm.py, CrmEvent). */
+export type CrmBooking = {
+  trigger: string;
+  uid: string;
+  title: string;
+  startTime: string;
+  attendeeEmail: string;
+  attendeeName: string;
+  rescheduleUid: string;
+};
+export type CrmEvent = {
+  kind: 'user.created' | 'org.created' | 'signal' | 'support.conversation' | 'booking';
+  /** Source event id: the workflow id and the CRM note's appEventId, so it is applied once. */
+  eventId: string;
+  userId?: string;
+  orgId?: string;
+  signal?: string;
+  accountId?: number;
+  conversationId?: number;
+  /** Cal.com has no API on every tier, so the attendee travels with the event (ids otherwise). */
+  booking?: CrmBooking;
+};
+export const crmWorkflowId = (eventId: string) => `crm-${eventId}`;
+/** The worker writes to the CRM, or only logs without TWENTY_API_URL/KEY (dry run). */
+export const startCrmSync = (e: CrmEvent) =>
+  startOnce('CrmSyncWorkflow', crmWorkflowId(e.eventId), e);
+
 /** Contract with services/worker-py (worker/mail.py): one rendered email to one recipient. */
 export type SendEmail = {
   kind: 'verify-email' | 'reset-password' | 'invitation';

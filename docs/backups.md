@@ -39,12 +39,12 @@ restore check within a minute, then the schedule below. Watch it with
 
 ## What is backed up
 
-| Data                                                                                            | How                                               | Point in time            |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
-| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                        | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
-| `glitchtip` (`glitchtip`), `umami` (`analytics`), `langfuse` (`llmops`), `postiz` (`marketing`) | same: they live on the same Postgres server       | same                     |
-| Any database a future profile creates on this server                                            | same, automatically                               | same                     |
-| App buckets `attachments`, `ai-calls`, `langfuse` (`BACKUP_APP_BUCKETS`; missing = skipped)     | rclone, hourly encrypted copy + dated versions    | hourly                   |
+| Data                                                                                                              | How                                               | Point in time            |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                                          | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
+| `glitchtip` (`glitchtip`), `umami` (`analytics`), `langfuse` (`llmops`), `postiz` (`marketing`), `twenty` (`crm`) | same: they live on the same Postgres server       | same                     |
+| Any database a future profile creates on this server                                                              | same, automatically                               | same                     |
+| App buckets `attachments`, `ai-calls`, `langfuse` (`BACKUP_APP_BUCKETS`; missing = skipped)                       | rclone, hourly encrypted copy + dated versions    | hourly                   |
 
 **Not backed up:**
 
@@ -66,6 +66,11 @@ restore check within a minute, then the schedule below. Watch it with
   and SerpBear's SQLite data (`serpbear-data` volume). Postiz's database is covered (above).
   Copy those two volumes yourself if they matter, or point Postiz storage at a bucket listed in
   `BACKUP_APP_BUCKETS`.
+- **CRM attachments** (`crm` profile): files uploaded in Twenty (`twenty-data` volume,
+  `STORAGE_TYPE=local`). Twenty's records (people, companies, deals, notes) are in the `twenty`
+  database and covered (above). Set Twenty's `STORAGE_TYPE=s3` with a bucket in
+  `BACKUP_APP_BUCKETS` if attachments matter. Bookings live in Cal.com Cloud (its backups) or a
+  self-hosted Cal.diy, covered only if its database is on this Postgres server (docs/crm.md).
 - Container images, `.env` and secrets: rebuild from git; secrets belong in your password manager.
 - The backup bucket itself: protect it with the provider's versioning / object lock and keep it
   in another account or region if you need to survive a compromised server.

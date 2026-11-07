@@ -143,6 +143,17 @@ Postiz and SerpBear are internal tools: run them with the `marketing` profile on
 settings (`SITE_*`, `INDEXNOW_KEY`, `GSC_*`, `POSTIZ_*`, `SERPBEAR_*`) are read by `api`, `worker`
 or `web`, so `compose.prod.yaml` and `deploy/env/example.env` need no entries for them.
 
+The CRM (`crm` profile, Twenty, [docs/crm.md](crm.md)) is not in the production file either: it
+needs ~1.45 GiB (docs/STACK.md), so run `docker compose --profile crm up -d` from
+`docker-compose.yml` on a separate host behind HTTPS (set `TWENTY_PUBLIC_URL`,
+`TWENTY_ENCRYPTION_KEY` and real database credentials; keep its database on the backed-up Postgres
+server if you can), or use Twenty Cloud. The app side is in `compose.prod.yaml`: the worker reads
+`TWENTY_API_URL`, `TWENTY_API_KEY` (and optionally `CRM_FILE`, `CALCOM_PUBLIC_URL`), the API
+`CALCOM_WEBHOOK_SECRET`, the web `BOOKING_ORIGINS`; the web image takes `VITE_CALCOM_ORIGIN` /
+`VITE_CALCOM_LINK` as build arguments (GitHub variables of the same name in `release.yml`). Run
+`pnpm crm:sync` once against the production Twenty. Booking runs on Cal.com Cloud or a Cal.diy you
+host yourself; there is no booking container.
+
 ### GitHub Actions (optional)
 
 The `deploy` job of the `Release images` workflow is inert until you opt in:

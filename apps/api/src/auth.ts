@@ -10,7 +10,7 @@ import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
 import { mfaGuard } from './mfa.ts';
-import { startSendEmail } from './temporal.ts';
+import { type CrmEvent, startCrmSync, startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
 async function sendEmail(
@@ -29,6 +29,11 @@ async function sendEmail(
     throw err;
   }
 }
+
+/** Person / company in the CRM (docs/crm.md). A Temporal outage never blocks a sign-up. */
+const crmSync = async (e: CrmEvent) => {
+  await startCrmSync(e).catch((err) => Sentry.captureException(err));
+};
 
 // Optional SSO: set OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET to enable "Sign in with SSO".
 // Callback (register it at the IdP): ${BETTER_AUTH_URL}/api/auth/callback/oidc. PKCE is on.
@@ -57,6 +62,14 @@ export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: allowedOrigins,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
+  databaseHooks: {
+    user: {
+      create: {
+        after: (user) =>
+          crmSync({ kind: 'user.created', eventId: `user:${user.id}`, userId: user.id }),
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 12,
@@ -77,6 +90,15 @@ export const auth = betterAuth({
       // Seats come from the plan (config/plans.json); checked on add-member and invite accept.
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
+      organizationHooks: {
+        afterCreateOrganization: ({ organization, user }) =>
+          crmSync({
+            kind: 'org.created',
+            eventId: `org:${organization.id}`,
+            orgId: organization.id,
+            userId: user.id,
+          }),
+      },
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>
         sendEmail(

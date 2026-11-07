@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { env } from '../env.ts';
+import { startCrmSync } from '../temporal.ts';
 
 /**
  * Alert-to-agent loop (docs/product-analytics.md): PostHog webhook destinations post here, we
@@ -9,13 +10,16 @@ import { env } from '../env.ts';
  * - `$insight_alert_firing` (a journey funnel fell below its threshold) -> label `cjm-regression`
  * - `survey sent` from the "Report a problem" survey -> label `from-users`
  * Without GITHUB_TOKEN/GITHUB_REPO it is a dry run: the response shows the planned issue.
+ * - a body with `signal` (CRM product signals, config/crm.json, `pnpm crm:sync`) -> CrmSyncWorkflow
  */
 const Hook = z.object({
   event: z.object({
+    uuid: z.string().optional(),
     event: z.string(),
     distinct_id: z.string().optional(),
     properties: z.record(z.string(), z.unknown()).default({}),
   }),
+  signal: z.string().max(64).optional(),
 });
 type Issue = { title: string; label: string; body: string };
 
@@ -139,7 +143,19 @@ export const hookRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!sameSecret(req.headers['x-webhook-secret'] as string | undefined)) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
-      const issue = toIssue(req.body.event);
+      const { event, signal } = req.body;
+      if (signal) {
+        // The worker decides whether the user's organizations qualify (members, plan).
+        if (!event.uuid || !event.distinct_id) return { action: 'ignored' };
+        const started = await startCrmSync({
+          kind: 'signal',
+          eventId: `posthog:${event.uuid}`,
+          userId: event.distinct_id,
+          signal,
+        });
+        return { action: started ? 'started' : 'duplicate' };
+      }
+      const issue = toIssue(event);
       if (!issue) return { action: 'ignored' };
       if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return { action: 'dry-run', ...issue };
       const result = await upsertIssue(issue);
