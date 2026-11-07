@@ -28,10 +28,6 @@
   from a `POST .../attachments/:id/complete` that HEADs the object, and hide/expire rows without it.
 - **osv-scanner ignore for `@opentelemetry/core` 1.x** expires 2027-02-01 (`osv-scanner.toml`).
   Remove it once `@temporalio/interceptors-opentelemetry` depends on OpenTelemetry 2.x.
-- **AI content retention is recorded, not enforced.** `ai_calls.content_expires_at` is set from
-  `AI_CONTENT_RETENTION_DAYS`, but nothing deletes the S3 objects. Fix: apply an S3 lifecycle
-  expiration rule to `AI_CONTENT_BUCKET` at deploy time (or a scheduled Temporal workflow that
-  deletes expired objects); keep the rows, which hold no content.
 - **AI calls export loads all rows in memory** (`apps/api/src/routes/ai-calls.ts`). Fine for
   thousands of rows; stream with a server-side cursor before orgs reach ~100k calls.
 - **`audit_log` is not append-only** for the app role, unlike `ai_calls`. Consider adding it
@@ -181,6 +177,28 @@
 - **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.
+- **PostHog personless `$ai_generation` events may survive a user deletion.** The worker sends
+  them with `distinct_id` = user id and `$process_person_profile: false`
+  (`services/worker-py/worker/posthog.py`). `persons/bulk_delete` deletes the events of persons it
+  finds; for a user who never consented in the web there is no person, and PostHog documents no
+  event deletion by distinct id. Verify against a real project; if they remain, send these events
+  with `distinct_id = org:<orgId>` (the trace id still links feedback) or a per-call id.
+- **GA4 deletion covers only the requesting browser.** The web sends no user id to GA4, so
+  `submitUserDeletion` gets the client id of the browser the deletion was requested from
+  (`apps/web/src/lib/analytics.ts` `gaClientId`). Other browsers of the same person keep their
+  events until GA4's retention. Fix if needed: set GA4 `user_id` to a pseudonymous id after
+  consent and delete by `userId` (docs/privacy.md, "Per-tool support").
+- **GA4 has no per-user export.** The export README lists it as not supported; a BigQuery export
+  filtered by `user_pseudo_id` is the only route. Add it only if a deployment uses BigQuery export.
+- **Privacy tool adapters are unverified against live tools** (`services/worker-py/worker/privacy.py`):
+  they follow the vendor docs and source (docs/privacy.md, checked 2026-11-07) and are tested with
+  HTTP mocks only. Run one export and one deletion against a real PostHog, Langfuse, Chatwoot and
+  GA4 property once the owner has keys, and note the result in docs/privacy.md.
+- **Export ZIP is built in memory** (`build_export`): fine for exports up to a few hundred MB.
+  Stream to a temporary file and use multipart upload when organizations store more files.
+- **Every organization is visited for a user's export/deletion and the AI-content retention**
+  (`PrivacyActivities._org_ids`, one RLS transaction each). Fine for thousands of organizations;
+  for more, keep a per-user list of organizations they ever acted in, or batch by org.
 - **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
   (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
   site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`

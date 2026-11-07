@@ -48,7 +48,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/access.ts       org roles (Better Auth AC) + organization API key plugin config
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
-                      hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
+                      hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks,
+                      privacy.ts = data export/deletion requests (docs/privacy.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md)
@@ -77,6 +78,8 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
+  worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
+                      GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
 config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
                     plans.json (plans, limits, prices per currency, billing contours),
                     ai-transparency.json (public /ai-transparency page),
@@ -105,6 +108,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
+docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
 
@@ -176,7 +180,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
    cross-tenant 404.
 5. Web: add a page in `apps/web/src/pages/`, a route in `src/main.tsx`, a nav link in
    `pages/shell.tsx`. Use TanStack Query for data and shadcn/ui components.
-6. `pnpm check`.
+6. Privacy: if rows can hold personal data, add the table to the export and the deletion in
+   `services/worker-py/worker/privacy.py` and its decision to the data map in docs/privacy.md.
+7. `pnpm check`.
 
 A Claude Code command with the same steps: `/add-resource <name>`.
 

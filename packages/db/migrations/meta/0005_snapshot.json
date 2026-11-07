@@ -1,5 +1,5 @@
 {
-  "id": "918df879-44e7-4394-a0fd-6c4c0978ac41",
+  "id": "86263598-3330-43f9-b72d-3db02371b5af",
   "prevId": "ab7526a0-bdfb-49b3-a60c-87c7863a6f61",
   "version": "7",
   "dialect": "postgresql",
@@ -176,6 +176,36 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "ai_calls_content_expires_at_index": {
+          "name": "ai_calls_content_expires_at_index",
+          "columns": [
+            {
+              "expression": "content_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ai_calls_actor_id_index": {
+          "name": "ai_calls_actor_id_index",
+          "columns": [
+            {
+              "expression": "actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -213,130 +243,6 @@
           "value": "\"ai_calls\".\"status\" in ('ok', 'error')"
         }
       },
-      "isRLSEnabled": false
-    },
-    "public.ai_providers": {
-      "name": "ai_providers",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "org_id": {
-          "name": "org_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "provider": {
-          "name": "provider",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "base_url": {
-          "name": "base_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "api_key": {
-          "name": "api_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "api_key_hint": {
-          "name": "api_key_hint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "models": {
-          "name": "models",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "ai_providers_org_id_index": {
-          "name": "ai_providers_org_id_index",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "ai_providers_org_id_organization_id_fk": {
-          "name": "ai_providers_org_id_organization_id_fk",
-          "tableFrom": "ai_providers",
-          "tableTo": "organization",
-          "columnsFrom": [
-            "org_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {
-        "tenant_isolation": {
-          "name": "tenant_isolation",
-          "as": "PERMISSIVE",
-          "for": "ALL",
-          "to": [
-            "public"
-          ],
-          "using": "org_id = current_setting('app.org_id', true)",
-          "withCheck": "org_id = current_setting('app.org_id', true)"
-        }
-      },
-      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.attachments": {
@@ -379,6 +285,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -552,6 +464,157 @@
         }
       },
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.privacy_requests": {
+      "name": "privacy_requests",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_type": {
+          "name": "subject_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_id": {
+          "name": "subject_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "execute_after": {
+          "name": "execute_after",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "result_key": {
+          "name": "result_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "report": {
+          "name": "report",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "privacy_requests_subject_type_subject_id_created_at_index": {
+          "name": "privacy_requests_subject_type_subject_id_created_at_index",
+          "columns": [
+            {
+              "expression": "subject_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "privacy_requests_open_deletion": {
+          "name": "privacy_requests_open_deletion",
+          "columns": [
+            {
+              "expression": "subject_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"privacy_requests\".\"kind\" = 'deletion' and \"privacy_requests\".\"status\" in ('scheduled', 'running')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "privacy_requests_kind": {
+          "name": "privacy_requests_kind",
+          "value": "\"privacy_requests\".\"kind\" in ('export', 'deletion')"
+        },
+        "privacy_requests_subject_type": {
+          "name": "privacy_requests_subject_type",
+          "value": "\"privacy_requests\".\"subject_type\" in ('user', 'org')"
+        },
+        "privacy_requests_status": {
+          "name": "privacy_requests_status",
+          "value": "\"privacy_requests\".\"status\" in ('scheduled', 'running', 'completed', 'failed', 'cancelled')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.projects": {

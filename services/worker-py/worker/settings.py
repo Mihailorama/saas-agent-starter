@@ -36,12 +36,15 @@ S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 S3_ACCESS_KEY_ID = os.environ.get("S3_ACCESS_KEY_ID", "")
 S3_SECRET_ACCESS_KEY = os.environ.get("S3_SECRET_ACCESS_KEY", "")
 
+# Bucket of uploads (attachments) and data exports; same value as the API's S3_BUCKET.
+S3_BUCKET = os.environ.get("S3_BUCKET", "attachments")
+
 # AI layer (docs/adr/0008-ai-layer.md). Empty AI_CONTOUR disables all LLM calls.
 AI_CONTOUR = os.environ.get("AI_CONTOUR", "")
 AI_MODELS_FILE = Path(os.environ.get("AI_MODELS_FILE", _ROOT / "config" / "ai-models.json"))
 PROMPTS_DIR = Path(os.environ.get("PROMPTS_DIR", _ROOT / "prompts"))
 AI_CONTENT_BUCKET = os.environ.get("AI_CONTENT_BUCKET", "ai-calls")
-# Recorded per call as content_expires_at; enforce it with a lifecycle rule on the bucket.
+# Recorded per call as content_expires_at; the daily privacy-retention schedule deletes the content.
 AI_CONTENT_RETENTION_DAYS = int(os.environ.get("AI_CONTENT_RETENTION_DAYS", "180"))
 # Model for the project summary. No default on purpose: unset = feature off.
 AI_PROJECT_SUMMARY_PROVIDER = os.environ.get("AI_PROJECT_SUMMARY_PROVIDER", "")
@@ -115,6 +118,30 @@ FLAGS_ON = frozenset(f.strip() for f in os.environ.get("FLAGS_ON", "").split(","
 FLAGS_OFF = frozenset(f.strip() for f in os.environ.get("FLAGS_OFF", "").split(",") if f.strip())
 POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
 POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
+
+# Data-subject rights (docs/privacy.md). Export ZIPs are deleted after PRIVACY_EXPORT_TTL_DAYS; a
+# deleted organization's ai_calls and audit_log rows are kept PRIVACY_ORG_RECORDS_DAYS (EU AI Act
+# Art. 26(6): at least six months) and then purged with the anonymised organization row.
+PRIVACY_EXPORT_TTL_DAYS = int(os.environ.get("PRIVACY_EXPORT_TTL_DAYS", "7"))
+PRIVACY_ORG_RECORDS_DAYS = int(os.environ.get("PRIVACY_ORG_RECORDS_DAYS", "180"))
+# Per-person export/deletion in the external tools; each one is skipped while its settings are
+# empty. PostHog: private API host (e.g. https://eu.posthog.com), project id and a personal API key
+# with person:read, person:write and query:read (the same variables `pnpm journeys:sync` uses).
+POSTHOG_APP_HOST = os.environ.get("POSTHOG_APP_HOST", "")
+POSTHOG_PROJECT_ID = os.environ.get("POSTHOG_PROJECT_ID", "")
+POSTHOG_PERSONAL_API_KEY = os.environ.get("POSTHOG_PERSONAL_API_KEY", "")
+# Langfuse project key pair (same as `pnpm langfuse:prompts`).
+LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "")
+LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
+# Chatwoot account of the website inbox and an administrator's access token (deleting contacts
+# needs the administrator role; the triage bot's CHATWOOT_API_TOKEN cannot).
+CHATWOOT_ACCOUNT_ID = os.environ.get("CHATWOOT_ACCOUNT_ID", "")
+CHATWOOT_ADMIN_API_TOKEN = os.environ.get("CHATWOOT_ADMIN_API_TOKEN", "")
+# GA4 user deletion (Admin API submitUserDeletion, scope analytics.edit): property id (digits)
+# and the key JSON (one line) of a service account with Editor access to the property.
+GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID", "")
+GA4_SERVICE_ACCOUNT_JSON = os.environ.get("GA4_SERVICE_ACCOUNT_JSON", "")
 
 # Billing (docs/billing.md): plans and limits, shared with the API.
 PLANS_FILE = Path(os.environ.get("PLANS_FILE", _ROOT / "config" / "plans.json"))

@@ -40,8 +40,15 @@
     {
       "idx": 5,
       "version": "7",
-      "when": 1794058158166,
-      "tag": "0005_ai_providers",
+      "when": 1794058999861,
+      "tag": "0005_privacy_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794062569735,
+      "tag": "0006_ai_providers",
       "breakpoints": true
     }
   ]

@@ -38,6 +38,27 @@
       "pii": false,
       "props": {}
     },
+    "privacy_export_requested": {
+      "description": "A data export was requested on the privacy page (`subject`: user or org).",
+      "pii": false,
+      "props": {
+        "subject": "string"
+      }
+    },
+    "privacy_deletion_requested": {
+      "description": "Account (`subject` user) or organization (`org`) deletion was scheduled on the privacy page.",
+      "pii": false,
+      "props": {
+        "subject": "string"
+      }
+    },
+    "privacy_deletion_cancelled": {
+      "description": "A scheduled deletion was cancelled in its grace period on the privacy page.",
+      "pii": false,
+      "props": {
+        "subject": "string"
+      }
+    },
     "two_factor_disabled": {
       "description": "Two-factor authentication was turned off on the security page.",
       "pii": false,
