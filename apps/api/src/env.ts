@@ -32,6 +32,8 @@ const schema = z
     S3_PUBLIC_ENDPOINT: z.url().optional(),
     S3_REGION: z.string().default('us-east-1'),
     S3_BUCKET: z.string().default('attachments'),
+    /** Bucket the worker stores LLM request/response content in (worker AI_CONTENT_BUCKET). */
+    AI_CONTENT_BUCKET: z.string().default('ai-calls'),
     S3_ACCESS_KEY_ID: z.string().min(1),
     S3_SECRET_ACCESS_KEY: z.string().min(1),
     /** Set to true behind a reverse proxy so req.ip comes from X-Forwarded-For. */
@@ -44,6 +46,30 @@ const schema = z
     OTEL_EXPORTER_OTLP_ENDPOINT: z.union([z.url(), z.literal('')]).optional(),
     /** Error tracking (Sentry protocol: Sentry or GlitchTip); empty = off. Read in sentry.ts. */
     SENTRY_DSN: z.union([z.url(), z.literal('')]).optional(),
+    /** Public API: requests per minute per API key (Redis, shared across replicas). */
+    API_KEY_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(600),
+    /**
+     * Keys that encrypt webhook signing secrets at rest: `id:secret,id:secret` (secret >= 32
+     * chars, e.g. `openssl rand -base64 32`). The first one encrypts; the worker decrypts with
+     * any of them and re-encrypts old rows with the first (docs/public-api.md, key rotation).
+     */
+    WEBHOOK_ENCRYPTION_KEYS: z
+      .string()
+      .min(1)
+      .transform((s) => s.split(',').map((k) => k.trim()))
+      .pipe(
+        z
+          .array(z.string().regex(/^[A-Za-z0-9_-]{1,32}:.{32,}$/, 'expected id:secret (32+ chars)'))
+          .min(1),
+      ),
+    /** Outbound webhooks: largest JSON body publishEvent() accepts (the worker checks it too). */
+    WEBHOOK_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().default(65_536),
+    /** Shown in authenticator apps (TOTP issuer) and passkey prompts (WebAuthn RP name). */
+    APP_NAME: z.string().min(1).default('Workspace'),
+    /** WebAuthn relying party: registrable domain, defaults to the BETTER_AUTH_URL host. */
+    PASSKEY_RP_ID: z.string().min(1).optional(),
+    /** Origin(s) passkey ceremonies run on, comma-separated; defaults to BETTER_AUTH_URL's. */
+    PASSKEY_ORIGIN: list,
     OIDC_ISSUER: z.url().optional(),
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),
@@ -65,17 +91,43 @@ const schema = z
     GITHUB_TOKEN: z.string().optional(),
     /** owner/name of the repository that receives the issues. */
     GITHUB_REPO: z.string().optional(),
+    // Service desk (docs/support.md). Every secret empty = that endpoint is off (401/404).
+    /** Secret of the Chatwoot account webhook (Settings -> Integrations -> Webhooks). */
+    CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
+    /** HMAC token of the Chatwoot website inbox (identity validation of logged-in users). */
+    CHATWOOT_HMAC_TOKEN: z.string().optional(),
+    /** Secret of the GitHub `issues` webhook (return path: closed issue -> conversation note). */
+    GITHUB_WEBHOOK_SECRET: z.string().optional(),
+    /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
+    PLANE_WEBHOOK_SECRET: z.string().optional(),
+    PLANE_PROJECT_ID: z.string().optional(),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
     path: ['BETTER_AUTH_SECRET'],
   })
   .refine(
+    (e) =>
+      e.NODE_ENV !== 'production' || !e.WEBHOOK_ENCRYPTION_KEYS.some((k) => /change-me/.test(k)),
+    {
+      message: 'WEBHOOK_ENCRYPTION_KEYS still has the example value',
+      path: ['WEBHOOK_ENCRYPTION_KEYS'],
+    },
+  )
+  .refine(
     (e) => e.NODE_ENV !== 'production' || !e.POSTHOG_WEBHOOK_SECRET?.startsWith('local-dev'),
     {
       message: 'POSTHOG_WEBHOOK_SECRET still has the example value',
       path: ['POSTHOG_WEBHOOK_SECRET'],
     },
+  )
+  .refine(
+    (e) =>
+      e.NODE_ENV !== 'production' ||
+      ![e.CHATWOOT_WEBHOOK_SECRET, e.CHATWOOT_HMAC_TOKEN, e.GITHUB_WEBHOOK_SECRET].some((v) =>
+        v?.startsWith('local-dev'),
+      ),
+    { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   );
 
 const parsed = schema.safeParse(process.env);

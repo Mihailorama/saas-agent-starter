@@ -1,5 +1,8 @@
 # Known limitations / backlog
 
+- **2FA/passkey audit rows are not atomic with the change** (`apps/api/src/mfa.ts`): written
+  after Better Auth commits, so a crash in between loses the row. Fix if it matters: Better Auth
+  database hooks inside its transaction once they cover plugin models.
 - **Transactional outbox for workflow starts.** `POST /api/projects` starts the Temporal
   workflow after commit; if Temporal is unreachable at that moment the start is logged and lost
   (`apps/api/src/routes/projects.ts`). Fix: write an outbox row in the same transaction and have a
@@ -17,12 +20,6 @@
   thousands of rows; stream with a server-side cursor before orgs reach ~100k calls.
 - **`audit_log` is not append-only** for the app role, unlike `ai_calls`. Consider adding it
   to the append-only list in `packages/db/src/migrate.ts` (check nothing updates it first).
-- **AI metrics are not emitted yet.** The LLM dashboard and the `AiScoreDrop`/`AiCostSpike`
-  alerts (`infra/grafana/dashboards/llm.json`, `infra/otel/alerts.yml`) read `ai_calls_total`,
-  `ai_call_latency_seconds`, `ai_cost_usd_total`, `ai_score_avg` (names in AGENTS.md
-  "Observability"); nothing produces them, so the panels are empty. Fix: an OTel meter in
-  `Gateway.call_llm` (`services/worker-py/worker/ai.py`) plus a MeterProvider next to the
-  TracerProvider in `worker/__main__.py`, and the eval job for `ai_score_avg`.
 - **Alert notifications.** Prometheus evaluates the rules but nothing routes them. Fix: add
   Alertmanager (Apache-2.0) to the observability profile with a receiver per deployment.
 - **Collector reads every container's log file on the host** (filtered to this compose project
@@ -48,7 +45,9 @@
   `apps/api/src/routes/hooks.ts`, extended to accept Grafana's alert payload and open the same
   `cjm-regression` issue. Until then run `pnpm journeys:report --json` on a schedule
   (docs/product-analytics.md).
-- **Feedback channel on the Umami-only tier.** PostHog Surveys provide "report a problem /
+- **Feedback channel on the Umami-only tier.** Covered when the service desk is configured: the
+  Chatwoot Help menu takes reports on every tier (docs/support.md). Without Chatwoot it remains:
+  PostHog Surveys provide "report a problem /
   suggest an improvement"; Umami has no surveys and GlitchTip only implements Sentry's
   crash-report dialog (reports attached to an error; its Sentry User Feedback widget support
   was broken, glitchtip-backend issues #403/#468). Re-check GlitchTip's user feedback support
@@ -64,16 +63,58 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Make the pre-migration backup mandatory.** `scripts/deploy.mjs` calls `pnpm run backup:now`
+  (env `DEPLOY_ENV=<env>`) between staging and migrating, but only warns and continues when the
+  script is missing (it is being added on the `backups` branch). Once it lands: fail the deploy
+  without it, agree its interface (which environment/database it backs up, where the dump goes),
+  and add pnpm setup to the `deploy` job in `.github/workflows/release.yml` (it has none today, so
+  the hook would fail there and abort the deploy). docs/deploy.md section 6.
+- **Short downtime on single-host deploys.** `docker compose up` recreates `api`/`web` in place
+  (seconds without the API; Caddy only holds requests to `web`). Zero-downtime on one host needs
+  two `api` replicas and a health-aware switch (e.g. a blue/green project pair behind Caddy).
+  Tier L on Kubernetes gets rolling updates. docs/deploy.md "Tiers".
+- **No Helm chart for tier L / customer clusters.** What it needs is listed in docs/deploy.md
+  "Kubernetes / Helm" (migrate as pre-upgrade hook Job, probes, Ingress + cert-manager, secrets).
+- **Production observability.** `compose.prod.yaml` has no observability profile; the dev one
+  (`docker-compose.yml`) mounts repo files and runs Grafana without login. Add a production
+  variant (authenticated Grafana behind Caddy, retention) or document an external backend.
+- **Release images are linux/amd64 only** (`.github/workflows/release.yml`). Add
+  `--platform linux/amd64,linux/arm64` (and QEMU/arm runners) when an arm64 host is needed.
+- **SSH transport of `scripts/deploy.mjs` is not exercised by the rehearsal** (it uses
+  `DEPLOY_HOST=local`, same script on `sh -s` instead of `ssh host sh -s`). Run the first real
+  deploy to a staging host and note the result in docs/deploy.md.
+- **Social mentions into the service desk (later, only if volume appears).** X and LinkedIn
+  mentions of the product do not reach Chatwoot. When there is enough volume to matter: a
+  scheduled Apify actor (one per network) that posts new mentions into a Chatwoot **API inbox**
+  (`POST /public/api/v1/inboxes/{identifier}/contacts/.../conversations/.../messages`), so they
+  get the same triage as every other channel (docs/support.md). Do not build it before then.
+- **Support triage start is not transactional.** `POST /api/hooks/chatwoot` starts
+  `SupportTriageWorkflow` directly; if Temporal is down at that moment the triage is lost, and
+  Chatwoot does not retry account webhooks (`apps/api/src/routes/support.ts`). Same fix as the
+  project workflow outbox above, or a periodic sweep for conversations without
+  `support_category`.
+- **Online LLM judges have nothing to judge yet** (ADR 0009 "Open"). PostHog privacy mode is on
+  by default and our spans carry no prompt/output text, so PostHog and Langfuse evaluators
+  (`pnpm llmops:evaluators`) see empty input/output; both tools also need an LLM provider API key
+  stored in the tool. Owner decides: privacy mode off for PostHog (DPA), and/or opt-in content on
+  the spans exported to the self-hosted Langfuse only (e.g. `gen_ai.input.messages` /
+  `gen_ai.output.messages` behind a flag, on a span processor used only for the Langfuse
+  exporter), plus which provider key.
+- **PostHog evaluation request is unverified against a live project.** `scripts/llmops-evaluators.mjs`
+  follows the API reference example (`output_type: boolean`, `model_configuration`,
+  `conditions` on `ai_purpose`); run `--apply` once with the owner's personal API key and check the
+  evaluation in the UI, then fix the body if PostHog rejects or reinterprets a field.
+- **`pnpm eval:real` may see the operator's Claude Code memory.** `--bare` would drop it but also
+  disables subscription auth. Run it from an account without steering CLAUDE.md, or switch to a
+  `--settings`/env option if Claude Code adds one that skips memory with OAuth.
+- **Open owner decision: does the small single-server tier run Langfuse?** (ADR 0009). PostHog
+  Cloud is the default; Langfuse costs about 1.9 GiB RAM measured (docs/STACK.md).
 - **Worker feature flags use PostHog's HTTP `/flags` API instead of the `posthog` SDK.** The SDK
   depends on `distro` (Apache-2.0), whose metadata string "Apache License, Version 2.0" the
   license gate does not map to `Apache-2.0`, and ADR 0005 forbids gate changes without a human.
   Consequence: the worker has no local evaluation and sends no `$feature_flag_called` exposure
   events (`services/worker-py/worker/flags.py`). Fix once approved: add the alias to `ALIASES` in
   `scripts/license-check.mjs`, `uv add posthog`, and use `Posthog(...).evaluate_flags(...)`.
-- **Tag workflows on other branches must accept `workflow_dispatch`.** Releases are created with
-  `GITHUB_TOKEN`, which starts no `push: tags` workflow; `release-please.yml` dispatches every
-  workflow that has both `tags:` and `workflow_dispatch:` (docs/releases.md). The `deploy`
-  branch's image build needs `workflow_dispatch:` added or it will not run on releases.
 - **Mailed links live in Temporal history.** `SendEmailWorkflow` gets the rendered mail, link
   included, as its argument (`apps/api/src/temporal.ts`), kept until the namespace retention
   drops it. Same trust boundary as Better Auth's `verification` table while Temporal runs on our
@@ -90,10 +131,17 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
+  replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
+  relay pending deliveries whose workflow never started.
+- **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
+  portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
+  the delivery UI with the portal.
 - **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
-  (docs/marketing.md) but nothing calls it, because the deploy workflow lives on another branch.
-  Fix: once a site deploy job exists, run it there after a successful deploy with the previously
-  deployed sha and `INDEXNOW_KEY`.
+  (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
+  site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`
+  service in `compose.prod.yaml` behind Caddy), run it after a successful deploy with the
+  previously deployed sha and `INDEXNOW_KEY`.
 - **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
   others, add a runner per assistant CLI the team is logged in to (same config, same report),
   never an API key in CI.

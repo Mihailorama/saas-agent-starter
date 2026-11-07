@@ -32,7 +32,7 @@ crawlable pages, and none of this should add code dependencies outside the licen
   we pin; the gate itself is unchanged.
 - **Postiz (AGPL-3.0, unmodified container) for social posting**, profile `marketing`: the most
   used open-source scheduler (41k GitHub stars, 31 releases in 2026, latest v2.25.3 on 2026-10-24), many networks,
-  public API. It reuses our Postgres (own role and database), Redis (db 2) and Temporal (own
+  public API. It reuses our Postgres (own role and database), Redis (db 3) and Temporal (own
   namespace; its search attributes work on SQL visibility), instead of the five extra services
   of its own compose file. The permissive twin disables it.
 - **SerpBear (MIT, unmodified container) for rank tracking**, same profile: light (SQLite, ~70

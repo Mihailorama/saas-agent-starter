@@ -31,8 +31,8 @@ OpenTelemetry Collector (contrib distribution, Apache-2.0), Jaeger (traces), Pro
   metrics over OTLP/HTTP through the Temporal Core runtime; Temporal server is scraped.
   Prometheus ingests OTLP natively. Dashboards are JSON in `infra/grafana/dashboards/`.
 - LLM dashboard and alerts use the metric names agreed in AGENTS.md (`ai_calls_total`,
-  `ai_call_latency_seconds`, `ai_cost_usd_total`, `ai_score_avg`); until the worker emits
-  them, those panels are empty.
+  `ai_call_latency_seconds`, `ai_cost_usd_total`), emitted by the worker's gateway. The
+  planned `ai_score_avg` was dropped: quality scores live in PostHog or Langfuse (ADR 0009).
 - Alerts are Prometheus rules (`infra/otel/alerts.yml`), so they work in both twins; Grafana
   shows them. Notifications need Alertmanager, not included.
 - Every container has a `mem_limit` sized from a measured `docker stats` snapshot

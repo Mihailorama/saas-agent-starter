@@ -5,7 +5,7 @@ one-command quality gate, small colocated files and an `AGENTS.md` that tells ag
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
 obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
-- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles), Drizzle + Postgres
+- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
@@ -14,9 +14,17 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
+- **Public API**: organization API keys with scopes (Better Auth API key plugin), per-key
+  rate limits, OpenAPI; outbound webhooks signed per Standard Webhooks, retried by Temporal,
+  with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
-- **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
+- **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and
+  Telegram; AI triage writes private notes and files or "+1"s GitHub / Plane Intake items, and
+  closed items are reported back to the conversation.
+- **Ops**: Docker Compose locally; production from versioned images (GHCR, by digest) with
+  Caddy auto-TLS, SOPS-encrypted env files and one-command deploy/rollback over SSH, Coolify or
+  Kubernetes as options ([docs/deploy.md](docs/deploy.md)), OpenTelemetry everywhere,
   `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
   dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
   permissive-license twin of the whole stack, SBOMs + third-party notices, CI with gitleaks,
@@ -86,6 +94,13 @@ services, including a test proving tenant A cannot read tenant B even with a bug
 license gate across npm, PyPI and crates.io, and a Playwright smoke test.
 `pnpm bench` prints the Rust vs Python speedup of the example hot path.
 
+## Deploy
+
+Tag a release (`git tag v1.0.0 && git push origin v1.0.0`): CI pushes the images to GHCR. Then
+`pnpm run deploy -- production --version v1.0.0` runs migrations, starts the stack behind Caddy
+with automatic HTTPS and checks health; `pnpm run deploy -- production --rollback` goes back to
+the previous digests. Setup, secrets, other targets: [docs/deploy.md](docs/deploy.md).
+
 ## Configuration
 
 All config is environment variables, validated at startup (the API exits on invalid config).
@@ -114,6 +129,24 @@ stay in place (on-prem, RU)? `docker compose --profile analytics up -d` runs Uma
 same Postgres. Optional, consent-gated: GA4, Yandex Metrika. AI-answer thumbs go to PostHog AI
 observability and/or Langfuse. Events are catalogued in `config/events.json` and checked in CI.
 Details: [docs/product-analytics.md](docs/product-analytics.md).
+
+## Service desk
+
+Off until you set env. `docker compose --profile support up -d` runs Chatwoot (MIT core, `-ce`
+image) with its own pgvector Postgres. Set the website inbox token and HMAC token for the Help
+menu, the webhook secret for triage, and a model for `support.triage`; tickets stay in Chatwoot,
+backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
+Details: [docs/support.md](docs/support.md).
+
+## LLM-ops
+
+Quality loop ([ADR 0009](docs/adr/0009-llm-ops.md)): prompts are versioned files in `prompts/`;
+`pnpm eval` runs the Promptfoo golden sets in `evals/` (key-free; `pnpm eval:real` runs the real
+model and judge through your Claude subscription via the `claude` CLI); with `POSTHOG_KEY`
+and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (privacy mode on), so
+the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
+(`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
+(about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
 
 ## Marketing: site, SEO, social posting
 

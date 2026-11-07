@@ -108,7 +108,7 @@ docker compose --profile marketing up -d postiz     # UI http://localhost:4007 (
 ```
 
 It reuses this stack: database `postiz` on our Postgres (role and database made by the one-shot
-`postiz-db`), Redis db 2, and our Temporal server in its own namespace `postiz` (one-shot
+`postiz-db`), Redis db 3, and our Temporal server in its own namespace `postiz` (one-shot
 `postiz-namespace`; Postiz registers its two search attributes there on start, which works on
 Temporal's SQL visibility, no Elasticsearch). Its own compose file starts a second Postgres, a
 Redis, Temporal, Temporal's Postgres and Elasticsearch; none of them are needed here.
