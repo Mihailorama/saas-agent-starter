@@ -57,8 +57,8 @@ Picks that are not obvious, one line each:
 - Own tickets table and inbox UI: rejected by the owner; it rebuilds a help desk badly.
 - Zammad (AGPL-3.0, a heavier stack) and FreeScout (AGPL-3.0, email-first): not checked in
   depth; both allowed as containers and kept as candidate replacements.
-- Chatwoot Cloud: fine where data may leave, but not for the RU contour (152-FZ localization)
-  or on-prem; the self-hosted profile covers all tiers with one setup.
+- Chatwoot Cloud: fine where data may leave, but not for on-prem or data-residency
+  deployments; the self-hosted profile covers all tiers with one setup.
 - Chatwoot's Captain AI and Agent Bots for triage: Captain is an enterprise feature; an Agent
   Bot would put the LLM call outside our audited gateway.
 - PostHog surveys as the bug/feature channel: no conversation, no email or Telegram, no agent
@@ -72,7 +72,8 @@ Picks that are not obvious, one line each:
 - No new code dependency: the worker uses `httpx2` (already there), the web Chatwoot's script.
 - Chatwoot still checks `hub.2.chatwoot.com` for new versions with telemetry off; block it at
   the network where nothing may leave.
-- The RU contour must self-host Chatwoot in Russia and use an in-country tracker and model.
+- Deployments with data-residency requirements self-host Chatwoot in the required jurisdiction
+  and use a self-hosted tracker and an allowed model endpoint there.
 - GitHub receives the model's summary of a user's problem (US processor); use Plane on-prem
   where that is not allowed.
 - Webhook starts are not transactional: if Temporal is down when Chatwoot calls, that triage is

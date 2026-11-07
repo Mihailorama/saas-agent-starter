@@ -11,8 +11,7 @@
   feature_request, billing, spam), find a duplicate tracker item, draft an answer for questions.
 - Out of scope / must not be used for: replying to customers without a human, deciding refunds or
   account actions, rating customers or agents.
-- Contours and models: `support.triage` in `config/ai-models.json` (eu: Anthropic models; ru: the
-  in-country endpoint); selected by `AI_SUPPORT_TRIAGE_PROVIDER` / `AI_SUPPORT_TRIAGE_MODEL`.
+- Contours and models: `support.triage` in `config/ai-models.json` (Anthropic models in `eu`); selected by `AI_SUPPORT_TRIAGE_PROVIDER` / `AI_SUPPORT_TRIAGE_MODEL`.
 - Prompt template id and current version: `support.triage/system` v1, `support.triage/duplicate` v1
   (`prompts/`, pinned in `prompts/lock.json`).
 - Input data and legal basis: the customer messages of one conversation (may contain contact data

@@ -209,15 +209,15 @@ With `SUPPORT_NOTIFY_ON_CLOSE=true` it also sends the customer a short "has been
 message, only for items closed as done (GitHub `completed`, Plane state group `completed`). The
 text is `RESOLVED_MESSAGE` in `worker/support.py` (English; change it for your audience).
 
-## Data and the RU contour
+## Data residency
 
-Chats, emails and Telegram messages are personal data. For the RU contour, 152-FZ requires
-storing Russian citizens' personal data in databases in Russia: **self-host Chatwoot (this
-profile) on a server in Russia**; Chatwoot Cloud is not an option there. Keep the rest of the
-path in the contour too: the tracker (Plane self-hosted in Russia, not GitHub), the triage model
-(the `ru` contour in `config/ai-models.json`, an in-country OpenAI-compatible endpoint), and block
-the Chatwoot version check if nothing may leave. Telegram messages transit Telegram's own
-servers; that is the user's choice of channel, but Chatwoot's copy must stay in Russia.
+Chats, emails and Telegram messages are personal data. Deployments with data-residency
+requirements self-host Chatwoot (this profile) in the required jurisdiction instead of using
+Chatwoot Cloud, and keep the rest of the path there too: a self-hosted tracker (Plane, not
+GitHub), a triage model served from an allowed endpoint (a contour in `config/ai-models.json`
+with an OpenAI-compatible `OPENAI_BASE_URL`), and the Chatwoot version check blocked if nothing
+may leave. Telegram messages transit Telegram's own servers; that is the user's choice of channel,
+but Chatwoot's copy stays where you host it.
 
 ## Resources
 
