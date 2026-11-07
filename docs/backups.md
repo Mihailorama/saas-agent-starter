@@ -69,12 +69,12 @@ Measured with this repository's scripts (e2e numbers in the CI log of the `backu
 
 - **RPO (Postgres): at most `BACKUP_ARCHIVE_TIMEOUT` (60 s) of commits.** A busy server ships
   each 16 MB WAL segment as soon as it is full; a quiet one ships a partial segment every 60 s.
-  Measured in the e2e run: a commit on a quiet server reached the repository after 53 s.
+  Measured in the e2e runs: a commit on a quiet server reached the repository after 53-56 s.
 - **RPO (objects): up to 1 hour** (`BACKUP_OBJECTS_CRON`, hourly).
 - **RTO (Postgres)**, measured locally (repository on the same host, docs/STACK.md): a 784 MB
   database restored to a new instance in 24 s (the pgBackRest restore itself 14 s, about
   55 MB/s); the e2e in-place disaster restore of a small database, including stopping and
-  starting the services, took 56 s. Off-site, restore time grows with database size over the
+  starting the services, took 23 s on a GitHub runner and 33-56 s on a busy shared host. Off-site, restore time grows with database size over the
   download bandwidth: about 14 minutes for 10 GB at 100 Mbit/s, plus WAL replay since the last
   backup (at most a day of changes with daily backups). Measure your own with a drill.
 - **RTO (objects)**: one `rclone copy` of every bucket, bounded by size and bandwidth.
