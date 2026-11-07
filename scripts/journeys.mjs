@@ -114,7 +114,7 @@ export const umamiFunnel = (j) => ({
 
 // ---- HTTP clients; a dry-run client prints writes instead of sending them ----
 
-function client(base, key, dryRun) {
+export function client(base, key, dryRun) {
   const api = async (method, path, body) => {
     if (dryRun && method !== 'GET') {
       console.log(
@@ -134,9 +134,9 @@ function client(base, key, dryRun) {
   return Object.assign(api, { dryRun });
 }
 
-const posthogBase = () =>
+export const posthogBase = () =>
   `${e.POSTHOG_APP_HOST}/api/projects/${e.POSTHOG_PROJECT_ID || '<project>'}`;
-const posthogReady = () =>
+export const posthogReady = () =>
   Boolean(e.POSTHOG_APP_HOST && e.POSTHOG_PROJECT_ID && e.POSTHOG_PERSONAL_API_KEY);
 const umamiBase = () => `${e.UMAMI_URL}/api/websites/${e.UMAMI_WEBSITE_ID || '<website>'}`;
 const umamiReady = () => Boolean(e.UMAMI_URL && e.UMAMI_API_KEY && e.UMAMI_WEBSITE_ID);

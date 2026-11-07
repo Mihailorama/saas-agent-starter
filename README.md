@@ -119,11 +119,18 @@ Details: [docs/product-analytics.md](docs/product-analytics.md).
 
 Quality loop ([ADR 0009](docs/adr/0009-llm-ops.md)): prompts are versioned files in `prompts/`;
 `pnpm eval` runs the Promptfoo golden sets in `evals/` (key-free; `pnpm eval:real` runs the real
-model and judge through your Claude subscription via the `claude` CLI); with `POSTHOG_API_KEY`
+model and judge through your Claude subscription via the `claude` CLI); with `POSTHOG_KEY`
 and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (privacy mode on), so
 the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
 (`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
 (about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
+## Feature flags and releases
+
+New behaviour ships behind PostHog feature flags declared in `config/flags.json`
+(`pnpm check:flags`, `pnpm flags:sync`); without PostHog a flag is its catalog default or
+`FLAGS_ON`/`FLAGS_OFF`. PR titles are Conventional Commits; release-please keeps a release PR
+with `CHANGELOG.md`, and each release comments "Released in vX.Y.Z" on the issues it closed.
+Details: [docs/feature-flags.md](docs/feature-flags.md), [docs/releases.md](docs/releases.md).
 
 ## SSO
 

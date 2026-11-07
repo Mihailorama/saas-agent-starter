@@ -44,7 +44,7 @@ or scripts: real-model work runs on the owner's Claude subscription.
 
 **In PostHog (default) and/or Langfuse (self-hosted fallback)**
 
-- **Generations.** With `POSTHOG_API_KEY` + `POSTHOG_HOST` the worker sends one `$ai_generation`
+- **Generations.** With `POSTHOG_KEY` + `POSTHOG_HOST` the worker sends one `$ai_generation`
   per call through PostHog's capture API (`worker/posthog.py`, no SDK): `$ai_trace_id` and
   `$ai_span_id` are our OTel trace and span ids (the worker always installs a tracer provider, so
   every call has them), plus model, provider, tokens, latency in seconds, `$ai_total_cost_usd`,

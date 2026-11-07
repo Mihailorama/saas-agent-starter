@@ -4,7 +4,7 @@ name: SBOM
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
+  workflow_dispatch: # also dispatched by release-please.yml on new v* tags
 
 permissions:
   contents: read

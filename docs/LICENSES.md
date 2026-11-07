@@ -82,6 +82,15 @@ Notes:
   scores, prompt management) is in the MIT core
   ([LICENSE](https://github.com/langfuse/langfuse/blob/main/LICENSE),
   [license key](https://langfuse.com/self-hosting/license-key)).
+- Feature-flag code dependencies ([docs/feature-flags.md](feature-flags.md), checked by the gate):
+  `posthog-node` (MIT, API); `posthog-js` (above) in the web. The worker calls PostHog's `/flags`
+  HTTP API with the existing `httpx2`: the `posthog` PyPI SDK (MIT) depends on `distro`, whose
+  metadata says "Apache License, Version 2.0", a string the gate does not map to `Apache-2.0`.
+- GitHub Actions for releases ([docs/releases.md](releases.md)), CI tooling, not shipped and not
+  scanned by the gate, pinned by commit SHA: `googleapis/release-please-action` v5.0.0
+  ([Apache-2.0](https://github.com/googleapis/release-please-action/blob/main/LICENSE)) and
+  `amannn/action-semantic-pull-request` v6.1.1
+  ([MIT](https://github.com/amannn/action-semantic-pull-request/blob/main/LICENSE)).
 
 - `axllent/mailpit` ([MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)): local
   SMTP catcher for transactional email, see [docs/email.md](email.md). Production sends through

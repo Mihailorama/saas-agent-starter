@@ -71,10 +71,10 @@ async def main() -> None:
     posthog = (
         PostHogAi(
             host=settings.POSTHOG_HOST,
-            api_key=settings.POSTHOG_API_KEY,
+            api_key=settings.POSTHOG_KEY,
             privacy_mode=settings.POSTHOG_PRIVACY_MODE,
         )
-        if settings.POSTHOG_HOST and settings.POSTHOG_API_KEY
+        if settings.POSTHOG_HOST and settings.POSTHOG_KEY
         else None
     )
     ai: Gateway | None = None

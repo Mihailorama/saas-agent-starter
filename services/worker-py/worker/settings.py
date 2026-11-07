@@ -53,12 +53,18 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
 # Traces only (e.g. Langfuse's OTLP endpoint, which takes no metrics); overrides the base URL.
 OTEL_TRACES_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
 # LLM observability in PostHog (docs/adr/0009-llm-ops.md): each call as an $ai_generation event.
-# Project API key + ingestion host (https://eu.i.posthog.com or https://us.i.posthog.com).
+# Uses POSTHOG_KEY / POSTHOG_HOST (defined with the feature flags below).
 # Unset = nothing is sent. Privacy mode (default on) leaves prompt and output text out.
-POSTHOG_API_KEY = os.environ.get("POSTHOG_API_KEY", "")
-POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
 POSTHOG_PRIVACY_MODE = os.environ.get("POSTHOG_PRIVACY_MODE", "true").lower() != "false"
 # Transactional email (docs/email.md): smtps://user:pass@host:465, smtp://user:pass@host:587
 # (STARTTLS required) or smtp://host:1025?tls=none (local Mailpit). Empty = sending fails.
 SMTP_URL = os.environ.get("SMTP_URL", "")
 MAIL_FROM = os.environ.get("MAIL_FROM", "")
+
+# Feature flags (docs/feature-flags.md). PostHog decides when POSTHOG_KEY is set; FLAGS_ON /
+# FLAGS_OFF (comma-separated names) override it and the catalog default in config/flags.json.
+FLAGS_FILE = Path(os.environ.get("FLAGS_FILE", _ROOT / "config" / "flags.json"))
+FLAGS_ON = frozenset(f.strip() for f in os.environ.get("FLAGS_ON", "").split(",") if f.strip())
+FLAGS_OFF = frozenset(f.strip() for f in os.environ.get("FLAGS_OFF", "").split(",") if f.strip())
+POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
+POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
