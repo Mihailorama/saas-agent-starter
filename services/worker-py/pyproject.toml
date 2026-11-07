@@ -29,6 +29,10 @@ dev = [
 
 [tool.uv]
 package = false
+# Security fixes (osv-scanner) for transitive deps whose parents pin old majors, like the pnpm
+# overrides in pnpm-workspace.yaml: litellm pins filelock<4 (used only by huggingface-hub and
+# litellm's proxy CLI here); 3.x has no fixed release.
+override-dependencies = ["filelock>=4.2.1"]
 
 [tool.uv.sources]
 saas-core = { path = "../../crates/core" }
