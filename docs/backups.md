@@ -39,12 +39,12 @@ restore check within a minute, then the schedule below. Watch it with
 
 ## What is backed up
 
-| Data                                                                                        | How                                               | Point in time            |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
-| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                    | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
-| `glitchtip` (`glitchtip` profile), `umami` (`analytics` profile), `langfuse` (`llmops`)     | same: they live on the same Postgres server       | same                     |
-| Any database a future profile creates on this server                                        | same, automatically                               | same                     |
-| App buckets `attachments`, `ai-calls`, `langfuse` (`BACKUP_APP_BUCKETS`; missing = skipped) | rclone, hourly encrypted copy + dated versions    | hourly                   |
+| Data                                                                                            | How                                               | Point in time            |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                        | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
+| `glitchtip` (`glitchtip`), `umami` (`analytics`), `langfuse` (`llmops`), `postiz` (`marketing`) | same: they live on the same Postgres server       | same                     |
+| Any database a future profile creates on this server                                            | same, automatically                               | same                     |
+| App buckets `attachments`, `ai-calls`, `langfuse` (`BACKUP_APP_BUCKETS`; missing = skipped)     | rclone, hourly encrypted copy + dated versions    | hourly                   |
 
 **Not backed up:**
 
