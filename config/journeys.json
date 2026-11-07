@@ -22,6 +22,17 @@
         { "event": "ai_summary_shown" },
         { "event": "ai_summary_reviewed", "maxStepSeconds": 3600 }
       ]
+    },
+    {
+      "name": "site-to-signup",
+      "description": "A marketing-site visitor clicks a call to action and creates an account in the app. Needs the site and the app on one PostHog/Umami project (docs/marketing.md).",
+      "windowDays": 1,
+      "minConversion": 5,
+      "steps": [
+        { "event": "site_cta_clicked" },
+        { "event": "signup_started", "maxStepSeconds": 120 },
+        { "event": "signup_completed", "maxStepSeconds": 300 }
+      ]
     }
   ]
 }

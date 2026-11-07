@@ -13,6 +13,8 @@
     "bench": "cd services/worker-py && uv run python bench.py",
     "db:generate": "pnpm --filter @app/db generate",
     "db:migrate": "pnpm --filter @app/db migrate",
+    "backup:now": "node scripts/backup.mjs now",
+    "restore": "node scripts/backup.mjs restore",
     "format": "biome format --write . && cargo fmt --all && cd services/worker-py && uv run ruff format",
     "typecheck": "pnpm -r typecheck",
     "typecheck:fast": "pnpm -r typecheck:fast",
@@ -37,7 +39,10 @@
     "eval:real": "node scripts/eval.mjs --real",
     "llmops:evaluators": "node scripts/llmops-evaluators.mjs",
     "check:flags": "node scripts/check-flags.mjs",
-    "flags:sync": "node scripts/flags.mjs sync"
+    "flags:sync": "node scripts/flags.mjs sync",
+    "seo:report": "node scripts/seo-report.mjs",
+    "seo:indexnow": "node scripts/indexnow.mjs",
+    "geo:check": "node scripts/geo-check.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",

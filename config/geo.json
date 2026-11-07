@@ -1,0 +1,14 @@
+{
+  "$comment": "GEO check (docs/marketing.md): `pnpm geo:check` asks each question through the claude CLI on a Claude subscription and records whether the product is mentioned, how it ranks among the brands named, and whether its domains are cited. `model` is required (no default). `webSearch: true` lets the model search the web, which is closer to AI search engines and slower. Write questions the way a buyer would ask, without the product name.",
+  "model": "claude-opus-5-5",
+  "webSearch": true,
+  "product": "Workspace",
+  "aliases": [],
+  "domains": ["example.com"],
+  "competitors": ["Asana", "Trello", "Notion", "Linear"],
+  "questions": [
+    "What is a good project management tool for a small team that wants AI summaries it can review?",
+    "Which project tools keep an audit log of every change and every AI call?",
+    "What are the best alternatives to Asana for a team of 10 that needs data isolation per client?"
+  ]
+}

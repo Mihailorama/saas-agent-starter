@@ -80,6 +80,10 @@ Browser source maps (not uploaded by default): build with `vite build --sourcema
 before building the image. Both CLIs are separate tools, not dependencies (`sentry-cli` is
 FSL-licensed).
 
+Backups (pgBackRest WAL archiving + full/diff, encrypted copy of the app buckets, weekly
+automatic restore check, alerts): `COMPOSE_FILE=docker-compose.yml:compose.backup.yaml` in
+`.env`, then `pnpm run backup:now` / `pnpm run restore`. Runbook: [docs/backups.md](docs/backups.md).
+
 Permissive-license twin (no AGPL/SSPL containers: Valkey instead of Redis, no Loki/Grafana):
 `docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observability up -d`.
 What changes: [docs/LICENSES.md](docs/LICENSES.md#permissive-twin-replacement-map).
@@ -154,6 +158,16 @@ and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (priv
 the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
 (`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
 (about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
+
+## Marketing: site, SEO, social posting
+
+`apps/site` is an Astro static site and Markdown/MDX blog with the SEO basics built in (canonical,
+hreflang, Open Graph, schema.org JSON-LD, sitemap, robots.txt, RSS, `llms.txt`), the web app's
+design tokens and analytics, and Lighthouse budgets in CI: `pnpm --filter site dev`.
+`docker compose --profile marketing up -d` adds Postiz (social posting) and SerpBear (rank
+tracking); `pnpm seo:report` (Search Console), `pnpm seo:indexnow` (Bing/IndexNow after a deploy)
+and `pnpm geo:check` (is the product named in AI answers?). Details:
+[docs/marketing.md](docs/marketing.md).
 
 ## Feature flags and releases
 

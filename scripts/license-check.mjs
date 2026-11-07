@@ -103,14 +103,22 @@ for (const p of py) {
 
 // Images: each must be documented with its license.
 const licensesDoc = readFileSync('docs/LICENSES.md', 'utf8');
-const dockerfiles = ['apps/api', 'apps/web', 'services/worker-py', 'services/llm-cli'].map(
-  (d) => `${d}/Dockerfile`,
-);
+const dockerfiles = [
+  'apps/api',
+  'apps/web',
+  'apps/site',
+  'services/worker-py',
+  'services/llm-cli',
+  'infra/backup',
+].map((d) => `${d}/Dockerfile`);
 const images = new Set(
   [
-    ...['docker-compose.yml', 'compose.permissive.yaml', 'compose.prod.yaml'].flatMap((f) => [
-      ...readFileSync(f, 'utf8').matchAll(/^\s*image:\s*([^\s$]\S*)/gm),
-    ]),
+    ...[
+      'docker-compose.yml',
+      'compose.permissive.yaml',
+      'compose.prod.yaml',
+      'compose.backup.yaml',
+    ].flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/^\s*image:\s*([^\s$]\S*)/gm)]),
     ...dockerfiles.flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/^FROM\s+(\S+)/gm)]),
   ].map((m) => m[1].split(':')[0]),
 );

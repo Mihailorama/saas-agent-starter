@@ -1,4 +1,4 @@
-# 0022. LLM providers: LiteLLM in the gateway, CLI subscriptions by default, BYO and on-prem
+# 0024. LLM providers: LiteLLM in the gateway, CLI subscriptions by default, BYO and on-prem
 
 Status: proposed (blocked on the license gate, see "Consequences")
 

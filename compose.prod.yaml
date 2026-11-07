@@ -220,6 +220,10 @@ services:
       SENTRY_PUBLIC_ORIGIN: ${SENTRY_PUBLIC_ORIGIN:-}
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
       SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
+      # Consent regime (docs/product-analytics.md#consent); must not be empty (nginx map value)
+      CONSENT_MODE: ${CONSENT_MODE:-opt-in}
+      CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
+      CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null"]
       interval: 5s

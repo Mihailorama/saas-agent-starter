@@ -1,4 +1,4 @@
-"""Model providers of the AI gateway (docs/llm-providers.md, docs/adr/0022-llm-providers.md).
+"""Model providers of the AI gateway (docs/llm-providers.md, docs/adr/0024-llm-providers.md).
 
 One path for every kind: LiteLLM (`litellm.acompletion`, MIT; nothing from its enterprise
 package is installed or used). API keys, aggregators, custom OpenAI-compatible endpoints and

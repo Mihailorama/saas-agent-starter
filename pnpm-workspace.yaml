@@ -7,6 +7,10 @@ allowBuilds:
   core-js: false # postinstall only prints a funding banner
   esbuild: true
   protobufjs: false
+# Astro's optional image optimizer (sharp) bundles libvips (LGPL-3.0); the site uses Astro's
+# passthrough image service instead (docs/adr/0021-marketing-layer.md).
+ignoredOptionalDependencies:
+  - sharp
 minimumReleaseAgeExclude:
   - "@better-auth/core@1.7.17"
   - "@better-auth/drizzle-adapter@1.7.17"

@@ -1,0 +1,21 @@
+---
+title: How to write a post for this blog
+description: A short guide for the team, front matter fields, Markdown and MDX, internal links and the SEO checks every post goes through.
+pubDate: 2026-11-06
+author: The Workspace team
+draft: true
+---
+
+Posts live in `apps/site/src/content/blog/` as `.md` or `.mdx` files. The file name is the URL:
+`writing-posts.mdx` becomes `/blog/writing-posts/`.
+
+## Front matter
+
+`title` (up to 60 characters), `description` (50 to 160), `pubDate`, `author`; optional
+`updatedDate`, `draft: true` (only shown by `pnpm --filter site dev`) and `faq` (question/answer
+pairs, rendered with FAQPage markup). The build fails when a field breaks these limits.
+
+## Media
+
+Images and video are not stored in git: host them (Drive, a CDN, your object storage) and link
+them by absolute URL.

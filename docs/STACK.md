@@ -29,8 +29,12 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | chatwoot          | support       |               411 |        1024 |       1.4% |
 | chatwoot-sidekiq  | support       |               445 |        1024 |       0.3% |
 | chatwoot-postgres | support       |                70 |         512 |       5.5% |
+| --------------    | ------------- | ----------------: | ----------: | ---------: |
+| site (nginx)      | marketing     |                 7 |          64 |       0.0% |
+| postiz            | marketing     |             1,264 |        2048 |       ~20% |
+| serpbear          | marketing     |                71 |         512 |       0.0% |
 
-Since ADR 0022 the worker imports LiteLLM: measured 2026-11-07, the worker process' RSS after
+Since ADR 0024 the worker imports LiteLLM: measured 2026-11-07, the worker process' RSS after
 importing the gateway is ~194 MiB (~81 MiB without LiteLLM), so its limit is now 512 MiB. The
 `llm-cli` container (default service, not in the snapshot) is a small Node server plus one CLI
 process per running request (Claude Code and Gemini CLI are Node programs); its limit of 2 GiB
@@ -43,6 +47,12 @@ use grows with traffic until the limit; Prometheus and Loki grow with retention 
 RAM, for Loki). The permissive twin drops Loki and Grafana (~420 MiB used); Valkey uses about
 what Redis does.
 
+Marketing profile (2026-11-07, separate run, docs/marketing.md): `site`, Postiz v2.25.3 and
+SerpBear 3.1.2 on postgres, redis and temporal only. Postiz 1,264 MiB is idle 3 minutes after a
+restart with no traffic (1,381 MiB after a smoke test: register, one draft); its idle CPU stays at
+18-28 % of one core. SerpBear 71 MiB idle, 176 MiB after its smoke test (login, domain, keyword).
+Postiz's Temporal workers raise `temporal` to ~228 MiB and Postgres grows ~25 MiB; Redis is
+unchanged. Marketing profile ~1.3 / 2.6 GiB (used / limit) on top of the shared services.
 The `support` rows (Chatwoot CE, measured 2026-11-07 after start-up, separately from the snapshot
 above) peak at ~442 / 572 / 110 MiB under a small load: plan ~1.2 GiB for the profile
 (docs/support.md).
@@ -50,6 +60,24 @@ above) peak at ~442 / 572 / 110 MiB under a small load: plan ~1.2 GiB for the pr
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then
 `docker stats --no-stream $(docker compose --profile observability --profile glitchtip ps -q)`.
+
+## Backup overlay
+
+`compose.backup.yaml` (ADR 0015), measured 2026-11-07 on the same host with a 784 MB database
+(`pgbench -i -s 50`), sampling `docker stats` every second while each job ran:
+
+| Service                      | Memory idle (MiB) | Peak (MiB) | Limit (MiB) | Peak during                          |
+| ---------------------------- | ----------------: | ---------: | ----------: | ------------------------------------ |
+| backup (sidecar)             |                 9 |         44 |         256 | full backup, restore check           |
+| pushgateway                  |                 6 |          7 |          64 |                                      |
+| postgres (with archiving)    |    same as before |          - |         512 | archive-push adds nothing measurable |
+| backup-s3 (local stand-in)   |                70 |        512 |         512 | grows to its limit as cache          |
+| postgres-restore (on demand) |                19 |          - |         512 | only after `pnpm run restore`        |
+
+Added RAM in production (repository off-site, so no `backup-s3`): ~15 MiB steady, ~50 MiB while
+a backup or restore check runs. Locally, `backup-s3` adds up to 512 MiB more. Timings on that
+database: full backup 30 s, differential 14 s, restore check 11-16 s, `pnpm run restore` to a
+new instance 24 s (restore 14 s of it).
 
 ## LLM-ops tiers (ADR 0009)
 

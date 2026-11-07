@@ -127,4 +127,6 @@ jobs:
           IMAGE_API: ${{ needs.images.outputs.api }}
           IMAGE_WORKER: ${{ needs.images.outputs.worker }}
           IMAGE_WEB: ${{ needs.images.outputs.web }}
-        run: node scripts/deploy.mjs "$TARGET" --version "$GITHUB_REF_NAME"
+          # managed database without the backup overlay (docs/deploy.md section 6)
+          SKIP_BACKUP: ${{ vars.DEPLOY_SKIP_BACKUP == 'true' && '--skip-backup' || '' }}
+        run: node scripts/deploy.mjs "$TARGET" --version "$GITHUB_REF_NAME" $SKIP_BACKUP

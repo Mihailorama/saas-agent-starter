@@ -19,7 +19,7 @@ fact is impossible if calls are scattered across the code base.
   which provider/model pairs may serve which purpose, with a price per 1k tokens. The gateway
   refuses anything else with a non-retryable `ModelNotAllowed`. The same file feeds the public
   `/ai-transparency` page, so the page cannot drift from what the code allows.
-- **Providers.** Superseded by [ADR 0022](0022-llm-providers.md): every provider goes through
+- **Providers.** Superseded by [ADR 0024](0024-llm-providers.md): every provider goes through
   LiteLLM (`worker/providers.py`), CLI subscriptions through the llm-cli container. A provider is
   still a plain async function, so tests inject a fake one; `tests/test_providers.py` checks
   each kind against a local HTTP mock.

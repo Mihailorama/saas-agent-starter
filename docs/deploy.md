@@ -102,8 +102,9 @@ What `deploy` does:
 2. **Stage** (nothing running changes): writes the new `compose.yaml`, `Caddyfile`, Temporal
    files, `secrets.env` and `release.env` as `*.next` on the server and pulls the images. A
    failure here leaves the old release untouched.
-3. **Pre-migration backup hook**: runs `pnpm run backup:now` (with `DEPLOY_ENV=<env>`) if the
-   repository has that script, otherwise warns and continues (see section 6).
+3. **Pre-migration backup**: the backup sidecar on the server takes a differential pgBackRest
+   backup (what `pnpm run backup:now` does locally). No sidecar or a failed backup stops the
+   deploy before anything changes; `--skip-backup` deploys without one and logs it (section 6).
 4. **Apply**: makes the last release that passed its health check (`release.good.env`) the
    rollback target `release.prev.env`, so a failed deploy never becomes one; swaps the files in
    place; runs the migration as a one-off container (`docker compose run --rm migrate`). Only if it
@@ -137,6 +138,16 @@ containers set `REDIS_IMAGE=valkey/valkey:9.1-alpine`. Observability (`docker-co
 profile) is not part of the production file yet, nor are Langfuse (`llmops`) and Chatwoot
 (`support`): run those separately or use their cloud offerings and set their URLs/keys; send OTLP to an existing collector with
 `OTEL_EXPORTER_OTLP_ENDPOINT` and errors to Sentry/GlitchTip with `SENTRY_DSN`.
+
+The marketing layer ([docs/marketing.md](marketing.md), `marketing` profile) is not in the
+production file either, and deploys separately: the site (`apps/site`) is static, so build it
+with its production `SITE_URL`/`SITE_APP_URL` (and the same public `VITE_*` analytics values as
+the web) and publish `apps/site/dist` on any static host or CDN, or run the `site` image behind
+your own proxy on the site's domain; then run `pnpm seo:indexnow --since <previous sha>`.
+Postiz and SerpBear are internal tools: run them with the `marketing` profile on a separate host
+(Postiz needs ~1.3 GiB, docs/STACK.md) behind HTTPS, or use Postiz's hosted plan. None of their
+settings (`SITE_*`, `INDEXNOW_KEY`, `GSC_*`, `POSTIZ_*`, `SERPBEAR_*`) are read by `api`, `worker`
+or `web`, so `compose.prod.yaml` and `deploy/env/example.env` need no entries for them.
 
 ### GitHub Actions (optional)
 
@@ -177,12 +188,41 @@ in any file without that marker. Reviewer checklist for a PR that touches
 
 ## 6. Backups before migrations
 
-The deploy calls `pnpm run backup:now` between staging and migrating. That command is being added
-on the `backups` branch; until it lands the deploy prints
-`WARNING: no backup:now script yet: deploying WITHOUT a pre-migration backup` and continues.
-Make it mandatory once it lands (docs/TODO.md). Until then, take a snapshot by hand before a
-release with migrations (provider snapshot, or `docker compose exec postgres pg_dumpall -U postgres`
-on the server).
+Backups are the overlay `compose.backup.yaml` (pgBackRest WAL archiving + scheduled backups,
+encrypted copy of the app buckets, weekly restore check; [docs/backups.md](backups.md)). The
+deploy ships it with every release; turn it on in the env file (profile `db`, Postgres on this
+host):
+
+```sh
+COMPOSE_FILE=compose.yaml:compose.backup.yaml
+# repository off-site (never this server) and its key; see docs/backups.md "Production checklist"
+BACKUP_S3_ENDPOINT=s3.eu-central-1.amazonaws.com
+BACKUP_S3_REGION=eu-central-1
+BACKUP_S3_BUCKET=example-app-backups
+BACKUP_S3_URI_STYLE=host
+BACKUP_S3_HTTPS_PORT=443
+BACKUP_S3_CA_FILE=/etc/ssl/certs/ca-certificates.crt
+BACKUP_S3_ACCESS_KEY_ID=...
+BACKUP_S3_SECRET_ACCESS_KEY=...
+BACKUP_ENCRYPTION_PASSPHRASE=...   # also in your password manager: no passphrase, no restore
+BACKUP_S3_LOCAL=0                  # no local stand-in
+BACKUP_APP_S3_ENDPOINT=...         # the app's S3 (same as S3_ENDPOINT) and its keys
+BACKUP_APP_S3_ACCESS_KEY_ID=...
+BACKUP_APP_S3_SECRET_ACCESS_KEY=...
+```
+
+The server builds the backup image (`infra/backup/`, shipped with the release) on the first
+`up`. Every later deploy runs `docker compose exec backup /backup/bin/backup.sh diff` on the
+server between staging and migrating. If the sidecar is not running or the backup fails, the
+deploy stops with nothing changed. The first deploy to an empty server skips it (nothing to back
+up yet).
+
+`--skip-backup` deploys without that backup and writes `backup skipped (--skip-backup) <version>`
+to `deploy.log` on the server. Use it when the database is not on this host (tier M, managed
+Postgres: rely on the provider's point-in-time recovery and take a snapshot before risky
+migrations), or knowingly in an emergency. In the release workflow, set the repository variable
+`DEPLOY_SKIP_BACKUP=true` for such an environment. The rehearsal covers all three cases (backup
+taken, missing sidecar stops the deploy, `--skip-backup` logged).
 
 ## Other targets
 

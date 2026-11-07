@@ -2,7 +2,7 @@
 
 Every model call goes through `Gateway.call_llm` (`services/worker-py/worker/ai.py`, ADR
 [0008](adr/0008-ai-layer.md)); how it reaches a provider is decided by
-[ADR 0022](adr/0022-llm-providers.md). Two routes, one gateway:
+[ADR 0024](adr/0024-llm-providers.md). Two routes, one gateway:
 
 - **LiteLLM** (Python SDK in the worker, `worker/providers.py`): API keys, aggregators, custom
   OpenAI-compatible endpoints and self-hosted servers.

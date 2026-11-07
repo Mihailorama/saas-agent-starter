@@ -1,0 +1,73 @@
+---
+// Every page's <head> SEO: title, description, canonical, hreflang, Open Graph, Twitter card,
+// schema.org JSON-LD. The checklist it implements: docs/marketing.md.
+import { abs, site } from '../site.ts';
+
+interface Props {
+  title: string;
+  description: string;
+  type?: 'website' | 'article';
+  /** schema.org objects for this page (Organization/WebSite are added on every page). */
+  jsonLd?: Record<string, unknown>[];
+  /** Translations of this page: [{ lang: 'de', path: '/de/blog/x/' }]. The page itself is added. */
+  alternates?: { lang: string; path: string }[];
+  noindex?: boolean;
+  publishedTime?: Date;
+  modifiedTime?: Date;
+}
+
+const { title, description, type = 'website', jsonLd = [], alternates = [], noindex } =
+  Astro.props;
+const canonical = abs(Astro.url.pathname);
+const lang = Astro.currentLocale ?? 'en';
+const fullTitle = Astro.url.pathname === '/' ? `${site.name}: ${site.tagline}` : `${title} | ${site.name}`;
+const hreflang = [{ lang, path: Astro.url.pathname }, ...alternates];
+const organization = {
+  '@type': 'Organization',
+  '@id': abs('/#organization'),
+  name: site.organization.name,
+  url: abs('/'),
+  logo: abs('/favicon.svg'),
+  ...(site.organization.sameAs.length ? { sameAs: site.organization.sameAs } : {}),
+};
+const website = {
+  '@type': 'WebSite',
+  '@id': abs('/#website'),
+  name: site.name,
+  url: abs('/'),
+  inLanguage: lang,
+  publisher: { '@id': organization['@id'] },
+};
+const graph = { '@context': 'https://schema.org', '@graph': [organization, website, ...jsonLd] };
+// `<` escaped so content can never close the script element.
+const ld = JSON.stringify(graph).replace(/</g, '\\u003c');
+---
+
+<title>{fullTitle}</title>
+<meta name="description" content={description} />
+<link rel="canonical" href={canonical} />
+{noindex && <meta name="robots" content="noindex" />}
+{hreflang.map((a) => <link rel="alternate" hreflang={a.lang} href={abs(a.path)} />)}
+<link rel="alternate" hreflang="x-default" href={canonical} />
+<link rel="alternate" type="application/rss+xml" title={`${site.name} blog`} href={abs('/rss.xml')} />
+<link rel="sitemap" href="/sitemap-index.xml" />
+
+<meta property="og:type" content={type} />
+<meta property="og:site_name" content={site.name} />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:url" content={canonical} />
+<meta property="og:locale" content={lang} />
+{site.ogImage && <meta property="og:image" content={site.ogImage} />}
+{Astro.props.publishedTime && (
+  <meta property="article:published_time" content={Astro.props.publishedTime.toISOString()} />
+)}
+{Astro.props.modifiedTime && (
+  <meta property="article:modified_time" content={Astro.props.modifiedTime.toISOString()} />
+)}
+<meta name="twitter:card" content={site.ogImage ? 'summary_large_image' : 'summary'} />
+{site.twitter && <meta name="twitter:site" content={site.twitter} />}
+<meta name="twitter:title" content={title} />
+<meta name="twitter:description" content={description} />
+{site.ogImage && <meta name="twitter:image" content={site.ogImage} />}
+<script type="application/ld+json" set:html={ld} />

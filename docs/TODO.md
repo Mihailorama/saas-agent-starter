@@ -1,10 +1,10 @@
 # Known limitations / backlog
 
-- **LiteLLM's dependencies fail the license gate (blocks CI of ADR 0022).** `pnpm check:licenses`
+- **LiteLLM's dependencies fail the license gate (blocks CI of ADR 0024).** `pnpm check:licenses`
   rejects `jinja2`, `fastuuid`, `aiosignal`, `s3transfer`, `tokenizers`, `tiktoken`,
   `python-dateutil` (metadata the gate cannot map) and `regex` (`Apache-2.0 AND CNRI-Python`). No
   exception was added. Owner decision needed: amend ADR 0005 (classifier mapping + CNRI-Python),
-  or move the LiteLLM route to the LiteLLM Proxy container (docs/adr/0022-llm-providers.md).
+  or move the LiteLLM route to the LiteLLM Proxy container (docs/adr/0024-llm-providers.md).
 - **Billing page does not show the calls/tokens limit** of unmetered models (`llmUsageMonthly`,
   worker/billing.py `check_llm_usage`); the API's billing response and the web page only show the
   money limit. Add a usage block next to `llmSpend`, and an alert on
@@ -79,12 +79,24 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
-- **Make the pre-migration backup mandatory.** `scripts/deploy.mjs` calls `pnpm run backup:now`
-  (env `DEPLOY_ENV=<env>`) between staging and migrating, but only warns and continues when the
-  script is missing (it is being added on the `backups` branch). Once it lands: fail the deploy
-  without it, agree its interface (which environment/database it backs up, where the dump goes),
-  and add pnpm setup to the `deploy` job in `.github/workflows/release.yml` (it has none today, so
-  the hook would fail there and abort the deploy). docs/deploy.md section 6.
+- **Backups: off-site storage and alert routing are deployment steps.** The backup overlay
+  (`compose.backup.yaml`, docs/backups.md) defaults to `backup-s3` on the same host, which does
+  not survive losing that host. Each deployment must set `BACKUP_S3_*` to another provider or
+  region, store `BACKUP_ENCRYPTION_PASSPHRASE` off the server, and route the `backups` alerts
+  (Alertmanager, see "Alert notifications" above).
+- **Backups: Chatwoot is not backed up.** The `support` profile runs its own Postgres
+  (`chatwoot-postgres`, `pgvector/pgvector`, volume `chatwoot-pgdata`) and keeps attachments in
+  the `chatwoot-storage` volume, so pgBackRest and the bucket copy (compose.backup.yaml) do not
+  reach customer conversations. Options: move Chatwoot's database onto the main Postgres server
+  (needs the pgvector extension in `infra/backup/Dockerfile` and the base image) so it is covered
+  automatically, or a second pgBackRest stanza for `chatwoot-postgres`; and switch Chatwoot's
+  `ACTIVE_STORAGE_SERVICE` to S3 with its bucket in `BACKUP_APP_BUCKETS`.
+- **Backups: a second repository.** pgBackRest supports `repo2` (e.g. a second provider or
+  object-locked bucket). Add `PGBACKREST_REPO2_*` to `compose.backup.yaml` if one off-site copy is
+  not enough; the restore check would then also need a run per repository.
+- **Backups: Grafana dashboard.** Backup and restore-check metrics only have alert rules
+  (`infra/otel/alerts.yml`); a `backups` dashboard (last backup age, WAL archive lag, restore
+  check duration) would help operators. Build it per AGENTS.md "Add a dashboard".
 - **Short downtime on single-host deploys.** `docker compose up` recreates `api`/`web` in place
   (seconds without the API; Caddy only holds requests to `web`). Zero-downtime on one host needs
   two `api` replicas and a health-aware switch (e.g. a blue/green project pair behind Caddy).
@@ -147,6 +159,19 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **PII redaction with Microsoft Presidio: needs an ADR 0005 decision.** The support triage's
+  LLM output (`services/worker-py/worker/support.py` `scrub`), the feedback-to-issue hook
+  (`apps/api/src/routes/hooks.ts`) and the browser `track()` mask only emails (and UUIDs) with a
+  bounded regex. Presidio (MIT, `en_core_web_sm`) would also catch names, phones, cards, IBANs and
+  IPs, measured 2026-11-07 at ~165-200 MiB RSS for English (~360 MiB with a second language), but
+  `pnpm check:licenses` rejects 6 of its transitive packages: `numpy` (has a `Zlib` part), `regex`
+  (`CNRI-Python`), and `Jinja2`, `blis`, `requests-file`, `shellingham`, whose metadata strings
+  ("BSD License", "Apache 2.0", "ISC License") the gate does not map. The official
+  `mcr.microsoft.com/presidio-analyzer` image avoids the code gate but uses `en_core_web_lg`:
+  ~740 MiB RSS idle. Unblock: the owner adds `Zlib` and `CNRI-Python` to the allowlist and the
+  three strings as aliases (ADR 0005), then call Presidio in-process in the worker for
+  `support.py`, and from the API hook through an opt-in sidecar of the worker image (compose
+  profile `pii`) that fails closed. The browser keeps its regex (no Python there).
 - **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
   ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
   transaction (ADR 0019 "Alternatives").
@@ -156,3 +181,15 @@
 - **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.
+- **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
+  (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
+  site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`
+  service in `compose.prod.yaml` behind Caddy), run it after a successful deploy with the
+  previously deployed sha and `INDEXNOW_KEY`.
+- **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
+  others, add a runner per assistant CLI the team is logged in to (same config, same report),
+  never an API key in CI.
+- **Postiz idle cost.** ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
+  each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
+  task queues this server does not poll) listing the networks you do not use; measure before and
+  after in docs/STACK.md, and never exclude a network you post to.
