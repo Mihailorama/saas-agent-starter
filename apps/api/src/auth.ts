@@ -3,13 +3,14 @@ import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { genericOAuth, organization, twoFactor } from 'better-auth/plugins';
-import { apiKeys, orgAccess } from './access.ts';
+import { admin, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
 import { mfaGuard } from './mfa.ts';
+import { operatorGuard } from './operator-guard.ts';
 import { startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
@@ -99,6 +100,17 @@ export const auth = betterAuth({
       origin: env.PASSKEY_ORIGIN.length ? env.PASSKEY_ORIGIN : new URL(env.BETTER_AUTH_URL).origin,
     }),
     mfaGuard(),
+    // Operator console (docs/admin.md): role `operator` from OPERATOR_EMAILS, "view as user"
+    // sessions (read-only via operatorGuard, time-boxed, never of another operator). Its HTTP
+    // endpoints are closed (app.ts); /api/admin calls it server-side with a reason and audit.
+    admin({
+      ...operatorAccess,
+      defaultRole: 'user',
+      adminRoles: ['operator'],
+      impersonationSessionDuration: env.OPERATOR_IMPERSONATION_MINUTES * 60,
+      allowImpersonatingAdmins: false,
+    }),
+    operatorGuard(),
     ...oidc,
   ],
   // Rate limiting is done by @fastify/rate-limit backed by Redis (shared across replicas).

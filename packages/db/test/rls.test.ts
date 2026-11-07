@@ -1,7 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { aiCalls, createDb, organization, projects, withOrg } from '../src/index.ts';
+import {
+  aiCalls,
+  auditLog,
+  createDb,
+  OPERATOR_READ_ROLE,
+  organization,
+  projects,
+  withOperatorRead,
+  withOrg,
+  withPlatformAudit,
+} from '../src/index.ts';
 
 // Connects as the restricted app role, exactly like the API.
 const { db, pool } = createDb(process.env.DATABASE_URL!);
@@ -89,5 +99,80 @@ describe('ai_calls', () => {
     await expect(
       withOrg(db, a, (tx) => tx.delete(aiCalls).where(eq(aiCalls.id, call!.id))),
     ).rejects.toMatchObject({ cause: { message: expect.stringMatching(/permission denied/) } });
+  });
+});
+
+describe('operator read path (docs/admin.md)', () => {
+  it('sees every tenant read-only; the app role does not inherit it', async () => {
+    const a = await newOrg();
+    const b = await newOrg();
+    await withOrg(db, a, (tx) => tx.insert(projects).values({ orgId: a, name: 'a-op' }));
+    await withOrg(db, b, (tx) => tx.insert(projects).values({ orgId: b, name: 'b-op' }));
+
+    // Membership without inheritance: no rows and no operator rights without the explicit switch.
+    const { rows } = await db.execute<{ usage: boolean; member: boolean }>(
+      sql`select pg_has_role(current_user, ${OPERATOR_READ_ROLE}, 'USAGE') as usage,
+                 pg_has_role(current_user, ${OPERATOR_READ_ROLE}, 'MEMBER') as member`,
+    );
+    expect(rows[0]).toEqual({ usage: false, member: true });
+    expect(
+      await withOrg(db, a, (tx) => tx.select().from(projects).where(eq(projects.orgId, b))),
+    ).toEqual([]);
+
+    const seen = await withOperatorRead(db, (tx) =>
+      tx
+        .select({ orgId: projects.orgId })
+        .from(projects)
+        .where(inArray(projects.orgId, [a, b])),
+    );
+    expect(new Set(seen.map((p) => p.orgId))).toEqual(new Set([a, b]));
+
+    // Read-only: no write of any kind, not even into one tenant.
+    for (const write of [
+      (tx: Parameters<Parameters<typeof withOperatorRead>[1]>[0]) =>
+        tx.insert(projects).values({ orgId: a, name: 'x' }),
+      (tx: Parameters<Parameters<typeof withOperatorRead>[1]>[0]) =>
+        tx.update(projects).set({ name: 'x' }).where(eq(projects.orgId, a)),
+      (tx: Parameters<Parameters<typeof withOperatorRead>[1]>[0]) =>
+        tx.delete(projects).where(eq(projects.orgId, b)),
+    ]) {
+      await expect(withOperatorRead(db, write)).rejects.toMatchObject({
+        cause: { message: expect.stringMatching(/read-only transaction|permission denied/) },
+      });
+    }
+    // The role switch ends with the transaction: the pooled connection is the app role again.
+    expect(await db.select().from(projects).where(eq(projects.orgId, a))).toEqual([]);
+  });
+
+  it('org-less audit rows: only operator actions through the audit role, invisible to tenants', async () => {
+    const a = await newOrg();
+    const target = randomUUID();
+    const rls = { cause: { message: expect.stringMatching(/row-level security/) } };
+    const insert = (action: string) => db.insert(auditLog).values({ orgId: null, action, target });
+    // The app role itself cannot write them, not even operator.* ones.
+    await expect(insert('operator.user.x')).rejects.toMatchObject(rls);
+    await db.transaction((tx) =>
+      withPlatformAudit(tx, () =>
+        tx.insert(auditLog).values({ orgId: null, action: 'operator.user.x', target }),
+      ),
+    );
+    await expect(
+      db.transaction((tx) =>
+        withPlatformAudit(tx, () =>
+          tx.insert(auditLog).values({ orgId: null, action: 'POST /api/projects', target }),
+        ),
+      ),
+    ).rejects.toMatchObject(rls);
+    // INSERT only: the audit role reads and changes nothing.
+    await expect(
+      db.transaction((tx) => withPlatformAudit(tx, () => tx.select().from(projects))),
+    ).rejects.toMatchObject({ cause: { message: expect.stringMatching(/permission denied/) } });
+    expect(
+      await withOrg(db, a, (tx) => tx.select().from(auditLog).where(eq(auditLog.target, target))),
+    ).toEqual([]);
+    const rows = await withOperatorRead(db, (tx) =>
+      tx.select().from(auditLog).where(eq(auditLog.target, target)),
+    );
+    expect(rows.map((r) => r.action)).toEqual(['operator.user.x']);
   });
 });

@@ -15,6 +15,7 @@ import {
   Cookie,
   Cpu,
   CreditCard,
+  Eye,
   FolderKanban,
   KeyRound,
   LifeBuoy,
@@ -24,6 +25,7 @@ import {
   MessageCircle,
   Plus,
   ScrollText,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Webhook,
@@ -58,6 +60,9 @@ import { authClient } from '@/lib/auth';
 import { useFlag } from '@/lib/flags';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
+
+/** API error text for members of a suspended organization (apps/api/src/operator-guard.ts). */
+const ORG_SUSPENDED = 'organization suspended';
 
 const initials = (s: string) =>
   s
@@ -178,6 +183,11 @@ function UserMenu() {
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/privacy' })}>
           <Lock className="size-4" /> Privacy
         </DropdownMenuItem>
+        {user?.role === 'operator' && !session?.session.impersonatedBy && (
+          <DropdownMenuItem onSelect={() => navigate({ to: '/admin' })}>
+            <ShieldAlert className="size-4" /> Operator console
+          </DropdownMenuItem>
+        )}
         {privacyChoicesLabel && (
           <DropdownMenuItem onSelect={showPrivacyChoices}>
             <Cookie className="size-4" /> {privacyChoicesLabel}
@@ -226,23 +236,87 @@ function HelpMenu() {
   );
 }
 
+/** Persistent while an operator views the app as this user (docs/admin.md). */
+function ImpersonationBanner({ name, email, until }: { name: string; email: string; until: Date }) {
+  const [pending, setPending] = useState(false);
+  async function stop() {
+    setPending(true);
+    const res = await fetch('/api/impersonation/stop', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const body = (await res.json().catch(() => ({}))) as { userId?: string };
+    // Full reload: every cached query belongs to the viewed user.
+    window.location.assign(body.userId ? `/admin/users/${body.userId}` : '/admin');
+  }
+  return (
+    <div
+      role="status"
+      className="sticky top-0 z-50 flex flex-wrap items-center justify-center gap-3 bg-amber-500 px-4 py-2 text-sm font-medium text-black"
+    >
+      <Eye className="size-4" />
+      <span>
+        Viewing as {name} ({email}). Read-only: changes are blocked. Ends at{' '}
+        {until.toLocaleTimeString(undefined, { timeStyle: 'short' })}.
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 bg-white"
+        onClick={stop}
+        disabled={pending}
+      >
+        Stop viewing
+      </Button>
+    </div>
+  );
+}
+
+/** What members of a suspended organization see instead of its pages. */
+function SuspendedNotice() {
+  return (
+    <Card className="mx-auto mt-8 max-w-md">
+      <CardHeader>
+        <CardTitle className="text-xl">This organization is suspended</CardTitle>
+        <CardDescription>
+          Its data and API keys are not available right now. Nothing has been deleted. Contact
+          support to find out why and how to restore access, or switch to another organization.
+        </CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
 export function Shell() {
   const { data: orgs, isPending } = authClient.useListOrganizations();
   const { data: member } = authClient.useActiveMember();
   const { data: session } = authClient.useSession();
   const userId = session?.user.id;
+  // An operator viewing as the user: their browsing must not join the user's analytics person.
+  const viewedBy = session?.session.impersonatedBy;
   useEffect(() => {
-    if (userId) identify(userId);
-  }, [userId]);
+    if (userId && !viewedBy) identify(userId);
+  }, [userId, viewedBy]);
   const onSecurity = useLocation({ select: (l) => l.pathname === '/settings/security' });
   // Breadcrumbs are declared per route (`staticData.crumbs` in main.tsx).
   const crumbs = useMatches().at(-1)?.staticData.crumbs ?? [];
   // Org requires 2FA and this user has none: the API refuses tenant data, so enrol first.
   const policy = useQuery({ ...policyQuery, enabled: Boolean(orgs?.length) });
   const mustEnrol = policy.error?.message === TWO_FACTOR_REQUIRED;
+  const suspended = policy.error?.message === ORG_SUSPENDED;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const byoProviders = useFlag('byo-llm-providers');
+
+  const banner = viewedBy && session && (
+    <ImpersonationBanner
+      name={session.user.name}
+      email={session.user.email}
+      until={new Date(session.session.expiresAt)}
+    />
+  );
 
   if (isPending) {
     return (
@@ -256,19 +330,22 @@ export function Shell() {
 
   if (!orgs?.length) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle className="text-xl">Create your organization</CardTitle>
-            <CardDescription>
-              Projects, members and files live inside an organization.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <CreateOrgForm />
-          </CardContent>
-        </Card>
-      </main>
+      <>
+        {banner}
+        <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+          <Card className="w-full max-w-sm">
+            <CardHeader>
+              <CardTitle className="text-xl">Create your organization</CardTitle>
+              <CardDescription>
+                Projects, members and files live inside an organization.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <CreateOrgForm />
+            </CardContent>
+          </Card>
+        </main>
+      </>
     );
   }
 
@@ -305,6 +382,7 @@ export function Shell() {
     <AppShell
       nav={nav}
       crumbs={crumbs}
+      banner={banner}
       sidebarHeader={
         <SidebarMenu>
           <SidebarMenuItem>
@@ -314,7 +392,7 @@ export function Shell() {
       }
       sidebarFooter={
         <SidebarMenu>
-          {supportEnabled && (
+          {supportEnabled && !viewedBy && (
             <SidebarMenuItem>
               <HelpMenu />
             </SidebarMenuItem>
@@ -332,7 +410,7 @@ export function Shell() {
         </SidebarMenu>
       }
     >
-      <Outlet />
+      {suspended ? <SuspendedNotice /> : <Outlet />}
     </AppShell>
   );
 }

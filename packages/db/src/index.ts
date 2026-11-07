@@ -25,3 +25,40 @@ export function withOrg<T>(db: Db, orgId: string, fn: (tx: Tx) => Promise<T>): P
     return fn(tx);
   });
 }
+
+/**
+ * Role whose RLS policy `operator_read` (packages/db/src/migrate.ts) sees every tenant's rows,
+ * and which holds SELECT only. The app role is a member without inheriting it, so nothing changes
+ * unless a transaction switches to it.
+ */
+export const OPERATOR_READ_ROLE = 'app_operator_read';
+
+/**
+ * Read-only transaction across all tenants, for the operator console (docs/admin.md). The ONLY
+ * place that leaves tenant scoping: `apps/api/src/routes/admin-*.ts` call it behind
+ * requireOperator, and a test fails if anything else does. Writes inside fail (no privilege);
+ * operator changes go through `withOrg` for the one organization they concern.
+ */
+export function withOperatorRead<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`set transaction read only`);
+    await tx.execute(sql.raw(`set local role ${OPERATOR_READ_ROLE}`));
+    return fn(tx);
+  });
+}
+
+/**
+ * Role that alone may insert org-less audit rows (policy `platform_audit`), INSERT on audit_log
+ * only. The app role is a member without inheriting it, like OPERATOR_READ_ROLE.
+ */
+export const PLATFORM_AUDIT_ROLE = 'app_operator_audit';
+
+/**
+ * Switches the rest of transaction `tx` to PLATFORM_AUDIT_ROLE for an operator action on a user
+ * without organization (apps/api/src/routes/admin-common.ts, the only caller). Call it last: every
+ * later statement in `tx` runs as that role.
+ */
+export async function withPlatformAudit(tx: Tx, insert: () => Promise<unknown>) {
+  await tx.execute(sql.raw(`set local role ${PLATFORM_AUDIT_ROLE}`));
+  await insert();
+}

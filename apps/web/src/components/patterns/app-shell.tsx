@@ -160,6 +160,7 @@ export function AppShell({
   sidebarFooter,
   headerActions,
   commands = [],
+  banner,
   children,
 }: {
   nav: NavGroup[];
@@ -168,6 +169,8 @@ export function AppShell({
   sidebarFooter?: ReactNode;
   headerActions?: ReactNode;
   commands?: CommandAction[];
+  /** Full-width notice above the header (e.g. the operator's "Viewing as" banner). */
+  banner?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -181,6 +184,7 @@ export function AppShell({
         <SidebarRail />
       </Sidebar>
       <SidebarInset className="min-w-0">
+        {banner}
         <Header crumbs={crumbs} nav={nav} commands={commands} actions={headerActions} />
         <main className="flex-1 p-4 md:p-8">{children}</main>
       </SidebarInset>

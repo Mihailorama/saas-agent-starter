@@ -45,10 +45,14 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
   src/tenant.ts       requireRole() / access(scope) + withTenant(): RBAC, org 2FA policy, API key
                       scopes, RLS transaction, audit log, webhook events started after commit
-  src/access.ts       org roles (Better Auth AC) + organization API key plugin config
+  src/access.ts       org roles (Better Auth AC) + organization API key plugin config + the
+                      admin plugin's platform roles (user, operator)
+  src/operator-guard.ts operator list (OPERATOR_EMAILS), read-only "view as user" sessions and
+                      suspended orgs on Better Auth's endpoints (docs/admin.md)
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks,
+                      admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
@@ -60,7 +64,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/flags.ts        isEnabled(): feature flags (PostHog or catalog default)
   test/               integration tests against the real compose services
 apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwind
-  src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail
+  src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail,
+                      admin*.tsx = operator console at /admin (docs/admin.md)
   src/components/ui/  shadcn/ui components (copied source; edit freely)
   src/components/patterns/  app shell, page header, data table, states, confirm dialog,
                       settings section, command palette (docs/ui.md)
@@ -68,7 +73,7 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   e2e/                Playwright smoke, axe a11y on every page; visual.spec.ts (own config)
 apps/site           Astro static marketing site + blog (docs/marketing.md): reuses web's index.css
                     and analytics.ts; SEO head in src/components/Seo.astro, posts in src/content/blog
-packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
+packages/db         Drizzle schema, migrations, RLS policies, withOrg(), withOperatorRead(), migrate script
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, BYO routing, fallback (the ONLY LLM caller)
   worker/providers.py providers via LiteLLM (every kind), prices from LiteLLM's cost map, BYO SSRF pin
@@ -113,6 +118,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
+docs/admin.md       operator console: who is an operator, actions, audit, impersonation
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
@@ -473,7 +479,10 @@ Details: docs/releases.md.
 
 ## Never
 
-- Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`.
+- Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`. The one
+  exceptions are `withOperatorRead` (read-only) and `withPlatformAudit` (org-less `operator.*`
+  audit rows only), both operator console only (docs/admin.md): never call them elsewhere or add
+  another role switch.
 - Commit `.env`, credentials, a decrypted `deploy/env/*.env`, media/binary files, or generated
   `dist/`, `target/`, `.venv/`.
 - Add Next.js/Vercel-specific code, or GPL/LGPL/AGPL/SSPL/BSL code dependencies (infra

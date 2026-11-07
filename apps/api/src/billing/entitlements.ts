@@ -1,4 +1,4 @@
-import { aiCalls, subscriptions, type Tx, withOrg } from '@app/db';
+import { aiCalls, organization, subscriptions, type Tx, withOrg } from '@app/db';
 import { and, eq, gte, lt, sum } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db.ts';
@@ -40,14 +40,32 @@ export function billingPeriod(sub: Subscription | null, now = new Date()) {
   };
 }
 
-export function entitlementsOf(sub: Subscription | null, now = new Date()): Entitlements {
+/** Operator overrides of seats/projects (organization.limit_overrides, docs/admin.md). */
+export type LimitOverrides = Partial<Record<Limit, number>> | null;
+
+/** The plan's limit, or an operator override capped by the plan's `limitsMax`. */
+export const limitOf = (plan: Plan, name: Limit, overrides: LimitOverrides) => {
+  const o = overrides?.[name];
+  return o === undefined
+    ? plan.limits[name]
+    : Math.min(o, plan.limitsMax?.[name] ?? plan.limits[name]);
+};
+
+export function entitlementsOf(
+  sub: Subscription | null,
+  now = new Date(),
+  overrides: LimitOverrides = null,
+): Entitlements {
   const [planId, plan] = planById(paid(sub, now) ? sub.planId : null);
   return {
     planId,
     plan,
     subscription: sub,
     period: billingPeriod(sub, now),
-    limits: { seats: plan.limits.seats, projects: plan.limits.projects },
+    limits: {
+      seats: limitOf(plan, 'seats', overrides),
+      projects: limitOf(plan, 'projects', overrides),
+    },
     features: plan.features,
     llmSpendLimit: (currency) => {
       const base = plan.limits.llmSpendMonthly[currency];
@@ -60,8 +78,15 @@ export function entitlementsOf(sub: Subscription | null, now = new Date()): Enti
 
 /** The organization's plan, limits and features. The one place that answers "may they?". */
 export async function entitlements(orgId: string, tx?: Tx): Promise<Entitlements> {
-  const read = async (t: Tx) => (await t.select().from(subscriptions))[0] ?? null;
-  return entitlementsOf(await (tx ? read(tx) : withOrg(db, orgId, read)));
+  const read = async (t: Tx) => {
+    const [sub] = await t.select().from(subscriptions).where(eq(subscriptions.orgId, orgId));
+    const [org] = await t
+      .select({ overrides: organization.limitOverrides })
+      .from(organization)
+      .where(eq(organization.id, orgId));
+    return entitlementsOf(sub ?? null, new Date(), org?.overrides ?? null);
+  };
+  return tx ? read(tx) : withOrg(db, orgId, read);
 }
 
 /** LLM spend per cost currency in [start, end). Served by the (org_id, created_at) index. */

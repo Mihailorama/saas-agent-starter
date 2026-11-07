@@ -154,6 +154,34 @@ const securityRoute = createRoute({
   component: SecurityPage, // eager: the shell imports its 2FA policy query anyway
 });
 
+// Operator console (docs/admin.md): its own layout, outside the customer shell. The API decides
+// who may use it; others see "not available".
+const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin',
+  beforeLoad: requireSession,
+  component: lazyRouteComponent(() => import('@/pages/admin'), 'AdminShell'),
+});
+const adminOrgsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/',
+  component: lazyRouteComponent(() => import('@/pages/admin-orgs'), 'AdminOrgsPage'),
+});
+const adminOrgRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/orgs/$orgId',
+  component: lazyRouteComponent(() => import('@/pages/admin-orgs'), 'AdminOrgPage'),
+});
+const adminUsersRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/users',
+  component: lazyRouteComponent(() => import('@/pages/admin-users'), 'AdminUsersPage'),
+});
+const adminUserRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/users/$userId',
+  component: lazyRouteComponent(() => import('@/pages/admin-users'), 'AdminUserPage'),
+});
 const privacyRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/privacy',
@@ -168,6 +196,7 @@ const router = createRouter({
     resetPasswordRoute,
     acceptInvitationRoute,
     aiTransparencyRoute,
+    adminRoute.addChildren([adminOrgsRoute, adminOrgRoute, adminUsersRoute, adminUserRoute]),
     appRoute.addChildren([
       projectsRoute,
       projectRoute,
