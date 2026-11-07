@@ -83,6 +83,10 @@ Browser source maps (not uploaded by default): build with `vite build --sourcema
 before building the image. Both CLIs are separate tools, not dependencies (`sentry-cli` is
 FSL-licensed).
 
+Backups (pgBackRest WAL archiving + full/diff, encrypted copy of the app buckets, weekly
+automatic restore check, alerts): `COMPOSE_FILE=docker-compose.yml:compose.backup.yaml` in
+`.env`, then `pnpm run backup:now` / `pnpm run restore`. Runbook: [docs/backups.md](docs/backups.md).
+
 Permissive-license twin (no AGPL/SSPL containers: Valkey instead of Redis, no Loki/Grafana):
 `docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observability up -d`.
 What changes: [docs/LICENSES.md](docs/LICENSES.md#permissive-twin-replacement-map).
