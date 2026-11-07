@@ -69,10 +69,14 @@ class ProviderConfig:
 
     @property
     def configured(self) -> bool:
-        """Has what it needs to be called (fallbacks to an unconfigured provider are skipped)."""
+        """Has what it needs to be called; the gateway refuses an unconfigured provider."""
         if self.kind in ("cli", "local", "custom"):
             return bool(self.base_url)
-        return bool(self.api_key)
+        return bool(self.base_url and self.api_key)
+
+
+class NotConfigured(Exception):
+    """A provider without a base URL: LiteLLM would fall back to e.g. OPENAI_BASE_URL."""
 
 
 def load_providers(
@@ -97,11 +101,14 @@ def load_providers(
             out[name] = ProviderConfig(name, "cli", "openai", base, cli_token, cli_timeout)
             continue
         base_env, key_env = p.get("baseUrlEnv"), p.get("apiKeyEnv")
+        if kind in ("api", "aggregator") and not p.get("baseUrl"):
+            # Explicit, so LiteLLM never takes the vendor's base URL from the environment.
+            raise ValueError(f"provider {name!r}: set baseUrl (the vendor's API endpoint)")
         out[name] = ProviderConfig(
             name,
             cast(Kind, kind),
             str(p["litellm"]),
-            env.get(base_env) or None if base_env else None,
+            (env.get(base_env) or None) if base_env else p.get("baseUrl"),
             env.get(key_env) or None if key_env else None,
             timeout,
         )
@@ -125,6 +132,10 @@ def _completion(res: Any, prefix: str) -> Completion:
 
 def litellm_provider(cfg: ProviderConfig, client: AsyncOpenAI | None = None) -> Provider:
     async def call(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+        if not cfg.base_url:
+            # Never None: LiteLLM would then use OPENAI_BASE_URL, ANTHROPIC_BASE_URL, ... from the
+            # environment, or the vendor's default, and send the prompt there.
+            raise NotConfigured(f"provider {cfg.name!r} has no base URL")
         res = await litellm.acompletion(
             model=f"{cfg.litellm}/{model}",
             messages=[asdict(m) for m in messages],
@@ -201,8 +212,8 @@ async def byo_provider(
     if template.kind not in BYO_KINDS:
         raise BlockedEndpoint(f"provider kind {template.kind} cannot be brought by an org")
     if template.kind != "custom":
-        # Vendor endpoints are fixed by LiteLLM; only the key is the organization's.
-        return litellm_provider(replace(template, base_url=None, api_key=api_key))
+        # The vendor's endpoint from config/ai-models.json; only the key is the organization's.
+        return litellm_provider(replace(template, api_key=api_key))
     parts = urlsplit(base_url or "")
     if parts.scheme not in ("http", "https") or not parts.hostname or parts.username:
         raise BlockedEndpoint("invalid base URL")

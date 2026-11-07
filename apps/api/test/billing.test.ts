@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { aiCalls, aiProviders, auditLog, subscriptions, user, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
 import { billingPeriod, entitlementsOf, type Subscription } from '../src/billing/entitlements.ts';
@@ -418,6 +418,19 @@ describe('Stripe (stripe-mock)', () => {
 });
 
 describe('organization-owned AI providers (BYO)', () => {
+  // The flag override list and the contour are read per request: switch them for this block.
+  const contour = env.AI_CONTOUR;
+  const withFlag = (on: boolean) => {
+    env.FLAGS_ON.splice(0, env.FLAGS_ON.length, ...(on ? ['byo-llm-providers'] : []));
+  };
+  beforeAll(() => {
+    withFlag(true);
+    env.AI_CONTOUR = 'ru'; // lists the custom openai_compatible endpoint
+  });
+  afterAll(() => {
+    withFlag(false);
+    env.AI_CONTOUR = contour;
+  });
   const custom = {
     name: 'On-prem',
     provider: 'openai_compatible',
@@ -490,5 +503,47 @@ describe('organization-owned AI providers (BYO)', () => {
     expect(options.purposes).toContain('project.summary');
     expect(options.purposes).not.toContain('judge');
     expect(options.providers.map((p: { id: string }) => p.id)).not.toContain('claude_cli');
+  });
+
+  it('offers and accepts only providers the contour lists', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await subscribe(org);
+    const ids = async () =>
+      (await call(owner, 'GET', '/api/ai-providers/options'))
+        .json()
+        .providers.map((p: { id: string }) => p.id);
+    const anthropic = { ...custom, provider: 'anthropic', baseUrl: null };
+    expect(await ids()).toEqual(['openai_compatible']);
+    expect((await call(owner, 'POST', '/api/ai-providers', anthropic)).statusCode).toBe(400);
+    env.AI_CONTOUR = 'eu'; // lists anthropic, not openai_compatible or openrouter
+    try {
+      expect(await ids()).toEqual(['anthropic']);
+      expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(400);
+      const openrouter = { ...anthropic, provider: 'openrouter' };
+      expect((await call(owner, 'POST', '/api/ai-providers', openrouter)).statusCode).toBe(400);
+      expect((await call(owner, 'POST', '/api/ai-providers', anthropic)).statusCode).toBe(201);
+    } finally {
+      env.AI_CONTOUR = 'ru';
+    }
+  });
+
+  it('is not there (404) while the byo-llm-providers flag is off', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await subscribe(org);
+    const created = (await call(owner, 'POST', '/api/ai-providers', custom)).json();
+    withFlag(false);
+    try {
+      expect((await call(owner, 'GET', '/api/ai-providers')).statusCode).toBe(404);
+      expect((await call(owner, 'GET', '/api/ai-providers/options')).statusCode).toBe(404);
+      expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(404);
+      const patch = await call(owner, 'PATCH', `/api/ai-providers/${created.id}`, {
+        enabled: false,
+      });
+      expect(patch.statusCode).toBe(404);
+      expect((await call(owner, 'DELETE', `/api/ai-providers/${created.id}`)).statusCode).toBe(404);
+    } finally {
+      withFlag(true);
+    }
+    expect((await call(owner, 'GET', '/api/ai-providers')).json()).toHaveLength(1);
   });
 });

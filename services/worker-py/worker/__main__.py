@@ -101,6 +101,10 @@ def setup_tracing() -> Runtime | None:
 
 async def main() -> None:
     configure_logging()
+    if os.environ.get("OPENAI_BASE_URL") and not os.environ.get("OPENAI_COMPATIBLE_BASE_URL"):
+        # Renamed (docs/deploy.md "Upgrade notes"); unset, the endpoint would silently be off.
+        log.error("OPENAI_BASE_URL is no longer read: rename it to OPENAI_COMPATIBLE_BASE_URL")
+        raise SystemExit(1)
     setup_errors()
     runtime = setup_tracing()
     client = await Client.connect(

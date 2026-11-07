@@ -1,17 +1,43 @@
 {
-  "$comment": "What the AI gateway (services/worker-py/worker/ai.py) may call; docs/llm-providers.md. `providers`: how to reach each provider. `kind` cli = a vendor CLI subscription run by the llm-cli container (claude, codex, gemini, or any `command` set in its config); api/aggregator/custom/local = LiteLLM with the `litellm` provider prefix, the key from `apiKeyEnv` and the base URL from `baseUrlEnv`. `contours` (AI_CONTOUR): the provider/model pairs allowed per purpose; anything not listed is refused. Price: `pricePer1kTokens` is an explicit override; without it the gateway uses LiteLLM's model cost map (USD). A model with neither is refused unless it is marked \"unmetered\": true (CLI subscriptions and self-hosted models), which exempts it from the money limit; unmetered calls count against the plan's llmUsageMonthly calls/tokens instead (docs/billing.md). `fallback`: provider/model to call when this one answers rate-limited (HTTP 429), if that provider is configured. The ru entry is a placeholder for a self-hosted OpenAI-compatible endpoint: replace the model id with the one your endpoint serves.",
+  "$comment": "What the AI gateway (services/worker-py/worker/ai.py) may call; docs/llm-providers.md. `providers`: how to reach each provider. `kind` cli = a vendor CLI subscription run by the llm-cli container (claude, codex, gemini, or any `command` set in its config); api/aggregator/custom/local = LiteLLM with the `litellm` provider prefix, the key from `apiKeyEnv` and the base URL from `baseUrlEnv` (custom, local) or `baseUrl` (api, aggregator: the vendor's endpoint, always passed explicitly so LiteLLM never falls back to a base URL from the environment). `contours` (AI_CONTOUR): the provider/model pairs allowed per purpose; anything not listed is refused. Price: `pricePer1kTokens` is an explicit override; without it the gateway uses LiteLLM's model cost map (USD). A model with neither is refused unless it is marked \"unmetered\": true (CLI subscriptions and self-hosted models), which exempts it from the money limit; unmetered calls count against the plan's llmUsageMonthly calls/tokens instead (docs/billing.md). `fallback`: provider/model to call when this one answers rate-limited (HTTP 429), if that provider is configured. The ru entry is a placeholder for a self-hosted OpenAI-compatible endpoint: replace the model id with the one your endpoint serves.",
   "providers": {
     "claude_cli": { "kind": "cli", "cli": "claude" },
     "codex_cli": { "kind": "cli", "cli": "codex" },
     "gemini_cli": { "kind": "cli", "cli": "gemini" },
-    "anthropic": { "kind": "api", "litellm": "anthropic", "apiKeyEnv": "ANTHROPIC_API_KEY" },
-    "openai": { "kind": "api", "litellm": "openai", "apiKeyEnv": "OPENAI_API_KEY" },
-    "gemini": { "kind": "api", "litellm": "gemini", "apiKeyEnv": "GEMINI_API_KEY" },
-    "xai": { "kind": "api", "litellm": "xai", "apiKeyEnv": "XAI_API_KEY" },
-    "moonshot": { "kind": "api", "litellm": "moonshot", "apiKeyEnv": "MOONSHOT_API_KEY" },
+    "anthropic": {
+      "kind": "api",
+      "litellm": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKeyEnv": "ANTHROPIC_API_KEY"
+    },
+    "openai": {
+      "kind": "api",
+      "litellm": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    "gemini": {
+      "kind": "api",
+      "litellm": "gemini",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKeyEnv": "GEMINI_API_KEY"
+    },
+    "xai": {
+      "kind": "api",
+      "litellm": "xai",
+      "baseUrl": "https://api.x.ai/v1",
+      "apiKeyEnv": "XAI_API_KEY"
+    },
+    "moonshot": {
+      "kind": "api",
+      "litellm": "moonshot",
+      "baseUrl": "https://api.moonshot.ai/v1",
+      "apiKeyEnv": "MOONSHOT_API_KEY"
+    },
     "openrouter": {
       "kind": "aggregator",
       "litellm": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
       "apiKeyEnv": "OPENROUTER_API_KEY"
     },
     "openai_compatible": {

@@ -32,6 +32,9 @@ async def main() -> None:
         timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
         cli_timeout=settings.AI_CLI_TIMEOUT_SECONDS,
     )
+    cfg = configs.get(args.provider)
+    if cfg is None or not cfg.configured:
+        sys.exit(f"provider {args.provider} is not configured (docs/llm-providers.md)")
     doc = json.load(sys.stdin)
     call = providers_from_config(configs)[args.provider]
     completion = await call(

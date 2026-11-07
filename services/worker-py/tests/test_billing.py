@@ -421,7 +421,12 @@ async def test_rate_limited_call_falls_back_once(pool: asyncpg.Pool, s3: S3) -> 
 
 def test_price_override_wins_then_litellm_map_then_refusal() -> None:
     configs = load_providers(
-        settings.AI_MODELS_FILE, {}, cli_url="", cli_token="", timeout=1, cli_timeout=1
+        settings.AI_MODELS_FILE,
+        {"ANTHROPIC_API_KEY": "local-dev-anthropic"},
+        cli_url="",
+        cli_token="",
+        timeout=1,
+        cli_timeout=1,
     )
     registry = load_registry(settings.AI_MODELS_FILE, "eu")
     gw = Gateway(

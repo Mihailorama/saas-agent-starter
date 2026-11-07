@@ -13,20 +13,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_network
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+import asyncpg
 import pytest
 
+from tests.conftest import new_org
 from worker import providers, settings
+from worker.ai import Gateway, ModelNotAllowed, load_registry
 from worker.providers import (
     BlockedEndpoint,
     Completion,
     Message,
+    NotConfigured,
     ProviderConfig,
     byo_provider,
     load_providers,
     price_from_litellm,
     providers_from_config,
 )
+from worker.s3 import S3
 
 MESSAGES = [Message("system", "Be brief."), Message("user", "Hi")]
 OPENAI = {
@@ -131,10 +137,11 @@ def configs(mock: Mock) -> dict[str, ProviderConfig]:
         timeout=10,
         cli_timeout=10,
     )
-    # The shipped config reaches vendor APIs at their own hosts; point them at the mock.
-    found["anthropic"] = replace(found["anthropic"], base_url=mock.url)
-    found["gemini"] = replace(found["gemini"], base_url=mock.url)
-    found["openrouter"] = replace(found["openrouter"], base_url=f"{mock.url}/api/v1")
+    # The shipped config names each vendor's own endpoint: same path, the mock's host.
+    for name, cfg in found.items():
+        if cfg.kind in ("api", "aggregator"):
+            assert cfg.base_url
+            found[name] = replace(cfg, base_url=mock.url + urlsplit(cfg.base_url).path)
     return found
 
 
@@ -164,7 +171,7 @@ CASES = [
     (
         "gemini",
         "gemini-3.5-flash",
-        "/models/gemini-3.5-flash:generateContent",
+        "/v1beta/models/gemini-3.5-flash:generateContent",
         ("x-goog-api-key", "local-dev-gemini"),
         "gemini-3.5-flash",
     ),
@@ -231,10 +238,80 @@ def test_configured_and_unknown_kinds(tmp_path: Path, configs: dict[str, Provide
         settings.AI_MODELS_FILE, {}, cli_url="", cli_token="", timeout=1, cli_timeout=1
     )
     assert not bare["claude_cli"].configured and not bare["anthropic"].configured
+    assert bare["anthropic"].base_url == "https://api.anthropic.com"  # explicit, never from env
     bad = tmp_path / "models.json"
     bad.write_text(json.dumps({"providers": {"x": {"kind": "magic"}}}))
     with pytest.raises(ValueError, match="unknown kind"):
         load_providers(bad, {}, cli_url="", cli_token="", timeout=1, cli_timeout=1)
+    bad.write_text(json.dumps({"providers": {"x": {"kind": "api", "litellm": "openai"}}}))
+    with pytest.raises(ValueError, match="baseUrl"):
+        load_providers(bad, {}, cli_url="", cli_token="", timeout=1, cli_timeout=1)
+
+
+# LiteLLM reads these when api_base is None; none of them may ever be used.
+ENV_BASES = ("OPENAI_BASE_URL", "OPENAI_API_BASE", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_BASE")
+
+
+async def test_unconfigured_provider_is_refused_without_a_request(
+    mock: Mock, pool: asyncpg.Pool, s3: S3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ENV_BASES:
+        monkeypatch.setenv(name, f"{mock.url}/leak/v1")
+    bare = load_providers(
+        settings.AI_MODELS_FILE, {}, cli_url="", cli_token="", timeout=5, cli_timeout=5
+    )
+    org = await new_org(pool)
+    mock.seen.clear()
+    for contour, provider, model in (
+        ("eu", "claude_cli", "claude-haiku-5-5"),  # no LLM_CLI_URL
+        ("ru", "openai_compatible", "example-self-hosted-model"),  # no base URL
+    ):
+        gateway = Gateway(
+            pool=pool,
+            s3=s3,
+            contour=contour,
+            registry=load_registry(settings.AI_MODELS_FILE, contour),
+            providers=providers_from_config(bare),
+            provider_configs=bare,
+            retention_days=1,
+        )
+        with pytest.raises(ModelNotAllowed, match="not configured"):
+            await gateway.call_llm(
+                "project.summary",
+                MESSAGES,
+                model=model,
+                provider=provider,
+                org_id=org,
+                actor_id=None,
+                prompt_template_id="t",
+                prompt_template_version="1",
+                max_tokens=16,
+            )
+        # Below the gateway too: a provider without a base URL never calls LiteLLM.
+        with pytest.raises(NotConfigured):
+            await providers_from_config(bare)[provider](model, MESSAGES, 16)
+    assert mock.posts() == []
+
+
+async def test_vendor_base_url_is_explicit_for_byo_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ENV_BASES:
+        monkeypatch.setenv(name, "http://127.0.0.1:9/leak")
+    sent: list[dict[str, Any]] = []
+
+    async def acompletion(**kwargs: Any) -> Any:
+        sent.append(kwargs)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(providers.litellm, "acompletion", acompletion)
+    bare = load_providers(
+        settings.AI_MODELS_FILE, {}, cli_url="", cli_token="", timeout=1, cli_timeout=1
+    )
+    call = await byo_provider(bare["anthropic"], base_url=None, api_key="org-key", allowed=[])
+    with pytest.raises(RuntimeError, match="stop"):
+        await call("claude-haiku-5-5", MESSAGES, 16)
+    assert (sent[0]["api_base"], sent[0]["api_key"]) == ("https://api.anthropic.com", "org-key")
 
 
 def test_prices_come_from_litellms_cost_map(configs: dict[str, ProviderConfig]) -> None:

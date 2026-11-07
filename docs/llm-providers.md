@@ -36,7 +36,10 @@ provider/model pairs may serve which purpose. Shipped providers:
 | `ollama`            | local      | LiteLLM `ollama_chat/` | `OLLAMA_BASE_URL`                                         | unmetered, calls/tokens limit |
 
 Pick a model per purpose with the purpose's env pair, e.g. `AI_PROJECT_SUMMARY_PROVIDER` and
-`AI_PROJECT_SUMMARY_MODEL` (unset = feature off; there is no default model). LiteLLM prefixes
+`AI_PROJECT_SUMMARY_MODEL` (unset = feature off; there is no default model). A provider that is not
+configured (no `LLM_CLI_URL` for `cli`, no base URL for `custom`/`local`, no key for `api`/
+`aggregator`) is refused with `ModelNotAllowed` before anything is sent: the gateway never lets
+LiteLLM pick a base URL or key from the environment. LiteLLM prefixes
 come from its provider docs ([vLLM](https://docs.litellm.ai/docs/providers/vllm): "hosted_vllm/
 (for OpenAI compatible server)"; [Ollama](https://docs.litellm.ai/docs/providers/ollama): "We
 recommend using ollama_chat for better responses."; [OpenAI-compatible](https://docs.litellm.ai/docs/providers/openai_compatible),
@@ -67,22 +70,24 @@ falls back from `claude_cli` to the `anthropic` API, which only takes effect onc
    Priced by LiteLLM's map, or add `pricePer1kTokens`; mark self-hosted and subscription models
    `"unmetered": true`.
 2. **An API-key vendor LiteLLM supports** (Mistral, DeepSeek, Groq, Azure, Bedrock, ...): add
-   `"<name>": {"kind": "api", "litellm": "<litellm prefix>", "apiKeyEnv": "<ENV>"}` to `providers`
-   and forward the env variable in `docker-compose.yml` and `compose.prod.yaml`. No code.
+   `"<name>": {"kind": "api", "litellm": "<litellm prefix>", "baseUrl": "<vendor API URL>",
+   "apiKeyEnv": "<ENV>"}` to `providers` and forward the env variable in `docker-compose.yml` and
+   `compose.prod.yaml`. No code. `baseUrl` is required: the gateway always passes the base URL to
+   LiteLLM, which would otherwise take one from the environment (`OPENAI_BASE_URL`,
+   `ANTHROPIC_BASE_URL`, ...) and send prompts there.
 3. **Aggregator**: as 2 with `"kind": "aggregator"`.
 4. **Custom OpenAI-compatible endpoint**: `openai_compatible` with its two env variables, or a
    second entry (`"kind": "custom", "litellm": "openai", "baseUrlEnv": ..., "apiKeyEnv": ...`)
    for several endpoints.
 5. **Self-hosted**: `vllm` / `ollama`, or another `local` entry; see "On-prem" below.
 6. **Another CLI subscription**: in the llm-cli config (`infra/llm-cli/config.json`) add the CLI
-   with a `command` argv template (`{model}`, optionally `{prompt}`; otherwise the prompt goes on
-   stdin) and its subscriptions, install the CLI in `services/llm-cli/Dockerfile`, then add
-   `"<name>_cli": {"kind": "cli", "cli": "<name>"}` to `providers`. Examples, flags checked
-   2026-11-07: Kimi Code ([kimi-code](https://github.com/MoonshotAI/kimi-code), MIT; the older
-   `kimi-cli` is archived): `["kimi", "-p", "{prompt}", "-m", "{model}", "--output-format",
-   "text"]`; xAI Grok Build ([docs](https://docs.x.ai/build/cli/reference.md)):
-   `["grok", "-p", "{prompt}", "-m", "{model}"]`. A prompt in argv is visible in the container's
-   process list and limited in size; prefer stdin when the CLI reads it.
+   with a `command` argv template (`{model}`; the prompt always goes on stdin, never argv, so text
+   starting with `--` is not parsed as an option and a large prompt does not hit `E2BIG`) and its
+   subscriptions, install the CLI in `services/llm-cli/Dockerfile`, then add
+   `"<name>_cli": {"kind": "cli", "cli": "<name>"}` to `providers`. Pick a CLI that reads the
+   prompt from stdin and can run without tools, and put its tool-off flags in the template: the
+   login sits in the run's HOME, and a tool that reads files would let a prompt injection copy it
+   into the answer. llm-cli cannot check this for you.
 
 ## CLI subscriptions (default mode)
 
@@ -91,12 +96,12 @@ Subscriptions are the primary mode: the shipped registry lists `claude_cli`, `co
 entry. The llm-cli container runs each CLI non-interactively with an explicit model, no tools and
 structured output where the CLI has it:
 
-| CLI         | Command (adapter in `services/llm-cli/src/cli.ts`)                                                                                                 | Usage captured                                        | Login (mounted file)                                |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------- |
-| Claude Code | `claude -p --model M --output-format json --tools "" --strict-mcp-config --no-session-persistence --system-prompt S` (prompt stdin)                | `usage` (incl. cache tokens), model from `modelUsage` | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` |
-| Codex       | `codex exec --model M --json --skip-git-repo-check --sandbox read-only --ephemeral -` (prompt stdin; no system flag, instructions lead the prompt) | `turn.completed.usage`                                | `~/.codex/auth.json` from `codex login`             |
-| Gemini CLI  | `gemini --model M --output-format json -p " "` (prompt stdin, system prompt via `GEMINI_SYSTEM_MD`)                                                | `stats.models.<m>.tokens`                             | `~/.gemini/oauth_creds.json` from a Google login    |
-| others      | `command` template                                                                                                                                 | none                                                  | as configured                                       |
+| CLI         | Command (adapter in `services/llm-cli/src/cli.ts`)                                                                                                                                                                                                                                                                                                | Usage captured                                        | Login (mounted file)                                |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------- |
+| Claude Code | `claude -p --model M --output-format json --tools "" --strict-mcp-config --no-session-persistence --system-prompt S` (prompt stdin)                                                                                                                                                                                                               | `usage` (incl. cache tokens), model from `modelUsage` | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` |
+| Codex       | `codex exec --model M --json --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -c approval_policy="never" -c web_search="disabled" --disable shell_tool --disable unified_exec --disable view_image --disable multi_agent --disable goals -` (prompt stdin; no system flag, instructions lead the prompt) | `turn.completed.usage`                                | `~/.codex/auth.json` from `codex login`             |
+| Gemini CLI  | `gemini --model M --output-format json --skip-trust --policy <deny-all.toml> -p " "` (prompt stdin, system prompt via `GEMINI_SYSTEM_MD`, `GOOGLE_GENAI_USE_GCA=true`)                                                                                                                                                                            | `stats.models.<m>.tokens`                             | `~/.gemini/oauth_creds.json` from a Google login    |
+| others      | `command` template                                                                                                                                                                                                                                                                                                                                | none                                                  | as configured                                       |
 
 Sources (checked 2026-11-07): Claude Code `claude --help` 2.1.319 and
 [headless](https://code.claude.com/docs/en/headless) / [authentication](https://code.claude.com/docs/en/authentication)
@@ -111,12 +116,33 @@ against a fake binary. `max_tokens` is not passed: none of these CLIs has a flag
 turns off the built-in tools and `--strict-mcp-config` (without `--mcp-config`) loads no MCP
 servers, so a run has no tools at all.
 
+**No tools, so the login stays unreadable.** Each run's HOME holds the subscription's login
+(Codex `auth.json`, Gemini `oauth_creds.json`; neither CLI takes a subscription login from an
+environment variable). A tool that can read files or run commands would let a prompt injection
+in user content copy that token into the answer, which is stored and shown. So every adapter turns
+tools off, and the run's working directory is a scratch dir outside HOME. Checked against a local
+mock of each vendor API, recording the tool list the CLI sends (Codex 0.167.0, Gemini CLI 0.67.0,
+2026-11-07):
+
+- Codex: `--sandbox read-only` alone still offers `exec_command` (shell; read-only still reads
+  every file), `view_image`, `web_search`, `tool_search` and goal tools. The `--disable` features
+  (`codex exec --help`: "Equivalent to `-c features.<name>=false`"; names from
+  `codex features list`) and `web_search="disabled"` remove them. Codex cannot turn off
+  `apply_patch` (enabled by its model catalog, no config switch) or `request_user_input`; neither
+  reads files, and the read-only sandbox with approvals `never` refuses every patch.
+- Gemini CLI: headless runs offer `read_file`, `list_directory`, `grep_search`, `glob`,
+  `google_web_search` and `invoke_agent` by default. A policy file with one rule
+  `toolName = "*"`, `decision = "deny"` removes all of them ("tools that are denied are
+  completely excluded", [policy engine](https://geminicli.com/docs/reference/policy-engine)); the
+  model is offered no tools. `--skip-trust` because headless runs refuse an untrusted folder.
+- Claude Code: `--tools ""`, see above; its login is the `CLAUDE_CODE_OAUTH_TOKEN` variable.
+
 **Logins** are files under `/run/secrets/llm-cli` (dev: `./.secrets/llm-cli`, gitignored; prod:
 `LLM_CLI_SECRETS_DIR` on the host, mode 600), named per subscription in the config: `env` maps a
 variable to the file holding its value, `files` copies a file into the subscription's private
 HOME. They are never baked into the image and never logged; each CLI run gets only its own
 subscription's environment (not the shim's, so `LLM_CLI_TOKEN` and other logins stay invisible)
-and runs in an empty scratch directory. A subscription whose file is missing is skipped.
+and runs in an empty scratch directory outside that HOME. A subscription whose file is missing is skipped.
 llm-cli listens only on the internal network and requires `Authorization: Bearer $LLM_CLI_TOKEN`.
 
 **Concurrency and fallback.** Each subscription has its own `concurrency` (default 1). A request
@@ -146,8 +172,17 @@ with many users, switch the purpose to an API key, an aggregator or a self-hoste
 
 An org admin can add the organization's own provider in Settings -> AI providers (feature flag
 `byo-llm-providers`, plan feature `byoLlm`, `POST /api/ai-providers`): one of the `api` /
-`aggregator` providers with its own API key, or `openai_compatible` with a base URL (+ optional
-key), and the model id per purpose. Then:
+`aggregator` providers with its own API key, or a `custom` one (`openai_compatible`) with a base
+URL (+ optional key), and the model id per purpose. Then:
+
+- **Only providers of the contour.** An org may bring its own key only for a provider that the
+  current `AI_CONTOUR` lists (any model entry of it in `config/ai-models.json`): the contour
+  decides where data may go, whoever pays. The API refuses others (400) and the worker refuses
+  them again at call time (`ProviderBlocked`), e.g. after the operator removes a provider from
+  the contour. The shipped `eu` contour lists `anthropic` as its only BYO-able provider; add a
+  model entry for `openai`, `openrouter` or `openai_compatible` to let orgs bring those.
+- **Behind the flag.** While `byo-llm-providers` is off, the API routes answer 404 and the worker
+  ignores stored providers (the operator's models serve every org).
 
 - **Only for that org.** The worker looks it up under the org's RLS scope for each call; another
   org never sees or uses it. While the org has an enabled provider for a purpose and its plan
@@ -164,7 +199,8 @@ key), and the model id per purpose. Then:
   address of the host must be public, and the connection goes to the checked address with the
   original Host header and TLS SNI, so DNS cannot swap it afterwards. An on-prem model server in
   a private range works only if the operator lists its CIDR in `AI_BYO_ALLOWED_CIDRS`. No
-  redirects, no proxy from the environment. Vendor providers keep LiteLLM's fixed endpoints.
+  redirects, no proxy from the environment. Vendor providers use the `baseUrl` of
+  `config/ai-models.json`; only the key is the org's.
 
 ## On-prem and self-hosted models
 
@@ -219,9 +255,13 @@ a fallback).
   mock and checks URL, auth header, model and parsed usage; prices from LiteLLM's map; the BYO
   SSRF guard and IP pinning.
 - Gateway: `tests/test_billing.py` (fail-closed pricing, money and calls/tokens limits,
-  rate-limit fallback), `tests/test_byo.py` (encryption bound to org and row, isolation between
-  orgs, plan feature, refused private address), `apps/api/test/billing.test.ts` (BYO API).
-- llm-cli: `services/llm-cli/test/` with a fake CLI binary (adapters, environment isolation,
-  timeouts, concurrency, round-robin, cooldown, queue, HTTP format).
+  rate-limit fallback), `tests/test_providers.py` (an unconfigured provider is refused with
+  `OPENAI_BASE_URL`/`ANTHROPIC_BASE_URL` set, no request sent; vendor base URLs explicit),
+  `tests/test_byo.py` (encryption bound to org and row, isolation between orgs, plan feature,
+  contour, flag on/off, refused private address), `apps/api/test/billing.test.ts` (BYO API:
+  contour, flag on/off).
+- llm-cli: `services/llm-cli/test/` with a fake CLI binary (adapters and their tool-off flags,
+  prompt on stdin, environment isolation, timeouts, concurrency, round-robin, cooldown, queue, HTTP
+  format).
 - `pnpm eval:real` runs the product prompts on the model the eval config names and grades them
   with `claude_cli:claude-opus-5-5` through the logged-in Claude CLI (same adapter as llm-cli).

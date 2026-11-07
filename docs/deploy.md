@@ -224,6 +224,16 @@ migrations), or knowingly in an emergency. In the release workflow, set the repo
 `DEPLOY_SKIP_BACKUP=true` for such an environment. The rehearsal covers all three cases (backup
 taken, missing sidecar stops the deploy, `--skip-backup` logged).
 
+## Upgrade notes
+
+Settings a release renames or removes; apply them to `deploy/env/<env>.enc.env` (and `.env`)
+before deploying that release.
+
+- LiteLLM gateway release (ADR 0024): `OPENAI_BASE_URL` / `OPENAI_API_KEY` for a self-hosted or
+  in-country endpoint become `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY` (provider
+  `openai_compatible`; `OPENAI_API_KEY` now means the OpenAI API itself). The worker refuses to
+  start while `OPENAI_BASE_URL` is set and `OPENAI_COMPATIBLE_BASE_URL` is not.
+
 ## Other targets
 
 ### Coolify

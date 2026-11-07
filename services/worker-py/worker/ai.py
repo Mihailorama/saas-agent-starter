@@ -24,6 +24,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
 from worker.billing import Plans, byo_allowed, check_llm_budget, check_llm_usage
+from worker.flags import is_enabled
 from worker.posthog import PostHogAi
 from worker.providers import (
     BlockedEndpoint,
@@ -156,6 +157,8 @@ class Gateway:
         self.retention = timedelta(days=retention_days)
         # Usage (calls/tokens) limits count the calls of these models (provider/model).
         self.unmetered = sorted(f"{p}/{m}" for (p, m), a in registry.items() if a.unmetered)
+        # Providers this contour lists; an org may bring its own key only for one of these.
+        self.contour_providers = frozenset(p for p, _ in registry)
 
     async def call_llm(
         self,
@@ -172,8 +175,9 @@ class Gateway:
     ) -> LlmResult:
         """One LLM call, logged. The span joins the current OTel trace (Temporal propagates it).
 
-        If the org brought its own provider for `purpose` (and its plan allows it), that one is
-        called instead, without plan limits (the org pays its provider). Otherwise raises
+        If the org brought its own provider for `purpose` (flag `byo-llm-providers` on, its plan
+        allows it, the provider listed for this contour), that one is called instead, without
+        plan limits (the org pays its provider). Otherwise raises
         ModelNotAllowed (non-retryable) if (provider, model, purpose) is not registered for
         this contour or has no price and is not `unmetered`, SpendLimitExceeded /
         UsageLimitExceeded (non-retryable) at the plan's limit. A rate-limited call (429) is
@@ -181,7 +185,10 @@ class Gateway:
         Provider errors are logged as status=error and re-raised.
         """
         args = (purpose, messages, org_id, actor_id, prompt_template_id, prompt_template_version)
-        own = await self._byo_route(org_id, purpose) if self.byo else None
+        byo = self.byo is not None and await is_enabled(
+            "byo-llm-providers", user_id=actor_id or org_id, org_id=org_id
+        )
+        own = await self._byo_route(org_id, purpose) if byo else None
         if own is not None:
             return await self._call(own, *args, max_tokens)
         tried: set[tuple[str, str]] = set()
@@ -218,6 +225,11 @@ class Gateway:
         if allowed is None or purpose not in allowed.purposes or call is None:
             raise ModelNotAllowed(
                 f"{provider}/{model} is not allowed for {purpose!r} in contour {self.contour!r}"
+            )
+        if not self._configured(provider):
+            # No base URL/key: LiteLLM would fall back to the environment or a vendor default.
+            raise ModelNotAllowed(
+                f"provider {provider!r} is not configured (docs/llm-providers.md)"
             )
         price = self.price_of(provider, model)
         if price is None and not allowed.unmetered:
@@ -265,6 +277,9 @@ class Gateway:
         try:
             if template is None:
                 raise BlockedEndpoint(f"unknown provider {row['provider']!r}")
+            if row["provider"] not in self.contour_providers:
+                # The contour decides where data may go, for the org's own keys too.
+                raise BlockedEndpoint(f"provider {row['provider']!r} is not in this contour")
             key = row["api_key"] and decrypt_secret(
                 row["api_key"], f"{org_id}/{row['id']}", self.byo.keys
             )

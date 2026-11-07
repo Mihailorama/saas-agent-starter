@@ -2,17 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { aiProviders } from '@app/db';
 import { desc, eq } from 'drizzle-orm';
+import type { preHandlerAsyncHookHandler } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { requireEntitlement } from '../billing/entitlements.ts';
 import { env } from '../env.ts';
+import { isEnabled } from '../flags.ts';
 import { httpError, requireRole, withTenant } from '../tenant.ts';
 import { encryptSecret } from '../webhook-secret.ts';
 
 /**
  * AI providers an organization brings itself (docs/llm-providers.md "BYO"): its own API key for a
- * vendor or aggregator of config/ai-models.json, or a custom OpenAI-compatible endpoint. Org
- * admins only, plan feature `byoLlm`. The key is encrypted at once (bound to org and row id) and
+ * vendor or aggregator of config/ai-models.json, or a custom OpenAI-compatible endpoint, if the
+ * current AI_CONTOUR lists that provider (the contour decides where data may go; the worker
+ * checks it again at call time). Org admins only, plan feature `byoLlm`, feature flag
+ * `byo-llm-providers` (off: 404). The key is encrypted at once (bound to org and row id) and
  * never returned; the worker's AI gateway decrypts it for this organization's calls only and
  * checks a custom base URL against private ranges at call time (AI_BYO_ALLOWED_CIDRS).
  */
@@ -20,17 +24,21 @@ const config = JSON.parse(
   readFileSync(new URL('../../../../config/ai-models.json', import.meta.url), 'utf8'),
 ) as {
   providers: Record<string, { kind: string }>;
-  contours: Record<string, { purposes: string[] }[]>;
+  contours: Record<string, { provider: string; purposes: string[] }[]>;
 };
 const BYO_KINDS = new Set(['api', 'aggregator', 'custom']);
-const providers = Object.entries(config.providers)
-  .filter(([, p]) => BYO_KINDS.has(p.kind))
-  .map(([id, p]) => ({ id, kind: p.kind }));
-const kindOf = new Map(providers.map((p) => [p.id, p.kind]));
-/** Purposes of this deployment's contour; the judge is the operator's, not the org's. */
-const purposes = [
-  ...new Set((config.contours[env.AI_CONTOUR] ?? []).flatMap((m) => m.purposes)),
-].filter((p) => p !== 'judge');
+const kindOf = new Map(Object.entries(config.providers).map(([id, p]) => [id, p.kind]));
+/** BYO-able providers the current contour lists, and its purposes (the judge is the operator's). */
+const contour = () => {
+  const models = config.contours[env.AI_CONTOUR] ?? [];
+  const listed = new Set(models.map((m) => m.provider));
+  return {
+    providers: Object.entries(config.providers)
+      .filter(([id, p]) => BYO_KINDS.has(p.kind) && listed.has(id))
+      .map(([id, p]) => ({ id, kind: p.kind })),
+    purposes: [...new Set(models.flatMap((m) => m.purposes))].filter((p) => p !== 'judge'),
+  };
+};
 
 const url = z
   .url({ protocol: /^https?$/ })
@@ -42,7 +50,7 @@ const url = z
 const Models = z
   .record(z.string(), z.string().trim().min(1).max(200))
   .refine((m) => Object.keys(m).length > 0, 'at least one purpose')
-  .refine((m) => Object.keys(m).every((p) => purposes.includes(p)), 'unknown purpose');
+  .refine((m) => Object.keys(m).every((p) => contour().purposes.includes(p)), 'unknown purpose');
 const Fields = z.object({
   name: z.string().trim().min(1).max(100),
   baseUrl: url.nullable().optional(),
@@ -80,8 +88,11 @@ const dto = ({ orgId: _, apiKey: __, createdAt, updatedAt, ...p }: Row) => ({
 
 /** Custom endpoints need a base URL; vendor providers have a fixed one and need a key. */
 function checkShape(provider: string, baseUrl: string | null | undefined, hasKey: boolean) {
-  const kind = kindOf.get(provider);
-  if (!kind) throw httpError(400, `provider must be one of: ${[...kindOf.keys()].join(', ')}`);
+  const allowed = contour().providers;
+  const kind = allowed.find((p) => p.id === provider)?.kind;
+  if (!kind) {
+    throw httpError(400, `provider must be one of: ${allowed.map((p) => p.id).join(', ')}`);
+  }
   if (kind === 'custom' && !baseUrl) throw httpError(400, 'baseUrl is required for this provider');
   if (kind !== 'custom' && baseUrl) throw httpError(400, 'baseUrl is only for custom endpoints');
   if (kind !== 'custom' && !hasKey) throw httpError(400, 'apiKey is required for this provider');
@@ -93,14 +104,19 @@ const keyFields = (apiKey: string, orgId: string, id: string) => ({
 });
 
 export const aiProviderRoutes: FastifyPluginAsyncZod = async (app) => {
-  const admin = requireRole('admin');
-  const write = { preHandler: [admin, requireEntitlement('byoLlm')] };
+  const flag: preHandlerAsyncHookHandler = async (req) => {
+    const { userId, orgId } = req.tenant;
+    if (!(await isEnabled('byo-llm-providers', { userId, orgId })))
+      throw httpError(404, 'not found');
+  };
+  const admin = [requireRole('admin'), flag];
+  const write = { preHandler: [...admin, requireEntitlement('byoLlm')] };
   const tags = ['ai-providers'];
 
   app.get(
     '/options',
     { preHandler: admin, schema: { tags, response: { 200: Options } } },
-    async () => ({ providers, purposes }),
+    async () => contour(),
   );
 
   app.get(

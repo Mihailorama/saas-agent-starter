@@ -17,7 +17,7 @@ import pytest
 from tests.conftest import new_org
 from tests.test_providers import Mock
 from worker import settings
-from worker.ai import AllowedModel, Byo, Completion, Gateway, Message, ProviderBlocked
+from worker.ai import AllowedModel, Byo, Completion, Gateway, Message, ProviderBlocked, Registry
 from worker.billing import load_plans
 from worker.providers import load_providers
 from worker.s3 import S3
@@ -40,8 +40,17 @@ def mock() -> Iterator[Mock]:
     m.server.shutdown()
 
 
-@pytest.fixture
-def gateway(pool: asyncpg.Pool, s3: S3) -> Gateway:
+OPERATOR = AllowedModel(frozenset({"project.summary"}), None, True)
+# The contour lists openai_compatible (any model), so orgs may bring their own endpoint of it.
+CONTOUR: Registry = {("fake", "op-model"): OPERATOR, ("openai_compatible", "any"): OPERATOR}
+
+
+@pytest.fixture(autouse=True)
+def byo_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "FLAGS_ON", frozenset({"byo-llm-providers"}))
+
+
+def make_gateway(pool: asyncpg.Pool, s3: S3, registry: Registry = CONTOUR) -> Gateway:
     configs = load_providers(
         settings.AI_MODELS_FILE, {}, cli_url="", cli_token="", timeout=10, cli_timeout=10
     )
@@ -49,13 +58,18 @@ def gateway(pool: asyncpg.Pool, s3: S3) -> Gateway:
         pool=pool,
         s3=s3,
         contour="eu",
-        registry={("fake", "op-model"): AllowedModel(frozenset({"project.summary"}), None, True)},
+        registry=registry,
         providers={"fake": operator},
         provider_configs=configs,
         retention_days=1,
         plans=load_plans(settings.PLANS_FILE),
         byo=Byo(KEYS, [ip_network("127.0.0.0/8")]),
     )
+
+
+@pytest.fixture
+def gateway(pool: asyncpg.Pool, s3: S3) -> Gateway:
+    return make_gateway(pool, s3)
 
 
 async def in_org(pool: asyncpg.Pool, org_id: str, sql: str, *args: Any) -> list[asyncpg.Record]:
@@ -163,3 +177,31 @@ async def test_plan_and_ssrf_rules(gateway: Gateway, pool: asyncpg.Pool, mock: M
     await own_provider(pool, private, "http://10.1.2.3/v1", "local-dev-key")  # not allow-listed
     with pytest.raises(ProviderBlocked):
         await summarize(gateway, private)
+
+
+async def test_contour_decides_which_providers_an_org_may_bring(
+    pool: asyncpg.Pool, s3: S3, mock: Mock
+) -> None:
+    org = await new_org(pool)
+    await pro(pool, org)
+    await own_provider(pool, org, f"{mock.url}/v1", "local-dev-key")
+    mock.seen.clear()
+    # openai_compatible is not listed for this contour: refused, never sent there or elsewhere.
+    other = make_gateway(pool, s3, {("fake", "op-model"): OPERATOR})
+    with pytest.raises(ProviderBlocked):
+        await summarize(other, org)
+    assert mock.posts() == []
+
+
+async def test_flag_off_keeps_the_operator_models(
+    gateway: Gateway, pool: asyncpg.Pool, mock: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org = await new_org(pool)
+    await pro(pool, org)
+    await own_provider(pool, org, f"{mock.url}/v1", "local-dev-key")
+    mock.seen.clear()
+    monkeypatch.setattr(settings, "FLAGS_ON", frozenset[str]())
+    assert (await summarize(gateway, org)).text == "operator answer"
+    assert mock.posts() == []
+    monkeypatch.setattr(settings, "FLAGS_ON", frozenset({"byo-llm-providers"}))
+    assert (await summarize(gateway, org)).text == "Hello."
