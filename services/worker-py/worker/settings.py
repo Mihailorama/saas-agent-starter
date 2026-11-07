@@ -23,6 +23,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 TEMPORAL_TASK_QUEUE = os.environ.get("TEMPORAL_TASK_QUEUE", "projects")
+EMAIL_TASK_QUEUE = os.environ.get("EMAIL_TASK_QUEUE", "email")
 OTEL_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 # Error tracking (Sentry protocol: Sentry or GlitchTip). Empty DSN = off.
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
@@ -47,6 +48,11 @@ AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
 # Provider credentials: ANTHROPIC_API_KEY and OPENAI_API_KEY are read by the SDKs.
 # OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+
+# Transactional email (docs/email.md): smtps://user:pass@host:465, smtp://user:pass@host:587
+# (STARTTLS required) or smtp://host:1025?tls=none (local Mailpit). Empty = sending fails.
+SMTP_URL = os.environ.get("SMTP_URL", "")
+MAIL_FROM = os.environ.get("MAIL_FROM", "")
 
 # Feature flags (docs/feature-flags.md). PostHog decides when POSTHOG_KEY is set; FLAGS_ON /
 # FLAGS_OFF (comma-separated names) override it and the catalog default in config/flags.json.

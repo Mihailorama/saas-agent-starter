@@ -39,8 +39,9 @@ longer disappears after a correction", not "fix: invalidate query key"). Interna
 hidden type. Put `Closes #<issue>` in the PR body: that link is what the release comment uses.
 Dependabot titles are `chore(deps): ...` (`.github/dependabot.yml`).
 
-GitHub squash-merges a PR that has a single commit with that commit's message instead of the PR
-title, so the check also validates the commit message of one-commit PRs.
+The repository allows squash merging only, with the PR title as the commit title. The check also
+validates the commit message of one-commit PRs, so the rule still holds if a fork or a future
+settings change goes back to GitHub's default (commit title for one-commit PRs).
 
 ## Release comment on issues
 
@@ -64,9 +65,10 @@ with `Released in v` means the fix is live in that version, while "closed" only 
   `tags:` trigger and `workflow_dispatch` (today `ci.yml` and `sbom.yml`). A deploy workflow that
   builds images on `v*` tags must add `workflow_dispatch:` to its triggers to be started this
   way; no PAT or other secret is needed.
-- release-please opens its PR with `GITHUB_TOKEN`, which needs the repository setting
-  Settings -> Actions -> General -> "Allow GitHub Actions to create and approve pull requests".
-  Checks on that PR (CI, PR title) start in an approval-required state, because it was opened
+- release-please opens its PR with `GITHUB_TOKEN`. That needs Settings -> Actions -> General ->
+  "Allow GitHub Actions to create and approve pull requests", which is on in this repository
+  (set 2026-11-07); a fork or copy of the template must turn it on too. Checks on that PR (CI, PR title) start in an approval-required state, because it was opened
   with `GITHUB_TOKEN`: click "Approve workflows to run" on the release PR before merging it.
-- For the PR-title rule to hold for every merge, set Settings -> General -> Pull Requests to
-  allow squash merging only, with the default commit message "Pull request title".
+- Settings -> General -> Pull Requests: squash merging only, default commit title "Pull request
+  title" (set 2026-11-07; merge commits and rebase merging are off). Copies of the template need
+  the same settings for the PR-title rule to hold.

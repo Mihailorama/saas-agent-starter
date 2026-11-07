@@ -27,6 +27,7 @@ on an image that is not. Their primary software licenses:
 | `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0        |
 | `python`                               | worker runtime                                     | Python-2.0 (PSF)         |
 | `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                      |
+| `axllent/mailpit`                      | catches outgoing mail in dev (UI/API :8025)        | MIT                      |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -76,6 +77,12 @@ Notes:
   ([Apache-2.0](https://github.com/googleapis/release-please-action/blob/main/LICENSE)) and
   `amannn/action-semantic-pull-request` v6.1.1
   ([MIT](https://github.com/amannn/action-semantic-pull-request/blob/main/LICENSE)).
+
+- `axllent/mailpit` ([MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)): local
+  SMTP catcher for transactional email, see [docs/email.md](email.md). Production sends through
+  a provider over SMTP instead. Email code dependencies: `@react-email/render` (MIT; React
+  Email's renderer, `react`/`react-dom` MIT); the worker sends with Python's standard
+  `smtplib`, no package.
 
 ## Permissive twin (replacement map)
 

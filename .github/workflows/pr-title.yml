@@ -18,5 +18,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
-          # GitHub squash-merges a one-commit PR with the commit message, not the PR title.
+          # GitHub's default squash title for a one-commit PR is the commit message, not the PR title.
           validateSingleCommit: true

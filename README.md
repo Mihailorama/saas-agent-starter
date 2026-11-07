@@ -28,14 +28,15 @@ Prerequisites: Docker, Node 22.18+ with pnpm (`corepack enable`), [uv](https://d
 Rust via [rustup](https://rustup.rs) (for the worker extension and the full gate).
 
 ```sh
-docker compose up -d --wait postgres redis s3 temporal-ui
+docker compose up -d --wait postgres redis s3 temporal-ui mailpit
 pnpm i
 pnpm db:migrate
 pnpm dev                 # web http://localhost:5173, API http://localhost:3000
 pnpm worker              # in a second terminal: Python Temporal worker
 ```
 
-Open http://localhost:5173, create an account, an organization and a project. The project's
+Open http://localhost:5173 and create an account; the confirmation mail is in Mailpit at
+http://localhost:8025 ([docs/email.md](docs/email.md)). Then create an organization and a project. The project's
 fingerprint appears a moment later: the API started a Temporal workflow, the Python worker
 computed it with the Rust extension and wrote it back. Watch it in the Temporal UI at
 http://localhost:8233. API schema: http://localhost:3000/openapi.json.
@@ -90,7 +91,8 @@ license gate across npm, PyPI and crates.io, and a Playwright smoke test.
 All config is environment variables, validated at startup (the API exits on invalid config).
 See `.env.example`; put local overrides in `.env` (gitignored). In production set at least
 `NODE_ENV=production`, a random `BETTER_AUTH_SECRET` (32+ chars), `BETTER_AUTH_URL`,
-`DATABASE_URL` (restricted app role) and `MIGRATION_DATABASE_URL` (schema owner, used only by
+`SMTP_URL` + `MAIL_FROM` for the worker (provider choices and DNS setup:
+[docs/email.md](docs/email.md)), `DATABASE_URL` (restricted app role) and `MIGRATION_DATABASE_URL` (schema owner, used only by
 `pnpm db:migrate` / the `migrate` container), `REDIS_URL`, `TEMPORAL_ADDRESS`, and `S3_*`
 (omit `S3_ENDPOINT` for AWS S3).
 

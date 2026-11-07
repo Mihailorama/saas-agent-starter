@@ -71,5 +71,6 @@ Release notes ([docs/releases.md](../releases.md)):
 - Web rollouts reach consenting users only; the API does not depend on consent, so features
   spanning both must tolerate the web showing the old path.
 - The repository needs "Allow GitHub Actions to create and approve pull requests" for the release
-  PR, and squash-only merging with the PR title as the commit for the title rule to hold.
+  PR, and squash-only merging with the PR title as the commit title for the title rule to hold
+  (both set on this repository 2026-11-07; copies of the template must set them).
 - Deploy workflows that build on `v*` tags need `workflow_dispatch` to be started by a release.
