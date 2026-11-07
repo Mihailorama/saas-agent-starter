@@ -32,6 +32,7 @@ on an image that is not. Their primary software licenses:
 | `langfuse/langfuse`                    | Langfuse web (llmops profile)                      | MIT core + `ee/` commercial |
 | `langfuse/langfuse-worker`             | Langfuse worker (llmops profile)                   | MIT core + `ee/` commercial |
 | `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
+| `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -97,6 +98,10 @@ Notes:
   a provider over SMTP instead. Email code dependencies: `@react-email/render` (MIT; React
   Email's renderer, `react`/`react-dom` MIT); the worker sends with Python's standard
   `smtplib`, no package.
+- `stripe/stripe-mock` ([MIT](https://github.com/stripe/stripe-mock/blob/master/LICENSE),
+  Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
+  never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
+  dependencies). Details in [docs/billing.md](billing.md).
 
 ## Permissive twin (replacement map)
 

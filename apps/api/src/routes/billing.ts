@@ -1,0 +1,290 @@
+import { readFileSync } from 'node:fs';
+import { member, projects, subscriptions, type Tx, withOrg } from '@app/db';
+import { count, eq } from 'drizzle-orm';
+import type { FastifyBaseLogger } from 'fastify';
+import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
+import { z } from 'zod';
+import { entitlements, llmSpend, requireEntitlement } from '../billing/entitlements.ts';
+import { contour, plans } from '../billing/plans.ts';
+import { ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
+import { contourOfProvider, providerFor } from '../billing/registry.ts';
+import { db } from '../db.ts';
+import { env } from '../env.ts';
+import { startBillingEvent } from '../temporal.ts';
+import { httpError, requireRole, withTenant } from '../tenant.ts';
+
+/** Cost currencies the LLM spend is shown in: those of the priced models of AI_CONTOUR. */
+const aiModels = JSON.parse(
+  readFileSync(new URL('../../../../config/ai-models.json', import.meta.url), 'utf8'),
+) as { contours: Record<string, { pricePer1kTokens: { currency: string } | null }[]> };
+const costCurrencies = [
+  ...new Set(
+    (aiModels.contours[env.AI_CONTOUR] ?? []).flatMap((m) =>
+      m.pricePer1kTokens ? [m.pricePer1kTokens.currency] : [],
+    ),
+  ),
+];
+/** Soft warning from this share of the limit on; calls are refused at 1 (worker/billing.py). */
+export const LLM_WARN_RATIO = 0.8;
+
+const Usage = z.object({ used: z.number(), limit: z.number() });
+const Billing = z.object({
+  planId: z.string(),
+  planName: z.string(),
+  status: z.enum(['incomplete', 'active', 'past_due', 'canceled']).nullable(),
+  provider: z.string(),
+  currency: z.string(),
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  cancelAtPeriodEnd: z.boolean(),
+  canManage: z.boolean(),
+  usage: z.object({ seats: Usage, projects: Usage }),
+  llmSpend: z.array(
+    z.object({
+      currency: z.string(),
+      spent: z.number(),
+      limit: z.number(),
+      max: z.number(),
+      level: z.enum(['ok', 'warning', 'blocked']),
+    }),
+  ),
+  features: z.record(z.string(), z.boolean()),
+  plans: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      seats: z.number(),
+      projects: z.number(),
+      llmSpendMonthly: z.number().nullable(),
+      price: z.object({ amount: z.string(), interval: z.string() }).nullable(),
+    }),
+  ),
+});
+const Checkout = z.object({ planId: z.string().min(1), currency: z.string().length(3).optional() });
+const LlmLimit = z.object({
+  currency: z.string().length(3),
+  amount: z.number().nonnegative().max(1e9),
+});
+const Url = z.object({ url: z.url() });
+const ErrorBody = z.object({ error: z.string() });
+
+const currentSubscription = async (tx: Tx) => (await tx.select().from(subscriptions))[0] ?? null;
+
+/** Maps provider failures to clear errors without leaking provider responses. */
+async function viaProvider<T>(log: FastifyBaseLogger, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ProviderNotConfigured) throw httpError(503, 'billing is not configured');
+    if ((err as { statusCode?: number }).statusCode) throw err;
+    log.error({ err }, 'payment provider call failed');
+    throw httpError(502, 'payment provider error');
+  }
+}
+
+export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
+  const tags = ['billing'];
+  const admin = { preHandler: requireRole('admin') };
+  const returnUrl = `${env.BETTER_AUTH_URL}/settings/billing`;
+
+  app.get(
+    '/',
+    { preHandler: requireRole('member'), schema: { tags, response: { 200: Billing } } },
+    async (req) => {
+      const { orgId, rank } = req.tenant;
+      return withTenant(req, async (tx) => {
+        const e = await entitlements(orgId, tx);
+        const sub = e.subscription;
+        const contourId = sub?.contour ?? env.BILLING_CONTOUR;
+        const c = contour(contourId);
+        const currency = sub?.currency ?? c.currencies[0]!;
+        const [projectCount] = await tx.select({ n: count() }).from(projects);
+        const [seatCount] = await db
+          .select({ n: count() })
+          .from(member)
+          .where(eq(member.organizationId, orgId));
+        const spent = await llmSpend(tx, orgId, e.period);
+        return {
+          planId: e.planId,
+          planName: e.plan.name,
+          status: sub?.status ?? null,
+          provider: sub?.provider ?? c.provider,
+          currency,
+          periodStart: e.period.start.toISOString(),
+          periodEnd: e.period.end.toISOString(),
+          cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
+          canManage: rank >= 2,
+          usage: {
+            seats: { used: seatCount?.n ?? 0, limit: e.limits.seats },
+            projects: { used: projectCount?.n ?? 0, limit: e.limits.projects },
+          },
+          llmSpend: costCurrencies.flatMap((cur) => {
+            const limit = e.llmSpendLimit(cur);
+            if (limit === undefined) return [];
+            const s = spent[cur] ?? 0;
+            const level = s >= limit ? 'blocked' : s >= limit * LLM_WARN_RATIO ? 'warning' : 'ok';
+            const max = e.plan.features.llmLimitRaise ? (e.plan.llmSpendMax[cur] ?? limit) : limit;
+            return [{ currency: cur, spent: s, limit, max, level } as const];
+          }),
+          features: e.features,
+          plans: Object.entries(plans.plans)
+            .filter(([id, p]) => id === plans.defaultPlan || p.prices[currency])
+            .map(([id, p]) => ({
+              id,
+              name: p.name,
+              seats: p.limits.seats,
+              projects: p.limits.projects,
+              llmSpendMonthly: p.limits.llmSpendMonthly[costCurrencies[0] ?? currency] ?? null,
+              price: p.prices[currency]
+                ? { amount: p.prices[currency].amount, interval: p.prices[currency].interval }
+                : null,
+            })),
+        };
+      });
+    },
+  );
+
+  app.post(
+    '/checkout',
+    {
+      ...admin,
+      schema: { tags, body: Checkout, response: { 200: Url, 400: ErrorBody, 409: ErrorBody } },
+    },
+    async (req) => {
+      // Provider calls happen outside the DB transaction; the audit row is written after.
+      const sub = await withOrg(db, req.tenant.orgId, currentSubscription);
+      const contourId = sub?.contour ?? env.BILLING_CONTOUR;
+      const currency = req.body.currency ?? sub?.currency ?? contour(contourId).currencies[0]!;
+      const plan = plans.plans[req.body.planId];
+      const price = plan?.prices[currency];
+      if (!plan || !price || !contour(contourId).currencies.includes(currency)) {
+        throw httpError(400, 'this plan is not sold in this currency');
+      }
+      if (sub && (sub.status === 'active' || sub.status === 'past_due')) {
+        throw httpError(409, 'already subscribed: change or cancel the current plan first');
+      }
+      const result = await viaProvider(req.log, () =>
+        providerFor(contourId).checkout({
+          orgId: req.tenant.orgId,
+          planId: req.body.planId,
+          planName: plan.name,
+          currency,
+          price,
+          customerId: sub?.customerId ?? null,
+          returnUrl,
+        }),
+      );
+      return withTenant(
+        req,
+        async () => result,
+        () => req.body.planId,
+      );
+    },
+  );
+
+  app.post(
+    '/portal',
+    { ...admin, schema: { tags, response: { 200: Url, 404: ErrorBody } } },
+    async (req) => {
+      const sub = await withOrg(db, req.tenant.orgId, currentSubscription);
+      const url =
+        sub && (await viaProvider(req.log, () => providerFor(sub.contour).portal(sub, returnUrl)));
+      if (!url) throw httpError(404, 'no billing portal for this subscription');
+      return { url };
+    },
+  );
+
+  app.post(
+    '/cancel',
+    { ...admin, schema: { tags, response: { 204: z.null(), 409: ErrorBody } } },
+    async (req, reply) => {
+      const sub = await withOrg(db, req.tenant.orgId, currentSubscription);
+      if (!sub || (sub.status !== 'active' && sub.status !== 'past_due')) {
+        throw httpError(409, 'no active subscription');
+      }
+      await viaProvider(req.log, () => providerFor(sub.contour).cancel(sub));
+      await withTenant(req, (tx) =>
+        tx
+          .update(subscriptions)
+          .set({ cancelAtPeriodEnd: true, updatedAt: new Date() })
+          .where(eq(subscriptions.orgId, sub.orgId)),
+      );
+      return reply.code(204).send(null);
+    },
+  );
+
+  // Within plan rules: only plans with `llmLimitRaise`, up to the plan's llmSpendMax.
+  app.patch(
+    '/llm-limit',
+    {
+      preHandler: [requireRole('admin'), requireEntitlement('llmLimitRaise')],
+      schema: { tags, body: LlmLimit, response: { 204: z.null(), 400: ErrorBody, 402: ErrorBody } },
+    },
+    async (req, reply) => {
+      await withTenant(req, async (tx) => {
+        const e = await entitlements(req.tenant.orgId, tx);
+        const max = e.plan.llmSpendMax[req.body.currency];
+        if (max === undefined || req.body.amount > max || !e.subscription) {
+          throw httpError(400, `the plan allows at most ${max ?? 0} ${req.body.currency}`);
+        }
+        await tx
+          .update(subscriptions)
+          .set({
+            llmSpendLimits: {
+              ...e.subscription.llmSpendLimits,
+              [req.body.currency]: req.body.amount,
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(subscriptions.orgId, e.subscription.orgId));
+      });
+      return reply.code(204).send(null);
+    },
+  );
+};
+
+/**
+ * Provider webhooks (no session; authenticity is checked by the adapter). Each normalized event
+ * becomes a Temporal workflow keyed by the provider event id, so retries and redeliveries are
+ * safe. 5xx when Temporal is unreachable: the provider retries.
+ */
+export const billingWebhookRoutes: FastifyPluginAsyncZod = async (app) => {
+  // Signatures are computed over the exact bytes: keep the body as a string.
+  app.removeAllContentTypeParsers();
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => done(null, body));
+
+  app.post(
+    '/:provider',
+    {
+      config: { rateLimit: { max: 300, timeWindow: '1 minute' } },
+      schema: { hide: true, params: z.object({ provider: z.string().max(32) }) },
+    },
+    async (req, reply) => {
+      const contourId = contourOfProvider(req.params.provider);
+      if (!contourId) return reply.code(404).send({ error: 'unknown provider' });
+      let events: Awaited<ReturnType<ReturnType<typeof providerFor>['webhook']>>;
+      try {
+        events = await providerFor(contourId).webhook({
+          body: typeof req.body === 'string' ? req.body : '',
+          headers: req.headers,
+          ip: req.ip,
+        });
+      } catch (err) {
+        if (err instanceof WebhookRejected) {
+          req.log.warn({ provider: req.params.provider, reason: err.message }, 'webhook rejected');
+          return reply.code(400).send({ error: 'invalid webhook' });
+        }
+        if (err instanceof ProviderNotConfigured) {
+          return reply.code(503).send({ error: 'billing is not configured' });
+        }
+        throw err;
+      }
+      for (const event of events) await startBillingEvent(event);
+      req.log.info(
+        { provider: req.params.provider, events: events.map((e) => e.type) },
+        'billing webhook',
+      );
+      return { received: events.length };
+    },
+  );
+};

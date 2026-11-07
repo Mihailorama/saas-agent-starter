@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { aiCalls, attachments, projects, type Tx } from '@app/db';
-import { and, desc, eq, getTableColumns } from 'drizzle-orm';
+import { and, count, desc, eq, getTableColumns } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { requireEntitlement } from '../billing/entitlements.ts';
 import { presignDownload, presignUpload } from '../s3.ts';
 import { startProjectCreated } from '../temporal.ts';
 import { httpError, requireRole, withTenant } from '../tenant.ts';
@@ -76,9 +77,16 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
     ),
   );
 
+  const projectLimit = requireEntitlement('projects', async (tx) => {
+    const [row] = await tx.select({ n: count() }).from(projects);
+    return row?.n ?? 0;
+  });
   app.post(
     '/',
-    { ...member, schema: { tags, body: ProjectInput, response: { 201: Project } } },
+    {
+      preHandler: [requireRole('member'), projectLimit],
+      schema: { tags, body: ProjectInput, response: { 201: Project, 402: ErrorBody } },
+    },
     async (req, reply) => {
       const project = await withTenant(
         req,

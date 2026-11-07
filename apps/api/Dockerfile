@@ -13,8 +13,8 @@ ENV NODE_ENV=production
 COPY --from=deps /app ./
 COPY packages/db packages/db
 COPY apps/api apps/api
-# Feature flag catalog (apps/api/src/flags.ts).
-COPY config/flags.json config/flags.json
+# Config read at runtime: feature flags (src/flags.ts), plans (src/billing/plans.ts), AI models.
+COPY config config
 ARG GIT_SHA=dev
 ENV SENTRY_RELEASE=$GIT_SHA
 USER node

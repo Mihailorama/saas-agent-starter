@@ -5,6 +5,7 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from worker.activities import Activities, ProjectCreated
+    from worker.billing import BillingActivities, BillingEvent
     from worker.mail import SendEmail, send_email
 
 
@@ -47,4 +48,19 @@ class SendEmailWorkflow:
                 backoff_coefficient=2,
                 maximum_interval=timedelta(minutes=5),
             ),
+        )
+
+
+@workflow.defn(name="BillingEventWorkflow")
+class BillingEventWorkflow:
+    """Started by the API's webhook route with id `billing-<provider>-<event id>` (idempotent)."""
+
+    @workflow.run
+    async def run(self, event: BillingEvent) -> bool:
+        # The DB may be down for a while; the provider already got its 200, so keep trying.
+        return await workflow.execute_activity_method(
+            BillingActivities.apply_billing_event,
+            event,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
         )

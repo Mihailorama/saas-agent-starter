@@ -4,6 +4,7 @@ import {
   Building2,
   Check,
   ChevronsUpDown,
+  CreditCard,
   FolderKanban,
   Layers,
   LogOut,
@@ -189,7 +190,9 @@ export function Shell() {
   useEffect(() => {
     if (userId) identify(userId);
   }, [userId]);
-  const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
+  const onOther = useLocation({
+    select: (l) => l.pathname.startsWith('/ai-calls') || l.pathname.startsWith('/settings'),
+  });
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
 
@@ -229,7 +232,7 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, !onAiCalls && navActive)}>
+          <Link to="/" className={cn(navLink, !onOther && navActive)}>
             <FolderKanban className="size-4" /> Projects
           </Link>
           {isAdmin && (
@@ -237,6 +240,9 @@ export function Shell() {
               <ScrollText className="size-4" /> AI calls
             </Link>
           )}
+          <Link to="/settings/billing" className={navLink} activeProps={{ className: navActive }}>
+            <CreditCard className="size-4" /> Billing
+          </Link>
         </nav>
         <Link
           to="/ai-transparency"

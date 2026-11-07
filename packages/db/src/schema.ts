@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
+  jsonb,
   numeric,
   pgPolicy,
   pgTable,
@@ -124,4 +126,41 @@ export const auditLog = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index().on(t.orgId, t.createdAt), tenantIsolation()],
+);
+
+/**
+ * The organization's current plan, as domain data (docs/billing.md, ADR 0019). One row per org,
+ * created at first checkout; no row means the default plan. Written by the worker from
+ * normalized provider events. Invoices and payment history stay in the provider: this is not a
+ * payments ledger.
+ */
+export const subscriptions = pgTable(
+  'subscriptions',
+  {
+    orgId: orgId().primaryKey(),
+    planId: text('plan_id').notNull(),
+    status: text('status', { enum: ['incomplete', 'active', 'past_due', 'canceled'] }).notNull(),
+    /** Billing contour (config/plans.json `contours`): picks the provider and currencies. */
+    contour: text('contour').notNull(),
+    provider: text('provider').notNull(),
+    currency: text('currency').notNull(),
+    /** Provider references (e.g. Stripe customer and subscription ids). */
+    customerId: text('customer_id'),
+    providerSubscriptionId: text('provider_subscription_id'),
+    currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
+    currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+    cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+    /** Admin-raised LLM spend limits per currency, capped by the plan's llmSpendMax. */
+    llmSpendLimits: jsonb('llm_spend_limits').$type<Record<string, number>>(),
+    /** Time of the newest provider event applied; older (replayed) events are ignored. */
+    lastEventAt: timestamp('last_event_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'subscriptions_status',
+      sql`${t.status} in ('incomplete', 'active', 'past_due', 'canceled')`,
+    ),
+    tenantIsolation(),
+  ],
 );
