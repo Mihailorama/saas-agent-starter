@@ -14,6 +14,11 @@ const Plan = z.object({
     seats: z.number().int().positive(),
     projects: z.number().int().nonnegative(),
     llmSpendMonthly: Money,
+    /** Unmetered models (subscriptions, self-hosted): calls and/or tokens per period. */
+    llmUsageMonthly: z
+      .object({ calls: z.number().int().nonnegative(), tokens: z.number().int().nonnegative() })
+      .partial()
+      .optional(),
   }),
   llmSpendMax: Money,
   features: z.record(z.string(), z.boolean()),

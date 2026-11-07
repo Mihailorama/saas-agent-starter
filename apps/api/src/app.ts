@@ -20,6 +20,7 @@ import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
+import { aiProviderRoutes } from './routes/ai-providers.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
 import { hookRoutes } from './routes/hooks.ts';
@@ -200,6 +201,7 @@ export async function buildApp() {
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
+  await app.register(aiProviderRoutes, { prefix: '/api/ai-providers' });
   await app.register(hookRoutes, { prefix: '/api/hooks' });
   await app.register(billingRoutes, { prefix: '/api/billing' });
   await app.register(billingWebhookRoutes, { prefix: '/api/billing/webhooks' });

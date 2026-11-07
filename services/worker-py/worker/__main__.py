@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import signal
 from datetime import timedelta
 from ipaddress import ip_network
@@ -21,13 +22,14 @@ from temporalio.worker import Worker
 
 from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
-from worker.ai import PROVIDERS, Gateway, load_registry
+from worker.ai import Byo, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
 from worker.posthog import PostHogAi
 from worker.privacy import PrivacyActivities, configured_tools
+from worker.providers import load_providers, providers_from_config
 from worker.s3 import S3
 from worker.support import Chatwoot, SupportActivities
 from worker.text import backend
@@ -74,6 +76,10 @@ def setup_tracing() -> Runtime | None:
 
 async def main() -> None:
     configure_logging()
+    if os.environ.get("OPENAI_BASE_URL") and not os.environ.get("OPENAI_COMPATIBLE_BASE_URL"):
+        # Renamed (docs/deploy.md "Upgrade notes"); unset, the endpoint would silently be off.
+        log.error("OPENAI_BASE_URL is no longer read: rename it to OPENAI_COMPATIBLE_BASE_URL")
+        raise SystemExit(1)
     setup_errors()
     runtime = setup_tracing()
     client = await Client.connect(
@@ -101,17 +107,30 @@ async def main() -> None:
     )
     plans = load_plans(settings.PLANS_FILE)
     ai: Gateway | None = None
+    secret_keys = parse_keys(settings.WEBHOOK_ENCRYPTION_KEYS)
     if settings.AI_CONTOUR:
         await s3.ensure_bucket()
+        configs = load_providers(
+            settings.AI_MODELS_FILE,
+            os.environ,
+            cli_url=settings.LLM_CLI_URL,
+            cli_token=settings.LLM_CLI_TOKEN,
+            timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
+            cli_timeout=settings.AI_CLI_TIMEOUT_SECONDS,
+        )
         ai = Gateway(
             pool=pool,
             s3=s3,
             contour=settings.AI_CONTOUR,
             registry=load_registry(settings.AI_MODELS_FILE, settings.AI_CONTOUR),
-            providers=PROVIDERS,
+            providers=providers_from_config(configs),
+            provider_configs=configs,
             retention_days=settings.AI_CONTENT_RETENTION_DAYS,
             posthog=posthog,
             plans=plans,
+            byo=Byo(secret_keys, [ip_network(c) for c in settings.AI_BYO_ALLOWED_CIDRS])
+            if secret_keys
+            else None,
         )
     summary_model = (
         ModelChoice(settings.AI_PROJECT_SUMMARY_PROVIDER, settings.AI_PROJECT_SUMMARY_MODEL)
@@ -123,7 +142,7 @@ async def main() -> None:
     webhooks = WebhookActivities(
         pool,
         allowed_networks=[ip_network(c) for c in settings.WEBHOOK_ALLOWED_CIDRS],
-        encryption_keys=parse_keys(settings.WEBHOOK_ENCRYPTION_KEYS),
+        encryption_keys=secret_keys,
         max_payload_bytes=settings.WEBHOOK_MAX_PAYLOAD_BYTES,
         disable_after_failures=settings.WEBHOOK_DISABLE_AFTER_FAILURES,
         retention_days=settings.WEBHOOK_RETENTION_DAYS,

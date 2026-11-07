@@ -3,6 +3,7 @@
 # With logs/traces/metrics:  docker compose --profile observability up -d   (Grafana :3001)
 # Permissive-only twin:      add -f docker-compose.yml -f compose.permissive.yaml (ADR 0010)
 # With LLM-ops Full (Langfuse, ADR 0009): docker compose --profile llmops up -d
+# Self-hosted models (vLLM on GPU + Ollama): --profile local-llm; no GPU: --profile local-llm-cpu
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
 
 # Every service: the json-file log driver stamps compose project + service into each line,
@@ -224,9 +225,26 @@ services:
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
       AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}
+      # Providers (docs/llm-providers.md, `providers` in config/ai-models.json). CLI subscriptions
+      # via the llm-cli container; API keys, aggregators, custom and local endpoints via LiteLLM.
+      LLM_CLI_URL: ${LLM_CLI_URL:-http://llm-cli:8080}
+      LLM_CLI_TOKEN: ${LLM_CLI_TOKEN:-local-dev-llm-cli-token-change-me-0123456789}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
+      AI_CLI_TIMEOUT_SECONDS: ${AI_CLI_TIMEOUT_SECONDS:-330}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      MOONSHOT_API_KEY: ${MOONSHOT_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
+      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
+      # With --profile local-llm: http://vllm:8000/v1 and http://ollama:11434
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_API_KEY: ${VLLM_API_KEY:-local-dev-vllm-key}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      # Organization-owned providers: private CIDRs a custom base URL may use (on-prem servers).
+      AI_BYO_ALLOWED_CIDRS: ${AI_BYO_ALLOWED_CIDRS:-}
       # Service desk triage (docs/support.md). Tokens empty = dry run (logs only).
       CHATWOOT_URL: ${CHATWOOT_URL:-} # with --profile support: http://chatwoot:3000
       CHATWOOT_PUBLIC_URL: ${CHATWOOT_PUBLIC_URL:-}
@@ -257,6 +275,90 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }
+
+  # Vendor CLI subscriptions (Claude Code, Codex, Gemini CLI) behind an internal OpenAI-compatible
+  # endpoint for the worker (docs/llm-providers.md). Logins: files in ./.secrets/llm-cli (gitignored),
+  # see infra/llm-cli/config.json; a subscription without its file is skipped. Not published.
+  llm-cli:
+    logging: *logging
+    mem_limit: 2g
+    build:
+      context: .
+      dockerfile: services/llm-cli/Dockerfile
+    environment:
+      LLM_CLI_TOKEN: ${LLM_CLI_TOKEN:-local-dev-llm-cli-token-change-me-0123456789}
+    volumes:
+      - ./infra/llm-cli/config.json:/etc/llm-cli/config.json:ro
+      - ./.secrets/llm-cli:/run/secrets/llm-cli:ro
+    read_only: true
+    tmpfs: [/tmp]
+
+  # Self-hosted models (`--profile local-llm`, docs/llm-providers.md "On-prem"). vLLM is the
+  # multi-user server (continuous batching, needs an NVIDIA GPU and the NVIDIA container runtime);
+  # `vllm-embed` serves an embeddings model the same way. Bound to localhost only; set VLLM_API_KEY.
+  vllm:
+    profiles: [local-llm]
+    logging: *logging
+    image: vllm/vllm-openai:v0.33.0
+    command:
+      - ${VLLM_MODEL:-Qwen/Qwen3-0.6B}
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    ipc: host
+    ports: ["127.0.0.1:${VLLM_PORT:-8000}:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  vllm-embed:
+    profiles: [local-llm]
+    logging: *logging
+    image: vllm/vllm-openai:v0.33.0
+    command:
+      - ${VLLM_EMBED_MODEL:-BAAI/bge-small-en-v1.5}
+      - --runner=pooling
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --gpu-memory-utilization=${VLLM_EMBED_GPU_MEMORY_UTILIZATION:-0.1}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    ipc: host
+    ports: ["127.0.0.1:${VLLM_EMBED_PORT:-8001}:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  # No GPU (CI, laptops): the same OpenAI-compatible server on CPU, for tiny models and smoke
+  # tests only (`--profile local-llm-cpu`; x86 with AVX-512 recommended, AVX2 limited).
+  vllm-cpu:
+    profiles: [local-llm-cpu]
+    logging: *logging
+    image: vllm/vllm-openai-cpu:v0.33.0-x86_64
+    command:
+      - ${VLLM_CPU_MODEL:-Qwen/Qwen3-0.6B}
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-4096}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      VLLM_CPU_KVCACHE_SPACE: ${VLLM_CPU_KVCACHE_SPACE:-2}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    shm_size: 1g # vLLM's workers share tensors through /dev/shm (Docker's default is 64 MiB)
+    ports: ["127.0.0.1:${VLLM_PORT:-8000}:8000"]
+
+  # Ollama: dev and single user (one request per model at a time by default, OLLAMA_NUM_PARALLEL).
+  # Pull models into it: docker compose exec ollama ollama pull qwen3:0.6b (and an embedding model).
+  ollama:
+    profiles: [local-llm]
+    logging: *logging
+    image: ollama/ollama:0.40.15
+    volumes: ["ollama:/root/.ollama"]
+    ports: ["127.0.0.1:${OLLAMA_PORT:-11434}:11434"]
 
   # PII redaction for the API's feedback hook (Presidio, docs/support.md "Personal data"): the
   # worker image, another command. Set PII_REDACT_URL on the API to use it.
@@ -776,6 +878,8 @@ services:
       PROMPTFOO_DISABLE_UPDATE: "1"
 
 volumes:
+  hfcache:
+  ollama:
   pgdata:
   s3data:
   lokidata:
