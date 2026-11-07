@@ -52,11 +52,11 @@ test('seo:indexnow maps changed files to site URLs', () => {
     'https://example.com/',
     'https://example.com/blog/',
   ]);
-  assert.ok(
-    changedUrls([['D', 'apps/site/src/content/blog/old.md']], site, all).includes(
-      'https://example.com/blog/old/',
-    ),
-  );
+  assert.deepEqual(changedUrls([['D', 'apps/site/src/content/blog/old.md']], site, all), [
+    'https://example.com/',
+    'https://example.com/blog/',
+    'https://example.com/blog/old/',
+  ]);
   assert.deepEqual(changedUrls([['M', 'apps/site/src/pages/blog/index.astro']], site, all), [
     'https://example.com/blog/',
   ]);
