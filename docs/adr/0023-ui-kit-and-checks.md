@@ -55,21 +55,24 @@ Checks:
 - Visual regression (`UI / visual`): Playwright screenshots of every gallery section, reference
   screen and public page at desktop/mobile × light/dark. Baselines are a workflow artifact
   produced on `main` (and weekly), never committed; PRs download the latest and compare on the
-  same runner image and Playwright version. Diffs go to the job summary and an artifact.
-  Blocking, with the `visual-change-approved` label as the explicit way to accept an intended
-  change; with no baseline yet it is report-only.
+  same pinned Playwright container image (browser and fonts) and Playwright version. Diffs go
+  to the job summary and an artifact. Blocking, with the `visual-change-approved` label as the
+  explicit way to accept an intended change; with no baseline yet it is report-only and says so
+  with a warning annotation.
 - Lighthouse CI (`UI / lighthouse`), same style as the marketing site (`pnpm dlx @lhci/cli`,
   not a dependency): accessibility and best practices ≥ 0.95 on `/sign-in` and
-  `/ai-transparency` (public pages; the signed-in ones are covered by axe).
+  `/ai-transparency` (public pages; the signed-in ones are covered by axe), and a bundle budget
+  (entry-page JavaScript ≤ 230 kB compressed) so the code-split entry chunk cannot silently
+  regrow.
 
 ## Consequences
 
 - New screens start from a reference screen and the catalog; the checks catch contrast, labels,
   AI-template tells and unintended visual drift before review.
 - The visual job depends on GitHub artifacts (90-day retention, refreshed weekly) and on the
-  runner image; a runner image change can show diffs on many screenshots at once, which a
-  maintainer accepts once with the label.
-- Lighthouse performance is only reported: the single SPA bundle scores about 0.8 on
-  `/sign-in` until routes are code-split.
+  Playwright image; bumping it (with `@playwright/test`) can show diffs on many screenshots at
+  once, which a maintainer accepts once with the label.
+- Lighthouse performance is only reported (a warning below 0.8); the size budget is the
+  blocking guard, because it is deterministic where the performance score is not.
 - Product teams change `--primary`, `--radius` and the font in `index.css` and update DESIGN.md;
   everything else follows.

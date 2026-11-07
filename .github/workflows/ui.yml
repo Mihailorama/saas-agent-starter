@@ -80,10 +80,20 @@ jobs:
   visual:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # Screenshots depend on the browser build and the system fonts. The app uses the system font
+    # stack (no web font to bundle), so the run is pinned to Playwright's own image instead: same
+    # Chromium and fonts for main's baseline and every PR. Bump the tag (and digest) together with
+    # @playwright/test; the first step fails when they drift. A bump changes the baseline, so do it
+    # in a PR labelled visual-change-approved.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+      options: --ipc=host
     permissions:
       contents: read
       actions: read # download the baseline artifact from main
     steps:
+      - name: Tools the image lacks (gh for the artifact lookup, jq for the summary)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends gh jq > /dev/null
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -91,7 +101,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter web...
-      - run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Playwright matches the image
+        run: |
+          v=$(pnpm --filter web exec playwright --version | awk '{print $2}')
+          test "v$v" = "$(echo "$IMAGE" | sed 's/.*:\(v[0-9.]*\)-.*/\1/')" \
+            || { echo "::error::@playwright/test is $v; bump the visual job's image to match"; exit 1; }
+        env:
+          IMAGE: mcr.microsoft.com/playwright:v1.64.1-noble
       - name: Download the latest baseline from main
         id: baseline
         if: github.event_name == 'pull_request'
@@ -106,6 +122,7 @@ jobs:
             echo "Baseline: run $run_id on main" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=No visual baseline::No visual-baseline artifact from main; screenshots were NOT compared."
           fi
       - name: Compare with the baseline
         id: compare
@@ -127,7 +144,9 @@ jobs:
             if [ "$EVENT" != pull_request ]; then
               echo "Baseline written and stored as the \`visual-baseline\` artifact."
             elif [ "$FOUND" != true ]; then
-              echo "No baseline from main yet: screenshots taken, nothing compared (report only)."
+              echo "> [!WARNING]"
+              echo "> **No baseline from main: nothing was compared.** This run only wrote screenshots;"
+              echo "> visual regressions are NOT checked until main has a \`visual-baseline\` artifact."
             elif [ "$OUTCOME" = success ]; then
               echo "No visual changes against main."
             else

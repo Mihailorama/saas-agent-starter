@@ -5,6 +5,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
   RouterProvider,
   redirect,
@@ -18,21 +19,15 @@ import { devRoutes } from '@/dev/routes';
 import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
-import { AiCallsPage } from '@/pages/ai-calls';
-import { AiProvidersPage } from '@/pages/ai-providers';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
-import { ApiKeysPage } from '@/pages/api-keys';
-import { BillingPage } from '@/pages/billing';
-import { PrivacyPage } from '@/pages/privacy';
-import { ProjectPage } from '@/pages/project';
-import { ProjectsPage } from '@/pages/projects';
 import { ResetPasswordPage } from '@/pages/reset-password';
 import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
 import { SignInPage, safeRedirect } from '@/pages/sign-in';
 import { TwoFactorPage } from '@/pages/two-factor';
-import { WebhooksPage } from '@/pages/webhooks';
 
+// App pages load on first visit (own chunks: data table, forms, zod); the bundle budget in
+// lighthouserc.cjs keeps the entry chunk from regrowing.
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 
 const rootRoute = createRootRoute({
@@ -107,62 +102,63 @@ const projectsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/',
   staticData: { crumbs: [{ label: 'Projects' }] },
-  component: ProjectsPage,
+  component: lazyRouteComponent(() => import('@/pages/projects'), 'ProjectsPage'),
 });
 
 const projectRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/projects/$projectId',
   staticData: { crumbs: [{ label: 'Projects', to: '/' }, { label: 'Project' }] },
-  component: ProjectPage,
+  component: lazyRouteComponent(() => import('@/pages/project'), 'ProjectPage'),
 });
 
 const aiCallsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/ai-calls',
   staticData: { crumbs: [{ label: 'AI calls' }] },
-  component: AiCallsPage,
+  component: lazyRouteComponent(() => import('@/pages/ai-calls'), 'AiCallsPage'),
 });
 
 const billingRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/billing',
   staticData: { crumbs: [{ label: 'Settings' }, { label: 'Billing' }] },
-  component: BillingPage,
+  component: lazyRouteComponent(() => import('@/pages/billing'), 'BillingPage'),
 });
 
 const apiKeysRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/api-keys',
   staticData: { crumbs: [{ label: 'Settings' }, { label: 'API keys' }] },
-  component: ApiKeysPage,
+  component: lazyRouteComponent(() => import('@/pages/api-keys'), 'ApiKeysPage'),
 });
 
 const webhooksRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/webhooks',
   staticData: { crumbs: [{ label: 'Settings' }, { label: 'Webhooks' }] },
-  component: WebhooksPage,
+  component: lazyRouteComponent(() => import('@/pages/webhooks'), 'WebhooksPage'),
 });
 
 const aiProvidersRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/ai-providers',
-  component: AiProvidersPage,
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'AI providers' }] },
+  component: lazyRouteComponent(() => import('@/pages/ai-providers'), 'AiProvidersPage'),
 });
 
 const securityRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/security',
   staticData: { crumbs: [{ label: 'Settings' }, { label: 'Security' }] },
-  component: SecurityPage,
+  component: SecurityPage, // eager: the shell imports its 2FA policy query anyway
 });
 
 const privacyRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/privacy',
   staticData: { crumbs: [{ label: 'Settings' }, { label: 'Privacy' }] },
-  component: PrivacyPage,
+  component: lazyRouteComponent(() => import('@/pages/privacy'), 'PrivacyPage'),
 });
 
 const router = createRouter({

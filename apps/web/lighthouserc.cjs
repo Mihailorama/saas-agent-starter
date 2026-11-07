@@ -20,6 +20,11 @@ module.exports = {
         'categories:accessibility': ['error', { minScore: 0.95 }],
         'categories:best-practices': ['error', { minScore: 0.95 }],
         'categories:performance': ['warn', { minScore: 0.8 }],
+        // Bundle budget: JavaScript transferred (compressed) by an entry page, i.e. the main chunk
+        // and what it preloads. 212 kB on 2026-11-07 after route and palette code splitting; an
+        // eager import that pushes it past main's former single chunk (228 kB) fails. Heavy code
+        // belongs in a lazy route (main.tsx) or behind first use (command-menu.tsx).
+        'resource-summary:script:size': ['error', { maxNumericValue: 230000 }],
       },
     },
     upload: { target: 'filesystem', outputDir: '.lighthouseci/reports' },

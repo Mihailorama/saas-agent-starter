@@ -196,7 +196,9 @@
   new pages copy what they see. Fix: move each to `PageHeader`, `QueryView`/`DataTable`,
   `EmptyState`, `Select`/`Checkbox`/`Textarea` and `SettingsSection` (docs/ui.md), one page per PR,
   keeping the e2e selectors (labels, roles) unchanged.
-- **One JS bundle for the whole SPA.** Lighthouse performance on `/sign-in` is ~0.79 (reported,
-  not enforced, in `apps/web/lighthouserc.cjs`) because the app ships as one ~900 kB chunk. Fix:
-  lazy-load routes with TanStack Router's `lazyRouteComponent` (as `src/dev/routes.ts` does),
-  then raise the performance assertion to `error` at 0.9.
+- **`/sign-in` Lighthouse performance ~0.79** (reported, not enforced, in
+  `apps/web/lighthouserc.cjs`). Routes and the command palette are code-split since 2026-11-07
+  (entry JS 212 kB compressed, budget 230 kB enforced), yet total blocking time is still ~440 ms
+  on desktop; `/ai-transparency` scores 1.0. Fix: profile the sign-in boot (Sentry, analytics,
+  cookie banner, Better Auth client) and defer what is not needed before first input, then raise
+  the performance assertion to `error` at 0.9.

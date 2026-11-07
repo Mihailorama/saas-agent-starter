@@ -1,17 +1,12 @@
 import { type LucideIcon, Search } from 'lucide-react';
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandShortcut,
-} from '@/components/ui/command';
 import { Kbd } from '@/components/ui/kbd';
 import { modKey, useHotkey } from '@/lib/hotkeys';
+
+const CommandPalette = lazy(() =>
+  import('@/components/patterns/command-palette').then((m) => ({ default: m.CommandPalette })),
+);
 
 export type CommandAction = {
   label: string;
@@ -31,52 +26,31 @@ export type CommandAction = {
  */
 export function CommandMenu({ commands }: { commands: CommandAction[] }) {
   const [open, setOpen] = useState(false);
-  useHotkey('k', () => setOpen((o) => !o), { mod: true });
-  const groups = [...new Set(commands.map((c) => c.group))];
+  const [loaded, setLoaded] = useState(false);
+  const toggle = (next: boolean) => {
+    setLoaded(true);
+    setOpen(next);
+  };
+  useHotkey('k', () => toggle(!open), { mod: true });
 
   return (
     <>
       <Button
         variant="outline"
         className="h-8 w-9 justify-start gap-2 px-2 text-muted-foreground sm:w-56 sm:px-3"
-        onClick={() => setOpen(true)}
+        onClick={() => toggle(true)}
       >
         <Search aria-hidden />
         {/* Visible from sm up; screen readers always get it (the name must match the text). */}
         <span className="sr-only flex-1 text-left font-normal sm:not-sr-only">Search…</span>
         <Kbd className="hidden sm:inline-flex">{modKey} K</Kbd>
       </Button>
-      <CommandDialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Command palette"
-        description="Go to a page or run an action."
-      >
-        <CommandInput placeholder="Type a command or search…" />
-        <CommandList>
-          <CommandEmpty>No matching commands.</CommandEmpty>
-          {groups.map((group) => (
-            <CommandGroup key={group} heading={group}>
-              {commands
-                .filter((c) => c.group === group)
-                .map(({ label, icon: Icon, keywords, shortcut, run }) => (
-                  <CommandItem
-                    key={label}
-                    keywords={keywords}
-                    onSelect={() => {
-                      setOpen(false);
-                      run();
-                    }}
-                  >
-                    {Icon && <Icon aria-hidden />}
-                    {label}
-                    {shortcut && <CommandShortcut>{shortcut}</CommandShortcut>}
-                  </CommandItem>
-                ))}
-            </CommandGroup>
-          ))}
-        </CommandList>
-      </CommandDialog>
+      {/* cmdk and the dialog load on first open, not with the app; then stay mounted. */}
+      {loaded && (
+        <Suspense fallback={null}>
+          <CommandPalette commands={commands} open={open} setOpen={setOpen} />
+        </Suspense>
+      )}
     </>
   );
 }

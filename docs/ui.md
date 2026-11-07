@@ -54,13 +54,13 @@ lighthouse CI job checks that the build contains no gallery code).
 
 ## The checks
 
-| Check                                                                                                               | Where                         | Blocks the PR?                                            |
-| ------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------- |
-| Biome lint, all `a11y` rules as errors                                                                              | `pnpm check` (CI `check` job) | yes                                                       |
-| axe-core, WCAG 2.2 A/AA, light + dark, every page and the gallery; serious/critical fail                            | `pnpm e2e` (CI `check` job)   | yes                                                       |
-| impeccable detector: source + rendered gallery, screens and public pages, desktop + mobile                          | CI `UI / impeccable`          | yes                                                       |
-| Visual regression: 22 screenshots × 4 (desktop/mobile × light/dark)                                                 | CI `UI / visual`              | yes, unless the PR has the `visual-change-approved` label |
-| Lighthouse CI: accessibility ≥ 0.95, best practices ≥ 0.95 (performance reported) on `/sign-in`, `/ai-transparency` | CI `UI / lighthouse`          | yes                                                       |
+| Check                                                                                                                                             | Where                         | Blocks the PR?                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------- |
+| Biome lint, all `a11y` rules as errors                                                                                                            | `pnpm check` (CI `check` job) | yes                                                       |
+| axe-core, WCAG 2.2 A/AA, light + dark, every page and the gallery; serious/critical fail                                                          | `pnpm e2e` (CI `check` job)   | yes                                                       |
+| impeccable detector: source + rendered gallery, screens and public pages, desktop + mobile                                                        | CI `UI / impeccable`          | yes                                                       |
+| Visual regression: 22 screenshots × 4 (desktop/mobile × light/dark)                                                                               | CI `UI / visual`              | yes, unless the PR has the `visual-change-approved` label |
+| Lighthouse CI: accessibility ≥ 0.95, best practices ≥ 0.95, entry JS ≤ 230 kB compressed (performance reported) on `/sign-in`, `/ai-transparency` | CI `UI / lighthouse`          | yes                                                       |
 
 The `UI` workflow (`.github/workflows/ui.yml`) runs on PRs that touch `apps/web`, the AI
 config shown on the transparency page, or the lockfile.
@@ -92,12 +92,23 @@ Screenshots are never committed (no media in git). Instead:
 3. A change you intended: look at the diffs, then add the **`visual-change-approved`** label to
    the PR. The job re-runs and passes. After the merge, `main` writes the new baseline.
 4. No baseline yet (new repository, or the artifact expired): the PR job only takes the
-   screenshots and says so in the summary; it cannot fail. Run the `UI` workflow on `main`
-   (Actions, "Run workflow") to create one.
+   screenshots and says so with a warning annotation and in the summary; it cannot fail, so
+   nothing is checked. Run the `UI` workflow on `main` (Actions, "Run workflow") to create one.
 
 Locally the first `pnpm --filter web visual` writes `apps/web/.visual/baseline/` (gitignored)
 and later runs compare against it; `pnpm --filter web visual:update` rewrites it. Local
-screenshots differ from CI's (fonts, OS), so never copy them into CI.
+screenshots differ from CI's (fonts, OS), so never copy them into CI. CI takes them in the
+pinned Playwright image (`mcr.microsoft.com/playwright`, same version as `@playwright/test`,
+by digest): the app uses the system font stack, so the image, not a bundled font, keeps
+browser and fonts identical between main's baseline and every PR.
+
+### Bundle size
+
+Signed-in pages load on first visit (`lazyRouteComponent` in `main.tsx`) and the command
+palette on first open, so the data table, forms, zod and cmdk are not in the entry chunk. The
+Lighthouse job fails when an entry page transfers more than 230 kB of JavaScript
+(`resource-summary:script:size` in `apps/web/lighthouserc.cjs`). New pages get the same lazy
+route; a heavy widget on an eager page loads with `lazy()` on first use.
 
 ## Install the impeccable skill (optional, for agents)
 
