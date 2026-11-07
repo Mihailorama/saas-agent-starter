@@ -1,0 +1,7 @@
+# SOPS creation rules for the encrypted per-environment env files (docs/deploy.md, ADR 0016).
+# Replace the placeholder with your age public key(s), comma-separated: one per operator
+# machine plus one for CI (the private half goes into the SOPS_AGE_KEY environment secret).
+# After changing recipients: sops updatekeys deploy/env/<env>.enc.env
+creation_rules:
+  - path_regex: deploy/env/[^/]+\.enc\.env$
+    age: age1replace-with-your-public-key
