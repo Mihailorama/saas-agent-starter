@@ -186,7 +186,14 @@ describe('privacy: user', () => {
       409,
     );
     // A new request is possible again after cancelling.
-    expect((await request(u, 'user/deletion')).statusCode).toBe(202);
+    // The web sends gtag's client id in the body; it wins over the cookie.
+    const again = await req(u, 'POST', '/api/privacy/user/deletion', { gaClientId: '42.43' });
+    expect(again.statusCode).toBe(202);
+    const id = privacyWorkflowId({ kind: 'deletion', requestId: again.json().id });
+    started.push(id);
+    const history = await (await temporal()).workflow.getHandle(id).fetchHistory();
+    const arg = history.events![0]!.workflowExecutionStartedEventAttributes!.input!.payloads![0]!;
+    expect(JSON.parse(Buffer.from(arg.data!).toString()).gaClientId).toBe('42.43');
   });
 
   it('refuses to delete the only owner of an organization', async () => {

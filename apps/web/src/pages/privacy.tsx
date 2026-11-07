@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { track } from '@/lib/analytics';
+import { gaClientId, track } from '@/lib/analytics';
 import { api, formatDate } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
@@ -67,7 +67,11 @@ function SubjectCard({ subject }: { subject: Subject }) {
     onError: (e) => toast.error(e.message),
   });
   const deletion = useMutation({
-    mutationFn: () => api<PrivacyRequest>(`${base}/deletion`, { method: 'POST' }),
+    mutationFn: async () =>
+      api<PrivacyRequest>(`${base}/deletion`, {
+        method: 'POST',
+        json: subject === 'user' ? { gaClientId: await gaClientId() } : {},
+      }),
     onSuccess: () => {
       track('privacy_deletion_requested', { subject });
       setConfirming(false);

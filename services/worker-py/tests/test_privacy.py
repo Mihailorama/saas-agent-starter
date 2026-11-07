@@ -55,10 +55,10 @@ class FakeTools:
             return httpx2.Response(200, json={"results": [{"id": "p-1", "properties": {}}]})
         if path.endswith("/query/"):
             return httpx2.Response(200, json={"columns": ["event"], "results": [["$pageview"]]})
-        if path == "/api/public/traces" and req.method == "GET":
-            return httpx2.Response(200, json={"data": [], "meta": {"totalPages": 1}})
-        if path.startswith("/api/public/traces/"):
-            return httpx2.Response(200, json={"id": path.rsplit("/", 1)[1]})
+        if path.endswith("/persons/bulk_delete/"):
+            return httpx2.Response(202, json={"persons_queued_for_deletion": ["p-1"]})
+        if path in ("/api/public/v2/observations", "/api/public/v3/scores"):
+            return httpx2.Response(200, json={"data": [], "meta": {}})
         if path.endswith("/contacts/search"):
             ident = req.url.params["q"]
             return httpx2.Response(200, json={"payload": [{"id": 7, "identifier": ident}]})
@@ -201,7 +201,7 @@ async def person(pool: asyncpg.Pool, acts: PrivacyActivities) -> dict[str, str]:
         pool,
         org_id,
         "insert into attachments (id, org_id, project_id, filename, content_type, size,"
-        " created_by) values ($1, $2, $3, 'cv.txt', 'text/plain', 5, $4) returning id",
+        " created_by) values ($1, $2, $3, '../cv.txt', 'text/plain', 5, $4) returning id",
         attachment,
         org_id,
         project,
@@ -261,7 +261,7 @@ async def test_user_export_zip(
     z = zipfile.ZipFile(io.BytesIO(await acts.files.get(row["result_key"])))
     names = set(z.namelist())
     assert {"README.md", "db/user.json", "db/account.json", "db/session.json"} <= names
-    assert f"files/attachments/{p['attachment']}-cv.txt" in names
+    assert f"files/attachments/{p['attachment']}-_cv.txt" in names
     assert f"files/ai-content/{p['ai']}/request.json" in names
     assert {"tools/posthog.json", "tools/langfuse.json", "tools/chatwoot.json"} <= names
     user = json.loads(z.read("db/user.json"))
@@ -270,7 +270,7 @@ async def test_user_export_zip(
     assert "password" not in json.loads(z.read("db/account.json"))[0]
     assert "token" not in json.loads(z.read("db/session.json"))[0]
     assert json.loads(z.read("db/audit_log.json"))[0]["ip"] == "192.0.2.1"
-    assert z.read(f"files/attachments/{p['attachment']}-cv.txt") == b"hello"
+    assert z.read(f"files/attachments/{p['attachment']}-_cv.txt") == b"hello"
     chatwoot = json.loads(z.read("tools/chatwoot.json"))
     assert chatwoot["contacts"][0]["conversations"][0]["messages"] == [{"content": "hello"}]
     readme = z.read("README.md").decode()
@@ -311,7 +311,7 @@ async def test_user_deletion_everywhere(
     for step in ("sessions", "posthog", "langfuse", "chatwoot", "storage", "database"):
         assert report[step]["status"] == "done", (step, report[step])
     assert report["ga4"]["status"] == "skipped"  # not configured here
-    assert ("DELETE", "/api/projects/1/persons/p-1/") in fake.calls
+    assert ("POST", "/api/projects/1/persons/bulk_delete/") in fake.calls
     assert ("DELETE", "/api/public/traces") in fake.calls
     assert ("DELETE", "/api/v1/accounts/1/contacts/7") in fake.calls
     row = await pool.fetchrow("select * from privacy_requests where id = $1", req.requestId)
@@ -337,7 +337,7 @@ async def test_cancel_in_grace_period(
         "update privacy_requests set status = 'cancelled' where id = $1", req.requestId
     )
     await handle.signal(DataDeletionWorkflow.cancel)
-    assert await handle.result() == {"status": "cancelled"}
+    assert await handle.result() == {"status": "not started"}
     assert await pool.fetchval('select count(*) from "user" where id = $1', p["uid"]) == 1
     assert await exists(acts.ai_content, f"{p['ai']}/request.json")
 
@@ -438,3 +438,21 @@ async def test_retention_deletes_expired_content_keeps_metadata(
     # The next run starts where this one stopped: the already purged call is not visited again.
     again = await acts.purge_ai_content(result["until"])
     assert again["calls"] == 0
+
+
+async def test_sole_owner_by_then_is_refused(
+    env: tuple[Client, PrivacyActivities, FakeTools], pool: asyncpg.Pool
+) -> None:
+    client, acts, _ = env
+    p = await person(pool, acts)
+    # Became the only owner during the grace period: the organization would be left ownerless.
+    await pool.execute("update member set role = 'owner' where user_id = $1", p["uid"])
+    req = await new_request(pool, "deletion", "user", p["uid"], datetime.now(UTC))
+    result = await client.execute_workflow(
+        DataDeletionWorkflow.run, req, id=f"privacy-deletion-{req.requestId}", task_queue=TASK_QUEUE
+    )
+    assert result == {"status": "not started"}
+    row = await pool.fetchrow("select * from privacy_requests where id = $1", req.requestId)
+    assert row is not None and row["status"] == "failed"
+    assert json.loads(row["report"])["ownership"]["status"] == "failed"
+    assert await pool.fetchval('select count(*) from "user" where id = $1', p["uid"]) == 1

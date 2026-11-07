@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 import time
 import zipfile
 from base64 import urlsafe_b64encode
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
 # Export attempts before a tool that keeps failing is listed as "failed" instead of retried.
 EXPORT_ATTEMPTS = 5
 EXPORT_PREFIX = "privacy-exports/"
+# Better Auth stores several roles comma-separated (same test as apps/api/src/routes/privacy.ts).
+OWNER_ROLE = r"(^|,)\s*owner\s*(,|$)"
 # Columns that never leave the database, not even in the subject's own export.
 SECRET_COLUMNS = {
     "account": {"password", "access_token", "refresh_token", "id_token"},
@@ -99,12 +102,14 @@ STATIC = {
     "error_tracking": outcome(
         "not_supported",
         "GlitchTip/Sentry events carry no user, request or extra data (scrubbed by the SDK "
-        "setup in apps/api, apps/web and the worker), so there is nothing per person to find; "
-        "events expire with the tracker's retention",
+        "setup in apps/api, apps/web and the worker), so nothing can be found per person; "
+        "Sentry has no delete-by-user API either. Events expire with the tracker's retention "
+        "(GlitchTip GLITCHTIP_RETENTION_DAYS, default 90; Sentry 30 or 90 days by plan)",
     ),
     "umami": outcome(
         "not_supported",
-        "Umami is cookieless and the app never identifies users to it: no per-person data",
+        "Umami is cookieless and the app never calls umami.identify: its sessions are hashes "
+        "with a rotating salt that cannot be linked to a user",
     ),
 }
 ORG_STATIC = {
@@ -147,14 +152,22 @@ class ToolError(ApplicationError):
     """An HTTP failure of an external tool. The message is ours: tool name + status only."""
 
 
-async def call(http: httpx2.AsyncClient, tool: str, method: str, url: str, **kw: Any) -> Any:
+async def call(
+    http: httpx2.AsyncClient,
+    tool: str,
+    method: str,
+    url: str,
+    retry: tuple[int, ...] = (),
+    **kw: Any,
+) -> Any:
     try:
         res = await http.request(method, url, **kw)
     except httpx2.HTTPError as err:  # class only: messages can echo the URL with ids
         raise ToolError(f"{tool} {type(err).__name__}") from None
     if res.status_code >= 400:
-        # Client errors other than 404/408/409/429 will not fix themselves: report, do not retry.
-        permanent = res.status_code < 500 and res.status_code not in (404, 408, 409, 429)
+        # Client errors other than 404/408/409/429 (and `retry`) will not fix themselves.
+        transient = (404, 408, 409, 429, *retry)
+        permanent = res.status_code < 500 and res.status_code not in transient
         raise ToolError(f"{tool} HTTP {res.status_code}", non_retryable=permanent)
     return res.json() if res.content else None
 
@@ -168,9 +181,9 @@ class Tool(Protocol):
 
 
 class PostHogPersons:
-    """PostHog persons + their events (private API, personal API key with person:read/write and
-    query:read). The web identifies users by user id; the worker's `$ai_generation` events use
-    the same distinct id."""
+    """PostHog persons and their events (https://posthog.com/docs/api/persons; personal API key
+    with person:read, person:write, query:read). The web identifies users by user id, and the
+    worker's `$ai_generation` events use the same distinct id."""
 
     name = "posthog"
     subjects = frozenset({"user"})
@@ -179,59 +192,63 @@ class PostHogPersons:
         self.base = f"{host.rstrip('/')}/api/projects/{project_id}"
         self.http, self.headers = http, {"authorization": f"Bearer {key}"}
 
-    async def _persons(self, distinct_id: str) -> list[Doc]:
+    async def export(self, s: Subject) -> Doc:
         found = await call(
             self.http,
             self.name,
             "GET",
             f"{self.base}/persons/",
-            params={"distinct_id": distinct_id},
+            params={"distinct_id": s.id},
             headers=self.headers,
         )
-        return objs(obj(found).get("results"))
-
-    async def export(self, s: Subject) -> Doc:
-        persons = await self._persons(s.id)
         query = {
             "kind": "HogQLQuery",
+            # The id is a placeholder value, never spliced into the query text.
             "query": "select uuid, event, timestamp, properties from events"
             " where distinct_id = {distinct_id} order by timestamp limit 50000",
             "values": {"distinct_id": s.id},
         }
-        events = await call(
-            self.http,
-            self.name,
-            "POST",
-            f"{self.base}/query/",
-            json={"query": query},
-            headers=self.headers,
+        events = obj(
+            await call(
+                self.http,
+                self.name,
+                "POST",
+                f"{self.base}/query/",
+                json={"query": query},
+                headers=self.headers,
+            )
         )
-        events = obj(events)
         return {
-            "persons": persons,
+            "persons": objs(obj(found).get("results")),
             "events": {"columns": events.get("columns"), "rows": events.get("results") or []},
         }
 
     async def delete(self, s: Subject) -> Doc:
-        persons = await self._persons(s.id)
-        for p in persons:
-            # The person, and (asynchronously, in PostHog's batch job) all of their events.
+        # Persons by distinct id, with their events and recordings. PostHog queues the event
+        # deletion and runs it in a batch job (weekly on PostHog Cloud).
+        res = obj(
             await call(
                 self.http,
                 self.name,
-                "DELETE",
-                f"{self.base}/persons/{p['id']}/",
-                params={"delete_events": "true"},
+                "POST",
+                f"{self.base}/persons/bulk_delete/",
+                json={"distinct_ids": [s.id], "delete_events": True, "delete_recordings": True},
                 headers=self.headers,
             )
-        detail = "person deleted; PostHog removes its events in a batch job" if persons else ""
-        return outcome("done", detail or "no person with this distinct id", persons=len(persons))
+        )
+        if res.get("deletion_errors"):
+            raise ToolError(f"{self.name} deletion_errors")
+        queued = len(cast(list[Any], res.get("persons_queued_for_deletion") or []))
+        return outcome(
+            "done", "persons deleted, events queued for PostHog's batch deletion", persons=queued
+        )
 
 
 class Langfuse:
-    """Langfuse public API (Basic auth with the project key pair). Our spans carry no user id, so
-    the subject's traces are the ones of their AI calls (ai_calls.trace_id); traces filed under
-    the user id (if a deployment adds `langfuse.user.id`) are included too."""
+    """Langfuse public API (Basic auth with the project key pair; v2 observations and v3 scores,
+    https://langfuse.com/faq/all/deprecated-api-migration). Our spans carry no user id, so the
+    subject's traces are those of their AI calls (ai_calls.trace_id); traces a deployment files
+    under the user id (`langfuse.user.id`) are found too."""
 
     name = "langfuse"
     subjects = frozenset({"user", "org"})
@@ -240,60 +257,66 @@ class Langfuse:
         self.base = f"{host.rstrip('/')}/api/public"
         self.http, self.auth = http, httpx2.BasicAuth(public, secret)
 
-    async def _trace_ids(self, s: Subject) -> list[str]:
-        ids = list(dict.fromkeys(s.trace_ids))
-        if s.type == "user":
-            page = 1
-            while True:
-                found = await call(
+    async def _pages(self, path: str, **params: Any) -> list[Doc]:
+        out: list[Doc] = []
+        cursor = ""
+        while True:
+            page = obj(
+                await call(
                     self.http,
                     self.name,
                     "GET",
-                    f"{self.base}/traces",
-                    params={"userId": s.id, "page": page, "limit": 100},
+                    f"{self.base}{path}",
+                    params={**params, **({"cursor": cursor} if cursor else {})},
                     auth=self.auth,
                 )
-                ids += [str(t["id"]) for t in objs(obj(found).get("data")) if t["id"] not in ids]
-                if page >= int(obj(obj(found).get("meta")).get("totalPages") or 1):
-                    break
-                page += 1
+            )
+            out += objs(page.get("data"))
+            cursor = str(obj(page.get("meta")).get("cursor") or "")
+            if not cursor:
+                return out
+
+    async def _trace_ids(self, s: Subject) -> list[str]:
+        ids = list(dict.fromkeys(s.trace_ids))
+        if s.type == "user":
+            for o in await self._pages("/v2/observations", userId=s.id, fields="core", limit=1000):
+                if o.get("traceId") and o["traceId"] not in ids:
+                    ids.append(str(o["traceId"]))
         return ids
 
     async def export(self, s: Subject) -> Doc:
-        traces: list[Any] = []
-        for trace_id in await self._trace_ids(s):
-            try:
-                traces.append(
-                    await call(
-                        self.http,
-                        self.name,
-                        "GET",
-                        f"{self.base}/traces/{trace_id}",
-                        auth=self.auth,
-                    )
-                )
-            except ToolError as err:
-                if "HTTP 404" not in err.message:  # trace never reached Langfuse (or expired)
-                    raise
-        return {"traces": traces}
+        ids = await self._trace_ids(s)
+        observations: list[Doc] = []
+        for trace_id in ids:
+            observations += await self._pages(
+                "/v2/observations",
+                traceId=trace_id,
+                fields="core,basic,time,io,metadata,model,usage",
+                limit=1000,
+            )
+        scores: list[Doc] = []
+        for i in range(0, len(ids), 50):
+            scores += await self._pages("/v3/scores", traceId=",".join(ids[i : i + 50]), limit=100)
+        return {"traceIds": ids, "observations": observations, "scores": scores}
 
     async def delete(self, s: Subject) -> Doc:
         ids = await self._trace_ids(s)
-        for i in range(0, len(ids), 100):
+        for i in range(0, len(ids), 1000):
             await call(
                 self.http,
                 self.name,
                 "DELETE",
                 f"{self.base}/traces",
-                json={"traceIds": ids[i : i + 100]},
+                json={"traceIds": ids[i : i + 1000]},
                 auth=self.auth,
             )
+        # Langfuse deletes observations and scores with the trace, usually within 15 minutes.
         return outcome("done", "traces with their observations and scores", traces=len(ids))
 
 
 class ChatwootContacts:
-    """Chatwoot application API (`api_access_token` of an administrator: agents and bots may not
-    delete contacts). The widget identifies a signed-in user with identifier = user id."""
+    """Chatwoot application API (`api_access_token` of an administrator: agents and agent bots
+    cannot delete contacts). The widget identifies a signed-in user with identifier = user id."""
 
     name = "chatwoot"
     subjects = frozenset({"user"})
@@ -309,18 +332,15 @@ class ChatwootContacts:
 
     async def _contacts(self, s: Subject) -> list[Doc]:
         found = await self._get("/contacts/search", q=s.id)
-        # q also matches names, emails and phone numbers: keep exact identifier matches only.
+        # q is a substring match on name, email, phone and identifier: keep exact matches only.
         return [c for c in objs(obj(found).get("payload")) if c.get("identifier") == s.id]
-
-    async def _conversations(self, contact_id: int) -> list[Doc]:
-        found = await self._get(f"/contacts/{contact_id}/conversations")
-        return objs(obj(found).get("payload"))
 
     async def export(self, s: Subject) -> Doc:
         contacts: list[Doc] = []
         for c in await self._contacts(s):
             conversations: list[Doc] = []
-            for conv in await self._conversations(c["id"]):
+            found = await self._get(f"/contacts/{c['id']}/conversations")
+            for conv in objs(obj(found).get("payload")):
                 messages = await self._get(f"/conversations/{conv['id']}/messages")
                 conversations.append({**conv, "messages": objs(obj(messages).get("payload"))})
             contacts.append({**c, "conversations": conversations})
@@ -328,45 +348,36 @@ class ChatwootContacts:
 
     async def delete(self, s: Subject) -> Doc:
         contacts = await self._contacts(s)
-        conversations = 0
         for c in contacts:
-            # Conversations first: they hold the messages and are not always removed with the
-            # contact in older Chatwoot versions.
-            for conv in await self._conversations(c["id"]):
-                await call(
-                    self.http,
-                    self.name,
-                    "DELETE",
-                    f"{self.base}/conversations/{conv['id']}",
-                    headers=self.headers,
-                )
-                conversations += 1
+            # Conversations and messages go with the contact (destroy_async). 422 = the contact
+            # is online right now: retried later.
             await call(
                 self.http,
                 self.name,
                 "DELETE",
                 f"{self.base}/contacts/{c['id']}",
+                retry=(422,),
                 headers=self.headers,
             )
-        return outcome("done", "", contacts=len(contacts), conversations=conversations)
+        return outcome("done", "contacts with their conversations", contacts=len(contacts))
 
 
 class Ga4UserDeletion:
-    """Google Analytics User Deletion API for a GA4 property, by the client id of the browser the
-    deletion was requested from (the web sends no user id to GA4). Service account with the
-    `analytics.user.deletion` scope, added to the property."""
+    """GA4 user deletion (Admin API properties.submitUserDeletion) by the client id of the
+    browser the deletion was requested from: the web sends no user id to GA4. Service account
+    with access to the property; OAuth scope analytics.edit."""
 
     name = "ga4"
     subjects = frozenset({"user"})
-    SCOPE = "https://www.googleapis.com/auth/analytics.user.deletion"
-    URL = "https://www.googleapis.com/analytics/v3/userDeletion/userDeletionRequests:upsert"
+    SCOPE = "https://www.googleapis.com/auth/analytics.edit"
+    URL = "https://analyticsadmin.googleapis.com/v1alpha/properties/{}:submitUserDeletion"
 
     def __init__(self, property_id: str, service_account: Doc, http: httpx2.AsyncClient) -> None:
         self.property_id, self.sa, self.http = property_id, service_account, http
 
     async def _token(self) -> str:
-        """OAuth 2.0 JWT bearer grant, signed RS256 with the service account key (stdlib + the
-        `cryptography` package we already use, instead of google-auth)."""
+        """OAuth 2.0 JWT bearer grant (RFC 7523), signed RS256 with the service account key using
+        the `cryptography` package we already depend on, instead of adding google-auth."""
         now = int(time.time())
         token_uri = str(self.sa.get("token_uri", "https://oauth2.googleapis.com/token"))
 
@@ -384,9 +395,7 @@ class Ga4UserDeletion:
         key = serialization.load_pem_private_key(str(self.sa["private_key"]).encode(), None)
         if not isinstance(key, rsa.RSAPrivateKey):
             raise ApplicationError("GA4 service account key is not RSA", non_retryable=True)
-        sig = urlsafe_b64encode(key.sign(unsigned, padding.PKCS1v15(), hashes.SHA256())).rstrip(
-            b"="
-        )
+        sig = urlsafe_b64encode(key.sign(unsigned, padding.PKCS1v15(), hashes.SHA256()))
         res = await call(
             self.http,
             self.name,
@@ -394,30 +403,34 @@ class Ga4UserDeletion:
             token_uri,
             data={
                 "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                "assertion": (unsigned + b"." + sig).decode(),
+                "assertion": (unsigned + b"." + sig.rstrip(b"=")).decode(),
             },
         )
         return str(obj(res)["access_token"])
 
     async def export(self, s: Subject) -> Doc:
-        raise NotImplementedError  # GA4 has no per-user export API (see Exportable below)
+        raise NotImplementedError  # listed in NOT_EXPORTABLE, never called
 
     async def delete(self, s: Subject) -> Doc:
         if not s.ga_client_id:
-            return outcome("skipped", "no GA4 client id: the request came without a _ga cookie")
-        body = {
-            "kind": "analytics#userDeletionRequest",
-            "id": {"type": "CLIENT_ID", "userId": s.ga_client_id},
-            "propertyId": self.property_id,
-        }
+            return outcome(
+                "skipped", "no GA4 client id: the request came from a browser without one"
+            )
         headers = {"authorization": f"Bearer {await self._token()}"}
-        await call(self.http, self.name, "POST", self.URL, json=body, headers=headers)
-        return outcome("done", "GA4 deletes the client id's data within its processing window")
+        await call(
+            self.http,
+            self.name,
+            "POST",
+            self.URL.format(self.property_id),
+            json={"clientId": s.ga_client_id},
+            headers=headers,
+        )
+        return outcome("done", "GA4 deletes the client id's data in its own processing window")
 
 
-# Tools with no export API: their data cannot be included in the ZIP (listed in its README).
+# Tools with no per-person export API: listed in the ZIP's README instead.
 NOT_EXPORTABLE = {
-    "ga4": "GA4 has no API that returns one user's raw events (the Data API is aggregate only)",
+    "ga4": "GA4 has no API that returns one user's events (raw events only via a BigQuery export)",
 }
 
 
@@ -630,7 +643,9 @@ class PrivacyActivities:
         for a in db["attachments"]:
             key = f"{a['org_id']}/{a['project_id']}/{a['id']}"
             try:
-                files[f"files/attachments/{a['id']}-{a['filename']}"] = await self.files.get(key)
+                # User-chosen names: no path parts in the ZIP (no "../" on extraction).
+                name = re.sub(r"[^\w. -]", "_", str(a["filename"])).lstrip(".")
+                files[f"files/attachments/{a['id']}-{name}"] = await self.files.get(key)
                 stored += 1
             except httpx2.HTTPStatusError as err:
                 if err.response.status_code != 404:  # never uploaded (abandoned upload)
@@ -690,7 +705,24 @@ class PrivacyActivities:
 
     @activity.defn(name="privacy_begin_deletion")
     async def begin_deletion(self, req: PrivacyRequest) -> bool:
-        """False when the request was cancelled in its grace period (the row decides)."""
+        """False when the request was cancelled in its grace period (the row decides), or when
+        the user became the only owner of an organization meanwhile (then it fails, with the
+        reason in the report: the organization must be handed over or deleted first)."""
+        if req.subjectType == "user" and await self.pool.fetchval(
+            "select count(*) from member m where m.user_id = $1 and m.role ~ $2 and not exists"
+            " (select 1 from member o where o.organization_id = m.organization_id"
+            " and o.user_id <> $1 and o.role ~ $2)",
+            req.subjectId,
+            OWNER_ROLE,
+        ):
+            report = {"ownership": outcome("failed", "only owner of an organization")}
+            await self.pool.execute(
+                "update privacy_requests set status = 'failed', completed_at = now(), report = $2"
+                " where id = $1 and status = 'scheduled'",
+                req.requestId,
+                json.dumps(report),
+            )
+            return False
         status = await self.pool.fetchval(
             "update privacy_requests set status = 'running'"
             " where id = $1 and status in ('scheduled', 'running') returning status",

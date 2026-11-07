@@ -250,8 +250,8 @@ class DataDeletionWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=LONG,
         )
-        if not started:
-            return {"status": "cancelled"}
+        if not started:  # cancelled, or refused (reason in the request's report)
+            return {"status": "not started"}
         report: dict[str, Any] = {}
         for name in USER_STEPS if req.subjectType == "user" else ORG_STEPS:
             try:

@@ -35,6 +35,14 @@ const Request = z.object({
   report: z.unknown(),
 });
 const Id = z.object({ id: z.uuid() });
+const DeletionInput = z
+  .object({
+    gaClientId: z
+      .string()
+      .regex(/^[\w.-]{1,64}$/)
+      .optional(),
+  })
+  .optional();
 const ErrorBody = z.object({ error: z.string() });
 export const NOT_FRESH = 'sign in again to confirm this request';
 
@@ -71,7 +79,10 @@ async function requireFresh(req: FastifyRequest) {
   if (age > REAUTH_MAX_AGE_SECONDS * 1000) throw httpError(403, NOT_FRESH);
 }
 
-/** GA4 client id from the `_ga` cookie (`GA1.1.<random>.<timestamp>`), for GA4 User Deletion. */
+/**
+ * Fallback GA4 client id from the `_ga` cookie (`GA1.1.<random>.<timestamp>`, a widespread but
+ * undocumented format); the web sends gtag's documented `client_id` in the body when it has one.
+ */
 export const gaClientId = (cookie: string | undefined) =>
   cookie?.match(/(?:^|;\s*)_ga=GA\d\.\d+\.(\d+\.\d+)/)?.[1];
 
@@ -189,7 +200,11 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
       {
         preHandler,
         config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
-        schema: { tags, response: { 202: Request, 403: ErrorBody, 409: ErrorBody } },
+        schema: {
+          tags,
+          body: DeletionInput,
+          response: { 202: Request, 403: ErrorBody, 409: ErrorBody },
+        },
       },
       async (req, reply) => {
         await requireFresh(req);
@@ -230,7 +245,8 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
           if (!r) throw httpError(409, 'a deletion is already scheduled');
           return r;
         });
-        const ga = subject === 'user' ? gaClientId(req.headers.cookie) : undefined;
+        const ga =
+          subject === 'user' ? (req.body?.gaClientId ?? gaClientId(req.headers.cookie)) : undefined;
         await start(req, row, ga ? { gaClientId: ga } : {});
         return reply.code(202).send(dto(row));
       },

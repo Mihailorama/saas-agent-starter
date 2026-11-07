@@ -127,6 +127,7 @@ LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
 # needs the administrator role; the triage bot's CHATWOOT_API_TOKEN cannot).
 CHATWOOT_ACCOUNT_ID = os.environ.get("CHATWOOT_ACCOUNT_ID", "")
 CHATWOOT_ADMIN_API_TOKEN = os.environ.get("CHATWOOT_ADMIN_API_TOKEN", "")
-# GA4 User Deletion: property id (digits) and the service account key JSON (one line).
+# GA4 user deletion (Admin API submitUserDeletion, scope analytics.edit): property id (digits)
+# and the key JSON (one line) of a service account with Editor access to the property.
 GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID", "")
 GA4_SERVICE_ACCOUNT_JSON = os.environ.get("GA4_SERVICE_ACCOUNT_JSON", "")

@@ -45,12 +45,11 @@ def body(req: httpx2.Request) -> Any:
 async def test_posthog_export_and_delete() -> None:
     def handle(req: httpx2.Request) -> httpx2.Response:
         if req.url.path == "/api/projects/9/persons/":
-            return httpx2.Response(
-                200, json={"results": [{"id": "uuid-1", "distinct_ids": ["user-1"]}]}
-            )
+            persons = [{"id": "uuid-1", "distinct_ids": ["user-1"]}]
+            return httpx2.Response(200, json={"results": persons})
         if req.url.path == "/api/projects/9/query/":
             return httpx2.Response(200, json={"columns": ["event"], "results": [["$pageview"]]})
-        return httpx2.Response(204)
+        return httpx2.Response(202, json={"persons_queued_for_deletion": ["uuid-1"]})
 
     http, seen = client(handle)
     ph = PostHogPersons("https://eu.posthog.com/", "9", "phx_key", http)
@@ -66,35 +65,50 @@ async def test_posthog_export_and_delete() -> None:
     seen.clear()
     result = await ph.delete(USER)
     assert result["status"] == "done" and result["counts"] == {"persons": 1}
-    assert seen[-1].method == "DELETE"
-    assert seen[-1].url.path == "/api/projects/9/persons/uuid-1/"
-    assert seen[-1].url.params["delete_events"] == "true"
+    assert [(r.method, r.url.path) for r in seen] == [
+        ("POST", "/api/projects/9/persons/bulk_delete/")
+    ]
+    assert body(seen[0]) == {
+        "distinct_ids": ["user-1"],
+        "delete_events": True,
+        "delete_recordings": True,
+    }
 
 
-async def test_posthog_without_person_deletes_nothing() -> None:
-    http, seen = client(lambda _: httpx2.Response(200, json={"results": []}))
-    result = await PostHogPersons("https://eu.posthog.com", "9", "k", http).delete(USER)
-    assert result["counts"] == {"persons": 0}
-    assert [r.method for r in seen] == ["GET"]
+async def test_posthog_deletion_errors_fail_the_step() -> None:
+    http, _ = client(lambda _: httpx2.Response(202, json={"deletion_errors": [{"x": 1}]}))
+    with pytest.raises(ToolError, match="posthog deletion_errors"):
+        await PostHogPersons("https://eu.posthog.com", "9", "k", http).delete(USER)
 
 
 async def test_langfuse_traces_by_ai_call_and_user_id() -> None:
     def handle(req: httpx2.Request) -> httpx2.Response:
-        if req.url.path == "/api/public/traces" and req.method == "GET":
-            return httpx2.Response(200, json={"data": [{"id": "t3"}], "meta": {"totalPages": 1}})
-        if req.url.path == "/api/public/traces/t2":
-            return httpx2.Response(404, json={"message": "not found"})
-        if req.method == "GET":
-            return httpx2.Response(200, json={"id": req.url.path.rsplit("/", 1)[1]})
+        params = req.url.params
+        if req.url.path == "/api/public/v2/observations" and "userId" in params:
+            # Two pages: the cursor is followed until it is absent.
+            if "cursor" not in params:
+                return httpx2.Response(
+                    200, json={"data": [{"traceId": "t3"}], "meta": {"cursor": "c"}}
+                )
+            return httpx2.Response(200, json={"data": [{"traceId": "t1"}], "meta": {}})
+        if req.url.path == "/api/public/v2/observations":
+            return httpx2.Response(
+                200, json={"data": [{"id": f"o-{params['traceId']}"}], "meta": {}}
+            )
+        if req.url.path == "/api/public/v3/scores":
+            return httpx2.Response(200, json={"data": [{"name": "user_feedback"}], "meta": {}})
         return httpx2.Response(200, json={"message": "ok"})
 
     http, seen = client(handle)
     lf = Langfuse("https://cloud.langfuse.com", "pk-lf", "sk-lf", http)
     out = await lf.export(USER)
-    assert [t["id"] for t in out["traces"]] == ["t1", "t3"]  # t2 never reached Langfuse
+    assert out["traceIds"] == ["t1", "t2", "t3"]
+    assert [o["id"] for o in out["observations"]] == ["o-t1", "o-t2", "o-t3"]
+    assert out["scores"] == [{"name": "user_feedback"}]
     expected = "Basic " + base64.b64encode(b"pk-lf:sk-lf").decode()
     assert seen[0].headers["authorization"] == expected
     assert seen[0].url.params["userId"] == "user-1"
+    assert seen[-1].url.params["traceId"] == "t1,t2,t3"
 
     seen.clear()
     result = await lf.delete(USER)
@@ -131,9 +145,22 @@ async def test_chatwoot_matches_identifier_exactly_and_deletes() -> None:
 
     seen.clear()
     result = await cw.delete(USER)
-    assert result["counts"] == {"contacts": 1, "conversations": 1}
+    assert result["counts"] == {"contacts": 1}
+    # Conversations and messages are deleted by Chatwoot with the contact.
     deletes = [r.url.path for r in seen if r.method == "DELETE"]
-    assert deletes == ["/api/v1/accounts/3/conversations/70", "/api/v1/accounts/3/contacts/7"]
+    assert deletes == ["/api/v1/accounts/3/contacts/7"]
+
+
+async def test_chatwoot_online_contact_is_retried_later() -> None:
+    def handle(req: httpx2.Request) -> httpx2.Response:
+        if req.method == "DELETE":
+            return httpx2.Response(422, json={"message": "online"})
+        return httpx2.Response(200, json={"payload": [{"id": 7, "identifier": "user-1"}]})
+
+    http, _ = client(handle)
+    with pytest.raises(ToolError) as err:
+        await ChatwootContacts("https://desk.example.com", "3", "t", http).delete(USER)
+    assert err.value.message == "chatwoot HTTP 422" and not err.value.non_retryable
 
 
 async def test_ga4_user_deletion_with_service_account() -> None:
@@ -148,7 +175,7 @@ async def test_ga4_user_deletion_with_service_account() -> None:
     def handle(req: httpx2.Request) -> httpx2.Response:
         if req.url.host == "oauth2.googleapis.com":
             return httpx2.Response(200, json={"access_token": "ya29.test", "expires_in": 3600})
-        return httpx2.Response(200, json={"kind": "analytics#userDeletionRequest"})
+        return httpx2.Response(200, json={"deletionRequestTime": "2026-11-07T00:00:00Z"})
 
     http, seen = client(handle)
     result = await Ga4UserDeletion("123456", sa, http).delete(USER)
@@ -160,13 +187,11 @@ async def test_ga4_user_deletion_with_service_account() -> None:
     key.public_key().verify(
         unb64(sig), f"{header}.{claims}".encode(), padding.PKCS1v15(), hashes.SHA256()
     )
-    upsert = seen[1]
-    assert upsert.headers["authorization"] == "Bearer ya29.test"
-    assert body(upsert) == {
-        "kind": "analytics#userDeletionRequest",
-        "id": {"type": "CLIENT_ID", "userId": "123.456"},
-        "propertyId": "123456",
-    }
+    deletion = seen[1]
+    assert deletion.url.host == "analyticsadmin.googleapis.com"
+    assert deletion.url.path == "/v1alpha/properties/123456:submitUserDeletion"
+    assert deletion.headers["authorization"] == "Bearer ya29.test"
+    assert body(deletion) == {"clientId": "123.456"}
 
 
 async def test_ga4_without_client_id_is_skipped() -> None:
