@@ -101,7 +101,7 @@ export const startCrmSync = (e: CrmEvent) =>
 
 /** Contract with services/worker-py (worker/mail.py): one rendered email to one recipient. */
 export type SendEmail = {
-  kind: 'verify-email' | 'reset-password' | 'invitation';
+  kind: 'verify-email' | 'reset-password' | 'invitation' | 'data-export-ready';
   to: string;
   subject: string;
   html: string;
@@ -170,4 +170,38 @@ export async function startWebhookEvent(event: WebhookEvent, workflowId: string)
   } catch (err) {
     if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
   }
+}
+
+/**
+ * Contract with services/worker-py (worker/privacy.py): one data-subject request (docs/privacy.md).
+ * Ids only; the worker reads everything else from the DB and the tools.
+ */
+export type PrivacyRequest = {
+  requestId: string;
+  kind: 'export' | 'deletion';
+  subjectType: 'user' | 'org';
+  subjectId: string;
+  /** ISO time: a deletion waits until then (grace period) and can be cancelled meanwhile. */
+  executeAfter: string;
+  /** Export: the "ready" mail, sent by the worker once the ZIP is stored. */
+  email?: SendEmail;
+  /** User deletion: GA4 client id from the requesting browser's `_ga` cookie (GA4 User Deletion). */
+  gaClientId?: string;
+};
+export const privacyWorkflowId = (r: Pick<PrivacyRequest, 'kind' | 'requestId'>) =>
+  `privacy-${r.kind}-${r.requestId}`;
+
+/** One workflow per request id; the request row is the idempotency key. */
+export const startPrivacyRequest = (r: PrivacyRequest) =>
+  startOnce(
+    r.kind === 'export' ? 'DataExportWorkflow' : 'DataDeletionWorkflow',
+    privacyWorkflowId(r),
+    r,
+  );
+
+/** Wakes a deletion in its grace period; it re-reads the row (already `cancelled`) and stops. */
+export async function signalPrivacyCancel(requestId: string) {
+  await (await temporal()).workflow
+    .getHandle(privacyWorkflowId({ kind: 'deletion', requestId }))
+    .signal('cancel');
 }

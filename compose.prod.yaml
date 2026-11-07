@@ -104,6 +104,9 @@ services:
       - BILLING_CONTOUR
       - STRIPE_SECRET_KEY
       - STRIPE_WEBHOOK_SECRET
+      # data-subject rights (docs/privacy.md)
+      - PRIVACY_DELETION_GRACE_DAYS
+      - PRIVACY_EXPORT_INTERVAL_HOURS
     healthcheck: # readiness: database + Redis reachable
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null"]
       interval: 5s
@@ -127,6 +130,7 @@ services:
       - DATABASE_URL
       - S3_ENDPOINT
       - S3_REGION
+      - S3_BUCKET
       - S3_ACCESS_KEY_ID
       - S3_SECRET_ACCESS_KEY
       - OTEL_EXPORTER_OTLP_ENDPOINT
@@ -178,6 +182,19 @@ services:
       - POSTHOG_HOST
       # billing: plans and LLM spend limits (default: config/plans.json in the image)
       - PLANS_FILE
+      # data-subject rights (docs/privacy.md): retention and per-person export/deletion in tools
+      - PRIVACY_EXPORT_TTL_DAYS
+      - PRIVACY_ORG_RECORDS_DAYS
+      - POSTHOG_APP_HOST
+      - POSTHOG_PROJECT_ID
+      - POSTHOG_PERSONAL_API_KEY
+      - LANGFUSE_HOST
+      - LANGFUSE_PUBLIC_KEY
+      - LANGFUSE_SECRET_KEY
+      - CHATWOOT_ACCOUNT_ID
+      - CHATWOOT_ADMIN_API_TOKEN
+      - GA4_PROPERTY_ID
+      - GA4_SERVICE_ACCOUNT_JSON
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }

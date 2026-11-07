@@ -1,4 +1,4 @@
-"""Minimal S3 client: PUT/GET object and create bucket, signed with AWS SigV4.
+"""Minimal S3 client: PUT/GET/DELETE/list objects and create bucket, signed with AWS SigV4.
 
 Works with AWS S3 and S3-compatible stores (SeaweedFS, MinIO, R2). boto3 is not used because
 its dependency tree fails the license gate (docs/adr/0005-license-policy.md).
@@ -7,8 +7,9 @@ ponytail: whole objects in memory, no multipart; fine for the small JSON documen
 
 import hashlib
 import hmac
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx2
 
@@ -38,6 +39,28 @@ class S3:
         res.raise_for_status()
         return res.content
 
+    async def delete(self, key: str) -> None:
+        """Idempotent: deleting a missing key succeeds (S3 answers 204 either way)."""
+        res = await self._request("DELETE", key)
+        if res.status_code != 404:
+            res.raise_for_status()
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        """Every key under `prefix` (ListObjectsV2, paged)."""
+        keys: list[str] = []
+        token = ""
+        while True:
+            query = {"list-type": "2", "prefix": prefix} | (
+                {"continuation-token": token} if token else {}
+            )
+            res = await self._request("GET", "", query=query)
+            res.raise_for_status()
+            root = ET.fromstring(res.content)  # noqa: S314 - our own S3 endpoint, not user input
+            keys += [k for k in (c.findtext("{*}Key") for c in root.iterfind("{*}Contents")) if k]
+            token = root.findtext("{*}NextContinuationToken") or ""
+            if root.findtext("{*}IsTruncated") != "true" or not token:
+                return keys
+
     async def ensure_bucket(self) -> None:
         if (await self._request("HEAD", "")).status_code == 404:
             res = await self._request("PUT", "")
@@ -45,9 +68,15 @@ class S3:
                 res.raise_for_status()
 
     async def _request(
-        self, method: str, key: str, body: bytes = b"", extra: dict[str, str] | None = None
+        self,
+        method: str,
+        key: str,
+        body: bytes = b"",
+        extra: dict[str, str] | None = None,
+        query: dict[str, str] | None = None,
     ) -> httpx2.Response:
         path = quote(f"/{self.bucket}/{key}" if key else f"/{self.bucket}", safe="/-_.~")
+        qs = urlencode(sorted((query or {}).items()), quote_via=quote, safe="-_.~")
         now = datetime.now(UTC)
         amz_date, day = now.strftime("%Y%m%dT%H%M%SZ"), now.strftime("%Y%m%d")
         payload_hash = hashlib.sha256(body).hexdigest()
@@ -58,7 +87,7 @@ class S3:
         }
         names = ";".join(signed)
         canonical = "\n".join(
-            [method, path, "", *(f"{k}:{v}" for k, v in signed.items()), "", names, payload_hash]
+            [method, path, qs, *(f"{k}:{v}" for k, v in signed.items()), "", names, payload_hash]
         )
         scope = f"{day}/{self.region}/s3/aws4_request"
         to_sign = "\n".join(
@@ -74,4 +103,5 @@ class S3:
             "authorization": f"AWS4-HMAC-SHA256 Credential={self._access_key}/{scope}, "
             f"SignedHeaders={names}, Signature={signature}",
         }
-        return await self._http.request(method, self.endpoint + path, content=body, headers=headers)
+        url = self.endpoint + path + (f"?{qs}" if qs else "")
+        return await self._http.request(method, url, content=body, headers=headers)
