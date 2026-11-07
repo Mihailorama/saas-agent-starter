@@ -59,6 +59,33 @@ export async function ok<T>(
   return data as T;
 }
 
+/**
+ * JSON call to an endpoint hidden from the OpenAPI document (operator console, `schema.hide`),
+ * which therefore has no generated types. Everything else goes through `client`.
+ */
+export async function api<T>(path: string, init?: { method?: string; json?: unknown }): Promise<T> {
+  const method = init?.method ?? 'GET';
+  const route = path.split('?')[0]!.replace(/[0-9a-f-]{36}/gi, '{id}');
+  const res = await fetch(path, {
+    method,
+    credentials: 'include',
+    ...(init?.json !== undefined && {
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(init.json),
+    }),
+  }).catch((err) => {
+    failed(method, route, 0, null);
+    throw err;
+  });
+  lastTrace = res.headers.get('x-trace-id') ?? lastTrace;
+  if (!res.ok) {
+    failed(method, route, res.status, res.headers.get('x-trace-id'));
+    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    throw new Error(body.error ?? body.message ?? `Request failed (${res.status})`);
+  }
+  return (res.status === 204 ? undefined : await res.json()) as T;
+}
+
 export const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 

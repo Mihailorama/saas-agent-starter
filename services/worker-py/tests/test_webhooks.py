@@ -424,6 +424,23 @@ async def test_consecutive_failures_disable_the_endpoint(
     assert state["disabled_audits"] == 1
 
 
+async def test_suspended_org_gets_no_deliveries(
+    client: Client, pool: asyncpg.Pool, receiver: Receiver
+) -> None:
+    """Queued before the suspension, checked at delivery: nothing is sent, the endpoint keeps
+    its failure count (the receiver did nothing wrong)."""
+    org_id, event_id, delivery_id = await setup_delivery(pool, receiver.url)
+    await pool.execute("update organization set suspended_at = now() where id = $1", org_id)
+    assert await run(client, org_id, event_id, delivery_id) == ["failed"]
+    rows = await attempts(pool, org_id, delivery_id)
+    assert [(r["status_code"], r["error"]) for r in rows] == [(None, "org_suspended")]
+    assert receiver.received == []
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+        failures = await conn.fetchval("select max(consecutive_failures) from webhook_endpoints")
+    assert failures == 0
+
+
 async def test_retention_deletes_old_events_and_attempts(pool: asyncpg.Pool) -> None:
     org_id = await new_org(pool)
     endpoint_id = await new_endpoint(pool, org_id, "https://hooks.example.com/in")

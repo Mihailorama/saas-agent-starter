@@ -15,6 +15,8 @@ export interface BillingProvider {
   cancel(sub: Subscription): Promise<void>;
   /** Verifies a webhook and maps it to events; throws WebhookRejected if it is not authentic. */
   webhook(req: WebhookRequest): Promise<BillingEvent[]>;
+  /** The subscription in the provider's own dashboard, for operators (docs/admin.md). */
+  dashboardUrl(sub: Subscription): string | null;
 }
 
 export type CheckoutInput = {

@@ -39,7 +39,8 @@ more than an org role could. The UI only offers scopes the creator's role covers
 Only routes declared with `access('<scope>')` (`apps/api/src/tenant.ts`) accept keys. They are
 marked in `/api/openapi.json` with the `apiKey` security scheme and "API key scope: ..." in the
 description. Everything else (key management, auth) is session-only and answers 403 to a key.
-Errors: 401 `invalid API key` (unknown, revoked or expired), 403 `API key lacks scope ...`.
+Errors: 401 `invalid API key` (unknown, revoked or expired), 403 `API key lacks scope ...`,
+403 `organization suspended` (an operator suspended the organization, docs/admin.md).
 
 Adding a route to the public API: use `...access('<resource>:<action>')` instead of
 `requireRole`, add the scope to `SCOPES` in `tenant.ts` with the role it corresponds to, and add

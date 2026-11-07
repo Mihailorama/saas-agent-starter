@@ -19,6 +19,8 @@ import { z } from 'zod';
 import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
+import { READ_ONLY } from './operator-guard.ts';
+import { adminRoutes, impersonationRoutes } from './routes/admin.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
 import { aiProviderRoutes } from './routes/ai-providers.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
@@ -63,6 +65,7 @@ export async function buildApp() {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorateRequest('tenant');
+  app.decorateRequest('operator');
 
   // Redis store: limits hold across API replicas.
   const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 1 });
@@ -128,6 +131,17 @@ export async function buildApp() {
     }
   });
 
+  // "View as user" is read-only on every route, also ones added later (docs/admin.md): one guard
+  // for all mutating requests with a session. Better Auth's endpoints have their own (/api/auth/*,
+  // operator-guard.ts), and leaving the view must work.
+  app.addHook('onRequest', async (req, reply) => {
+    const url = req.routeOptions.url ?? '';
+    if (!UNSAFE.has(req.method) || !req.headers.cookie || bearerToken(req)) return;
+    if (url.startsWith('/api/auth/') || url === '/api/impersonation/stop') return;
+    const s = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (s?.session.impersonatedBy) return reply.code(403).send({ error: READ_ONLY });
+  });
+
   // Lets the web attach the trace id to analytics error events (docs/product-analytics.md).
   app.addHook('onSend', async (_req, reply) => {
     const ctx = trace.getActiveSpan()?.spanContext();
@@ -191,6 +205,10 @@ export async function buildApp() {
   app.all('/api/auth/api-key/*', { schema: { hide: true } }, async (_req, reply) =>
     reply.code(404).send({ error: 'not found' }),
   );
+  // Operator actions go through /api/admin (reason, audit log), not the admin plugin's endpoints.
+  app.all('/api/auth/admin/*', { schema: { hide: true } }, async (_req, reply) =>
+    reply.code(404).send({ error: 'not found' }),
+  );
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
   // Second factors and passkey sign-in (the twoFactor plugin also locks the account itself).
@@ -210,6 +228,8 @@ export async function buildApp() {
   await app.register(securityRoutes, { prefix: '/api/security' });
   await app.register(supportHookRoutes, { prefix: '/api/hooks' });
   await app.register(supportRoutes, { prefix: '/api/support' });
+  await app.register(adminRoutes, { prefix: '/api/admin' });
+  await app.register(impersonationRoutes, { prefix: '/api/impersonation' });
   await app.register(privacyRoutes, { prefix: '/api/privacy' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.

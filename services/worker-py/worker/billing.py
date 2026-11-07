@@ -1,6 +1,7 @@
 """Billing in the worker (docs/billing.md, docs/adr/0019-billing.md).
 
 - `Plans`: config/plans.json, the same file the API reads (apps/api/src/billing/plans.ts).
+- `ensure_org_active`: refuses work of an org an operator suspended (activities, the gateway).
 - `check_llm_budget`: the LLM spend limit, called by `Gateway.call_llm` before a priced call.
 - `check_llm_usage`: the calls/tokens limit, called before a call of an unmetered model (CLI
   subscriptions, self-hosted), which has no cost to limit.
@@ -153,6 +154,24 @@ _SUBSCRIPTION = (
 async def byo_allowed(conn: PoolConnectionProxy, plans: Plans) -> bool:
     """Whether the org's plan in force includes BYO providers (`conn` scoped to the org)."""
     return plans.effective(await conn.fetchrow(_SUBSCRIPTION), datetime.now(UTC))[1].byo_llm
+
+
+class OrgSuspended(ApplicationError):
+    """The organization is suspended by an operator (docs/admin.md): its work stops."""
+
+    def __init__(self, org_id: str) -> None:
+        super().__init__(
+            f"organization {org_id} is suspended", type="OrgSuspended", non_retryable=True
+        )
+
+
+async def ensure_org_active(conn: "asyncpg.Connection | PoolConnectionProxy", org_id: str) -> None:
+    """Raises OrgSuspended when an operator suspended the org. Checked inside each activity (not
+    only when a workflow starts), so already-queued work stops too. `organization` has no RLS."""
+    if await conn.fetchval(
+        "select 1 from organization where id = $1 and suspended_at is not null", org_id
+    ):
+        raise OrgSuspended(org_id)
 
 
 async def llm_budget(

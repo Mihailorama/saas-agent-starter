@@ -23,7 +23,13 @@ from opentelemetry import metrics, trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
-from worker.billing import Plans, byo_allowed, check_llm_budget, check_llm_usage
+from worker.billing import (
+    Plans,
+    byo_allowed,
+    check_llm_budget,
+    check_llm_usage,
+    ensure_org_active,
+)
 from worker.flags import is_enabled
 from worker.posthog import PostHogAi
 from worker.providers import (
@@ -182,8 +188,12 @@ class Gateway:
         this contour or has no price and is not `unmetered`, SpendLimitExceeded /
         UsageLimitExceeded (non-retryable) at the plan's limit. A rate-limited call (429) is
         retried once per configured `fallback`; every attempt gets its own ai_calls row.
-        Provider errors are logged as status=error and re-raised.
+        Provider errors are logged as status=error and re-raised. OrgSuspended (non-retryable)
+        for an organization an operator suspended.
         """
+        # A suspended org (docs/admin.md) gets no call, its own provider included.
+        async with self.pool.acquire() as conn:
+            await ensure_org_active(conn, org_id)
         args = (purpose, messages, org_id, actor_id, prompt_template_id, prompt_template_version)
         byo = self.byo is not None and await is_enabled(
             "byo-llm-providers", user_id=actor_id or org_id, org_id=org_id

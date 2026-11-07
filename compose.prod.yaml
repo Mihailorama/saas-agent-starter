@@ -103,6 +103,10 @@ services:
       - BILLING_CONTOUR
       - STRIPE_SECRET_KEY
       - STRIPE_WEBHOOK_SECRET
+      # operator console (docs/admin.md); empty OPERATOR_EMAILS = no operators
+      - OPERATOR_EMAILS
+      - OPERATOR_SESSION_MAX_AGE_MINUTES
+      - OPERATOR_IMPERSONATION_MINUTES
       # data-subject rights (docs/privacy.md)
       - PRIVACY_DELETION_GRACE_DAYS
       - PRIVACY_EXPORT_INTERVAL_HOURS
