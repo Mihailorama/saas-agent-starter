@@ -1,7 +1,7 @@
 ---
 // Every page's <head> SEO: title, description, canonical, hreflang, Open Graph, Twitter card,
 // schema.org JSON-LD. The checklist it implements: docs/marketing.md.
-import { abs, site } from '../site.ts';
+import { abs, path, site } from '../site.ts';
 
 interface Props {
   title: string;
@@ -18,10 +18,11 @@ interface Props {
 
 const { title, description, type = 'website', jsonLd = [], alternates = [], noindex } =
   Astro.props;
-const canonical = abs(Astro.url.pathname);
+// Astro.url.pathname already carries the base.
+const canonical = new URL(Astro.url.pathname, site.url).href;
 const lang = Astro.currentLocale ?? 'en';
-const fullTitle = Astro.url.pathname === '/' ? `${site.name}: ${site.tagline}` : `${title} | ${site.name}`;
-const hreflang = [{ lang, path: Astro.url.pathname }, ...alternates];
+const fullTitle = Astro.url.pathname === path('/') ? `${site.name}: ${site.tagline}` : `${title} | ${site.name}`;
+const hreflang = [{ lang, href: canonical }, ...alternates.map((a) => ({ lang: a.lang, href: abs(a.path) }))];
 const organization = {
   '@type': 'Organization',
   '@id': abs('/#organization'),
@@ -47,10 +48,10 @@ const ld = JSON.stringify(graph).replace(/</g, '\\u003c');
 <meta name="description" content={description} />
 <link rel="canonical" href={canonical} />
 {noindex && <meta name="robots" content="noindex" />}
-{hreflang.map((a) => <link rel="alternate" hreflang={a.lang} href={abs(a.path)} />)}
+{hreflang.map((a) => <link rel="alternate" hreflang={a.lang} href={a.href} />)}
 <link rel="alternate" hreflang="x-default" href={canonical} />
 <link rel="alternate" type="application/rss+xml" title={`${site.name} blog`} href={abs('/rss.xml')} />
-<link rel="sitemap" href="/sitemap-index.xml" />
+<link rel="sitemap" href={path('/sitemap-index.xml')} />
 
 <meta property="og:type" content={type} />
 <meta property="og:site_name" content={site.name} />

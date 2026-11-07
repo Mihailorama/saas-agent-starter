@@ -1,74 +1,300 @@
 ---
+// The starter's own landing page (dogfooding apps/site). Every claim here must hold for the code
+// on main, except the "Also in 1.0" block, which lists open PRs planned for the 1.0.0 release.
 import Faq from '../components/Faq.astro';
 import { faqLd } from '../faq.ts';
 import Base from '../layouts/Base.astro';
-import { posts } from '../posts.ts';
 import { abs, site } from '../site.ts';
 
-const start = new URL('/', site.appUrl).href;
-const features = [
+const file = (p: string) => `${site.repo}/blob/main/${p}`;
+const agentsMd = file('AGENTS.md');
+
+const rails = [
   {
-    title: 'Projects per organization',
-    text: 'Every team gets its own space. Data is isolated per organization in the database itself.',
+    title: 'AGENTS.md is the rulebook',
+    text: 'One file for Claude Code, Codex and humans: architecture map, where code goes, security, AI, analytics and release rules. CLAUDE.md only imports it.',
   },
   {
-    title: 'AI summaries you review',
-    text: 'Drafts are marked as AI-generated until a member confirms or corrects them.',
+    title: 'Recipes instead of guesses',
+    text: 'Step-by-step recipes for a tenant resource, a webhook event, a background workflow, an AI purpose, a prompt version. /add-resource runs the first one in Claude Code.',
   },
   {
-    title: 'An audit trail by default',
-    text: 'Every change and every AI call is logged, so you can answer who did what and when.',
+    title: 'One definition of done',
+    text: 'pnpm check runs Biome, typecheck, TS, Python and Rust tests, the license gate, the key-free eval and a Playwright smoke. Red means not done.',
+  },
+  {
+    title: 'A license gate in CI',
+    text: 'npm, PyPI and crates.io dependencies must be permissive or MPL-2.0. Copyleft and source-available code is refused, and exceptions need a human.',
+  },
+  {
+    title: 'Evals for every prompt',
+    text: 'Each AI purpose has a Promptfoo golden set and a judge prompt. A test fails when a prompted purpose has no eval.',
   },
 ];
+
+const stack = [
+  ['API', 'TypeScript and Fastify, Zod at every boundary, OpenAPI generated from the same schemas.'],
+  ['Web', 'React, Vite, TanStack Router, Query and Table, shadcn/ui components you own.'],
+  ['Data and tenancy', 'Postgres and Drizzle. Row-Level Security isolates organizations even when a query forgets its filter.'],
+  ['Auth', 'Better Auth on your own tables: organizations and roles, 2FA (TOTP), passkeys, organization API keys with scopes.'],
+  ['Workflows', 'Temporal: durable background work with retries and timeouts, typed SDKs for TypeScript and Python.'],
+  ['Worker', 'Python for AI and data work: uv, ruff, strict pyright, pytest.'],
+  ['Hot paths', 'Rust via PyO3 only where measured, each with a pure-Python twin and a parity test.'],
+  ['Observability', 'OpenTelemetry in every service; Grafana, Prometheus, Loki and Jaeger with dashboards and alert rules as files.'],
+  ['Errors', 'The Sentry protocol: Sentry SDKs with GlitchTip or Sentry behind them; only the DSN changes.'],
+  ['Product analytics', 'PostHog Cloud by default, self-hosted Umami where data must stay; a typed event catalog and journeys as code.'],
+  ['Billing', 'Stripe behind a provider interface, plans and entitlements in config, a per-organization LLM spend limit enforced in the AI gateway.'],
+  ['Email', 'React Email templates, delivered by a Temporal activity over any SMTP provider; Mailpit in development.'],
+  ['Webhooks', 'Outbound events signed per Standard Webhooks, retried by Temporal, with delivery attempts and replay.'],
+  ['Flags and releases', 'PostHog feature flags with the catalog in the repo; release-please turns Conventional PR titles into changelogs and tags.'],
+  ['Backups', 'pgBackRest WAL archiving for point-in-time recovery, encrypted copies of the app buckets, a weekly automatic restore check.'],
+  ['Privacy', 'User data export and deletion across the database, object storage and each connected tool, with retention enforced on a schedule.'],
+  ['Service desk', 'Chatwoot CE behind one Help menu; AI triage writes private notes and files or upvotes backlog items.'],
+  ['PII redaction', 'Microsoft Presidio replaces emails, phone numbers, cards, IBANs, IPs and names in triage output and feedback before it leaves.'],
+  ['Marketing site', 'Astro, static: SEO head and JSON-LD on every page, sitemap, RSS, llms.txt, Lighthouse budgets in CI. You are reading it.'],
+  ['Deploy', 'Images by digest, Caddy with automatic TLS, SOPS-encrypted env files, one-command deploy and rollback over SSH.'],
+];
+
+const path = [
+  ['Browser', 'web app, same-origin /api'],
+  ['Fastify', 'requireRole: session, organization, role'],
+  ['withTenant', 'transaction with app.org_id, RLS, audit row'],
+  ['Temporal', 'workflow started after commit'],
+  ['Python worker', 'activity, Rust hot path via PyO3'],
+  ['Postgres', 'result written back under the same RLS scope'],
+];
+
+const ai = [
+  ['One gateway', 'Every LLM call goes through Gateway.call_llm in the worker. The API and the web never call a model.'],
+  ['Explicit models', 'No default model in code or config. A model not listed in config/ai-models.json for the deployment is refused.'],
+  ['Prompts as files', 'One immutable file per prompt version, hashes pinned in prompts/lock.json; a change is a new version with a passing eval.'],
+  ['Key-free CI', 'CI runs pnpm eval --fake-llm. Real-model evals run on your machine through your Claude subscription; no API key in CI.'],
+  ['Audit record', 'An append-only ai_calls row per call, content in object storage, for the EU AI Act. docs/ai-act.md says what it covers and what it does not.'],
+  ['Quality data', 'Generations, user feedback and judge scores go to PostHog or self-hosted Langfuse, not to tables of our own.'],
+];
+
+// Open PRs planned for 1.0.0 (owner list, 2026-11-07). Drop any entry whose PR misses the release.
+const in10 = [
+  {
+    pr: 44,
+    title: 'Any LLM provider',
+    text: 'The gateway runs on LiteLLM: vendor API keys, OpenRouter, custom OpenAI-compatible endpoints, vLLM or Ollama on-prem, and CLI subscriptions (Claude Code, Codex, Gemini CLI), plus keys an organization brings itself.',
+  },
+  {
+    pr: 42,
+    title: 'UI kit with checks',
+    text: 'shadcn/ui components and patterns (app shell, data table, command palette), with axe accessibility checks and visual screenshots in CI.',
+  },
+  {
+    pr: 43,
+    title: 'Operator console',
+    text: 'An internal panel for support staff: organizations and users, audited actions with a reason, suspension, read-only "view as user".',
+  },
+  {
+    pr: 45,
+    title: 'CRM and booking',
+    text: 'Twenty CRM kept in sync with sign-ups, organizations, billing and support; booking links for Cal.com or Cal.diy.',
+  },
+  {
+    pr: 48,
+    title: 'Plane as the tracker',
+    text: 'Alerts, user feedback and support triage land in Plane by default (GitHub Issues optional), with "Released in vX.Y.Z" comments.',
+  },
+];
+
+const services = [
+  ['Postgres, Redis, S3', 'compose services locally; any managed instance by URL (AWS S3, R2, MinIO).'],
+  ['Analytics', 'PostHog Cloud, or Umami in the analytics profile.'],
+  ['Errors', 'Sentry, or GlitchTip in the glitchtip profile.'],
+  ['LLM ops', 'PostHog, or Langfuse in the llmops profile.'],
+  ['Service desk', 'Chatwoot in the support profile, or your existing Chatwoot by URL.'],
+  ['Email', 'Mailpit in development, any SMTP provider in production.'],
+];
+
+const quickstart = `docker compose up -d --wait postgres redis s3 temporal-ui mailpit
+docker compose --profile billing up -d stripe-mock   # Stripe API mock
+pnpm i && pnpm db:migrate
+pnpm dev        # API :3000 + web :5173
+pnpm worker     # Python Temporal worker (also delivers mail)`;
+
 const faq = [
   {
-    q: 'Is there a free plan?',
-    a: 'Yes. Create an account and an organization and start with your first project for free.',
+    q: 'Which coding agents does it work with?',
+    a: 'Any agent that reads AGENTS.md, such as Codex. Claude Code reads CLAUDE.md, which imports AGENTS.md, and gets the /add-resource command. The rules are plain Markdown, so humans follow the same ones.',
   },
   {
-    q: 'Where is my data stored?',
-    a: 'In the region you deploy to. The whole stack runs on one server or your own infrastructure.',
+    q: 'Can I use it for a commercial product?',
+    a: 'Yes. The code is licensed MIT No Attribution (MIT-0): use, change and sell it without keeping a notice. Code dependencies are permissive or MPL-2.0, enforced by the license gate.',
   },
   {
-    q: 'Which AI models do you use?',
-    a: 'Only the models your administrator enables. Each AI call is logged and can be exported.',
+    q: 'Do I need to run every service?',
+    a: 'No. The default stack is Postgres, Redis, S3, Temporal, Mailpit, the API, the worker and the web app; everything else is an opt-in compose profile or a service you connect by URL. In the measured snapshot in docs/STACK.md the default stack used about 612 MiB of RAM.',
+  },
+  {
+    q: 'Does CI need an LLM API key?',
+    a: 'No. CI runs the evals with recorded outputs and a fake judge. Real-model evals run locally through your Claude subscription.',
   },
 ];
-const latest = (await posts()).slice(0, 3);
-const app = {
-  '@type': 'SoftwareApplication',
+
+const source = {
+  '@type': 'SoftwareSourceCode',
   name: site.name,
   description: site.description,
   url: abs('/'),
-  applicationCategory: site.product.category,
-  operatingSystem: site.product.operatingSystem,
-  offers: { '@type': 'Offer', ...site.product.offers },
-  publisher: { '@id': abs('/#organization') },
+  codeRepository: site.repo,
+  programmingLanguage: ['TypeScript', 'Python', 'Rust'],
+  runtimePlatform: ['Node.js', 'Python', 'Docker'],
+  license: 'https://spdx.org/licenses/MIT-0.html',
+  author: { '@id': abs('/#organization') },
 };
+
+const primary =
+  'rounded-md bg-primary px-5 py-2.5 font-medium text-primary-foreground hover:opacity-90';
+const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover:bg-secondary';
 ---
 
-<Base title={site.name} description={site.description} jsonLd={[app, faqLd(faq)]}>
-  <section class="mx-auto max-w-3xl px-6 py-24 text-center">
-    <h1 class="text-4xl font-bold tracking-tight sm:text-5xl">{site.tagline}</h1>
-    <p class="mt-6 text-lg text-muted-foreground">{site.description}</p>
-    <div class="mt-10 flex justify-center gap-3">
-      <a
-        href={start}
-        data-cta="hero_start"
-        class="rounded-md bg-primary px-5 py-2.5 font-medium text-primary-foreground hover:opacity-90"
-        >Start free</a
-      >
-      <a href="/blog/" class="rounded-md border px-5 py-2.5 font-medium hover:bg-secondary">Read the blog</a>
+<Base title={site.name} description={site.description} jsonLd={[source, faqLd(faq)]}>
+  <section class="mx-auto max-w-5xl px-6 pt-20 pb-16 sm:pt-28">
+    <p class="text-sm font-medium text-primary">Open source, MIT-0</p>
+    <h1 class="mt-3 max-w-3xl text-4xl font-bold tracking-tight text-balance sm:text-5xl">
+      A production-ready SaaS starter that coding agents build on rails
+    </h1>
+    <p class="mt-6 max-w-2xl text-lg text-muted-foreground">
+      Multi-tenant TypeScript, Python and Rust, with the rules, recipes and checks that keep Claude
+      Code and Codex from improvising: AGENTS.md, one <code>pnpm check</code> as the definition of
+      done, a license gate and evals.
+    </p>
+    <div class="mt-10 flex flex-wrap gap-3">
+      <a href={site.repo} data-cta="hero_github" class={primary}>View on GitHub</a>
+      <a href={agentsMd} data-cta="hero_agents_md" class={secondary}>Read AGENTS.md</a>
+      <a href="#quickstart" class="px-2 py-2.5 font-medium text-primary hover:underline">Quickstart</a>
     </div>
   </section>
 
-  <section aria-labelledby="features" class="border-y bg-secondary/40">
+  <section aria-labelledby="rails" class="border-y bg-secondary/40">
     <div class="mx-auto max-w-5xl px-6 py-16">
-      <h2 id="features" class="sr-only">Features</h2>
-      <ul class="grid gap-8 sm:grid-cols-3">
+      <h2 id="rails" class="text-2xl font-semibold tracking-tight sm:text-3xl">Rails for coding agents</h2>
+      <p class="mt-3 max-w-2xl text-muted-foreground">
+        An agent does well when the repo answers its questions before it asks them. This one says where
+        code goes, how to add each kind of thing, and what "done" means.
+      </p>
+      <ul class="mt-10 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
         {
-          features.map((f) => (
+          rails.map((r) => (
             <li>
+              <h3 class="font-semibold">{r.title}</h3>
+              <p class="mt-2 text-muted-foreground">{r.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <section aria-labelledby="quickstart" class="mx-auto max-w-5xl px-6 py-16">
+    <h2 id="quickstart" class="text-2xl font-semibold tracking-tight sm:text-3xl">Quickstart</h2>
+    <p class="mt-3 max-w-2xl text-muted-foreground">
+      Needs Node 22.18+, pnpm, Docker, uv and Rust. These are the Setup commands from AGENTS.md;
+      then run <code>pnpm check</code>.
+    </p>
+    <pre
+      class="mt-6 overflow-x-auto rounded-lg bg-foreground p-5 text-sm leading-relaxed text-background"><code>{quickstart}</code></pre>
+    <p class="mt-4">
+      <a href={agentsMd} data-cta="quickstart_agents_md" class="font-medium text-primary hover:underline"
+        >Read AGENTS.md for the full setup and rules</a
+      >
+    </p>
+  </section>
+
+  <section aria-labelledby="stack" class="border-t">
+    <div class="mx-auto max-w-5xl px-6 py-16">
+      <h2 id="stack" class="text-2xl font-semibold tracking-tight sm:text-3xl">Mainstream stack, one reason each</h2>
+      <p class="mt-3 max-w-2xl text-muted-foreground">
+        Boring, well-documented tools that agents already know. The reasons live in docs/adr, one
+        record per decision.
+      </p>
+      <dl class="mt-10 grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2">
+        {
+          stack.map(([name, text]) => (
+            <div class="bg-background p-5">
+              <dt class="font-semibold">{name}</dt>
+              <dd class="mt-1 text-muted-foreground">{text}</dd>
+            </div>
+          ))
+        }
+      </dl>
+    </div>
+  </section>
+
+  <section aria-labelledby="request" class="border-y bg-secondary/40">
+    <div class="mx-auto max-w-5xl px-6 py-16">
+      <h2 id="request" class="text-2xl font-semibold tracking-tight sm:text-3xl">One request, end to end</h2>
+      <p class="mt-3 max-w-2xl text-muted-foreground">
+        Creating a project touches every layer, and the tenant boundary holds the whole way.
+      </p>
+      <ol class="mt-10 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {
+          path.map(([step, text], i) => (
+            <li class="relative rounded-lg border bg-background p-4">
+              <span class="sr-only">Step {i + 1}: </span>
+              <span class="font-semibold">{step}</span>
+              <p class="mt-1 text-sm text-muted-foreground">{text}</p>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </section>
+
+  <section aria-labelledby="ai" class="mx-auto max-w-5xl px-6 py-16">
+    <h2 id="ai" class="text-2xl font-semibold tracking-tight sm:text-3xl">An AI layer you can audit</h2>
+    <p class="mt-3 max-w-2xl text-muted-foreground">
+      AI output that is stored is marked as generated until a person confirms or corrects it. The
+      rest is enforced by code and tests.
+    </p>
+    <ul class="mt-10 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
+      {
+        ai.map(([title, text]) => (
+          <li>
+            <h3 class="font-semibold">{title}</h3>
+            <p class="mt-2 text-muted-foreground">{text}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section aria-labelledby="services" class="border-t">
+    <div class="mx-auto grid max-w-5xl gap-10 px-6 py-16 lg:grid-cols-[1fr_1.4fr]">
+      <div>
+        <h2 id="services" class="text-2xl font-semibold tracking-tight sm:text-3xl">Connect your own, or install</h2>
+        <p class="mt-3 text-muted-foreground">
+          Every external service either runs from a compose profile or connects to an instance you
+          already have, by environment variables. A permissive-license twin of the stack swaps out the
+          copyleft containers.
+        </p>
+      </div>
+      <dl class="divide-y rounded-lg border">
+        {
+          services.map(([name, text]) => (
+            <div class="flex flex-col gap-1 p-4 sm:flex-row sm:gap-4">
+              <dt class="font-semibold sm:w-44 sm:shrink-0">{name}</dt>
+              <dd class="text-muted-foreground">{text}</dd>
+            </div>
+          ))
+        }
+      </dl>
+    </div>
+  </section>
+
+  <section aria-labelledby="in-1-0" class="border-y bg-secondary/40">
+    <div class="mx-auto max-w-5xl px-6 py-16">
+      <h2 id="in-1-0" class="text-2xl font-semibold tracking-tight sm:text-3xl">Also in 1.0</h2>
+      <p class="mt-3 max-w-2xl text-muted-foreground">Shipped with the 1.0 release.</p>
+      <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {
+          in10.map((f) => (
+            <li class="rounded-lg border bg-background p-5">
               <h3 class="font-semibold">{f.title}</h3>
               <p class="mt-2 text-muted-foreground">{f.text}</p>
             </li>
@@ -78,23 +304,19 @@ const app = {
     </div>
   </section>
 
-  {
-    latest.length > 0 && (
-      <section aria-labelledby="latest" class="mx-auto max-w-3xl px-6 py-16">
-        <h2 id="latest" class="text-2xl font-semibold tracking-tight">From the blog</h2>
-        <ul class="mt-6 space-y-4">
-          {latest.map((p) => (
-            <li>
-              <a href={`/blog/${p.id}/`} class="font-medium hover:underline">
-                {p.data.title}
-              </a>
-              <p class="text-muted-foreground">{p.data.description}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
-    )
-  }
+  <section aria-labelledby="license" class="mx-auto max-w-5xl px-6 py-16">
+    <h2 id="license" class="text-2xl font-semibold tracking-tight sm:text-3xl">MIT No Attribution</h2>
+    <p class="mt-3 max-w-2xl text-muted-foreground">
+      The starter is licensed MIT-0: no attribution, no obligations. Every code dependency is
+      permissive or MPL-2.0 and used unmodified, checked in CI across npm, PyPI and crates.io.
+      Containers run unmodified are listed with their licenses in docs/LICENSES.md, and every release tag gets CycloneDX
+      SBOMs for each image.
+    </p>
+    <div class="mt-8 flex flex-wrap gap-3">
+      <a href={site.repo} data-cta="footer_github" class={primary}>Get the code</a>
+      <a href={file('LICENSE')} class={secondary}>Read the license</a>
+    </div>
+  </section>
 
   <Faq items={faq} />
 </Base>

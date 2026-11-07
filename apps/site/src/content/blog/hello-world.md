@@ -24,4 +24,4 @@ is logged, and AI drafts summaries that a person confirms before anyone relies o
 
 ## What comes next
 
-We publish what we ship here and in the [RSS feed](/rss.xml). Questions? See the FAQ below.
+We publish what we ship here and in the [RSS feed](../../rss.xml). Questions? See the FAQ below.

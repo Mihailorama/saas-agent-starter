@@ -30,9 +30,11 @@ docker compose up -d site     # nginx container on :8090 (SITE_PORT)
 Astro 7 refuses to run on Node older than 22.23.4 (a check in its CLI), newer than the 22.18
 the rest of the repo needs; CI and the `node:22-alpine` image already use the latest 22.x.
 
-- **Settings** in `src/site.ts`: name, tagline, description, organization and product data for
-  schema.org. URLs come from env at build time: `SITE_URL` (canonical origin), `SITE_APP_URL`
-  (where "Start free" / "Sign in" go), `SITE_OG_IMAGE` (absolute URL of a 1200x630 share image
+- **Settings** in `src/site.ts`: name, tagline, description, repository, organization data for
+  schema.org. URLs come from env at build time: `SITE_URL` (canonical URL; a path in it, such as
+  `https://owner.github.io/repo`, becomes Astro's `base`, so build links with `path()`/`abs()` from
+  `src/site.ts`, never as bare `/...`), `SITE_APP_URL` (adds the "Sign in" link to the app; none
+  without it), `SITE_OG_IMAGE` (absolute URL of a 1200x630 share image
   hosted outside git), `SITE_TWITTER`, `SITE_NOINDEX=true` for staging.
 - **Blog**: one `.md` or `.mdx` file per post in `src/content/blog/`; the file name is the URL.
   Front matter: `title` (max 60), `description` (50-160), `pubDate`, `author`, optional
@@ -45,7 +47,7 @@ the rest of the repo needs; CI and the `node:22-alpine` image already use the la
 
 Every page gets, from `src/components/Seo.astro`: `<title>` and meta description, a canonical
 URL on `SITE_URL`, `hreflang` alternates plus `x-default`, Open Graph and Twitter card tags,
-and one schema.org JSON-LD graph (Organization and WebSite on every page; SoftwareApplication
+and one schema.org JSON-LD graph (Organization and WebSite on every page; SoftwareSourceCode
 and FAQPage on the home page; BlogPosting, plus FAQPage when a post has `faq`). Generated from the
 content at build: `sitemap-index.xml` (`@astrojs/sitemap`), `robots.txt` (allows every crawler,
 AI crawlers included; `SITE_NOINDEX=true` disallows all), `rss.xml`, `llms.txt`
@@ -81,6 +83,22 @@ artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measure
 0.99 / 1 / 1 / 1. Locally: build with `SITE_URL=http://localhost:4321`, then
 `pnpm --filter site lhci` (needs Chrome; `LHCI_PORT` for another port). Lighthouse CI runs through
 `pnpm dlx`, not as a dependency (license note in [LICENSES.md](LICENSES.md)).
+
+### The starter's own landing page (GitHub Pages)
+
+The home page of `apps/site` is this repository's landing page (owner decision, 2026-11-07):
+products built on the template replace `src/pages/index.astro` and the texts in `src/site.ts`.
+Every claim on it must hold for the code on `main`; the "Also in 1.0" block lists open PRs
+planned for 1.0.0, so drop any entry whose PR misses the release.
+
+`.github/workflows/pages.yml` builds it with
+`SITE_URL=https://mihailorama.github.io/saas-agent-starter` and deploys it with the official Pages
+actions. It runs only on a published release or by hand: release-please's release workflow
+dispatches it on `main` after each release (a release made with `GITHUB_TOKEN` starts no other
+workflow, and the `github-pages` environment accepts the default branch only). Before the first
+release, enable Pages with source "GitHub Actions" in the repository settings. Custom domain: set
+the repository variable `PAGES_SITE_URL` (e.g. `https://starter.example.com`) and add the domain
+in the Pages settings; nothing else changes.
 
 ## SEO checklist per release
 

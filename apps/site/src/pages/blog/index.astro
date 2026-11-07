@@ -1,7 +1,7 @@
 ---
 import Base from '../../layouts/Base.astro';
 import { posts } from '../../posts.ts';
-import { site } from '../../site.ts';
+import { path, site } from '../../site.ts';
 
 const all = await posts();
 const fmt = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
@@ -14,7 +14,7 @@ const fmt = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
       {
         all.map((p) => (
           <li>
-            <a href={`/blog/${p.id}/`} class="text-xl font-semibold hover:underline">
+            <a href={path(`/blog/${p.id}/`)} class="text-xl font-semibold hover:underline">
               {p.data.title}
             </a>
             <p class="mt-1 text-sm text-muted-foreground">
