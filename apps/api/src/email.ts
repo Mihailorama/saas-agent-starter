@@ -5,7 +5,7 @@ import { plainTextSelectors, render } from '@react-email/render';
 import { createElement as h, type ReactNode } from 'react';
 
 export type Locale = 'en' | 'ru';
-export type EmailKind = 'verify-email' | 'reset-password' | 'invitation';
+export type EmailKind = 'verify-email' | 'reset-password' | 'invitation' | 'data-export-ready';
 type Vars = { name: string; org: string; inviter: string };
 type Copy = {
   subject: (v: Vars) => string;
@@ -41,6 +41,15 @@ const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
       footer:
         'The invitation expires in 48 hours. If you did not expect it, you can ignore this email.',
     },
+    'data-export-ready': {
+      subject: () => 'Your data export is ready',
+      heading: () => 'Your data export is ready',
+      body: (v) =>
+        `Hi ${v.name}, the export of ${v.org ? `the ${v.org} workspace` : 'your data'} you asked for is ready. Download it from the privacy settings after signing in.`,
+      button: 'Open privacy settings',
+      footer:
+        'The file is kept for a few days, then deleted. If you did not ask for it, change your password.',
+    },
     fallback: 'Or open this link:',
   },
   ru: {
@@ -65,6 +74,15 @@ const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
       body: (v) => `${v.inviter} приглашает вас в рабочее пространство ${v.org}.`,
       button: 'Принять приглашение',
       footer: 'Приглашение действует 48 часов. Если вы его не ждали, просто проигнорируйте письмо.',
+    },
+    'data-export-ready': {
+      subject: () => 'Выгрузка данных готова',
+      heading: () => 'Выгрузка данных готова',
+      body: (v) =>
+        `${v.name}, запрошенная выгрузка ${v.org ? `данных пространства ${v.org}` : 'ваших данных'} готова. Скачайте её в настройках конфиденциальности после входа.`,
+      button: 'Открыть настройки',
+      footer:
+        'Файл хранится несколько дней, затем удаляется. Если вы её не запрашивали, смените пароль.',
     },
     fallback: 'Или откройте ссылку:',
   },

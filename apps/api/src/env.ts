@@ -64,6 +64,10 @@ const schema = z
       ),
     /** Outbound webhooks: largest JSON body publishEvent() accepts (the worker checks it too). */
     WEBHOOK_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().default(65_536),
+    /** Data-subject rights (docs/privacy.md): days a requested deletion waits, cancellable. */
+    PRIVACY_DELETION_GRACE_DAYS: z.coerce.number().min(0).default(14),
+    /** At most one data export per user or organization in this many hours. */
+    PRIVACY_EXPORT_INTERVAL_HOURS: z.coerce.number().min(0).default(24),
     /** Shown in authenticator apps (TOTP issuer) and passkey prompts (WebAuthn RP name). */
     APP_NAME: z.string().min(1).default('Workspace'),
     /** WebAuthn relying party: registrable domain, defaults to the BETTER_AUTH_URL host. */
