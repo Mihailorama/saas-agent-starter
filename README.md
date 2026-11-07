@@ -126,6 +126,16 @@ menu, the webhook secret for triage, and a model for `support.triage`; tickets s
 backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
 Details: [docs/support.md](docs/support.md).
 
+## LLM-ops
+
+Quality loop ([ADR 0009](docs/adr/0009-llm-ops.md)): prompts are versioned files in `prompts/`;
+`pnpm eval` runs the Promptfoo golden sets in `evals/` (key-free; `pnpm eval:real` runs the real
+model and judge through your Claude subscription via the `claude` CLI); with `POSTHOG_KEY`
+and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (privacy mode on), so
+the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
+(`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
+(about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
+
 ## Feature flags and releases
 
 New behaviour ships behind PostHog feature flags declared in `config/flags.json`

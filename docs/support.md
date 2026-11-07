@@ -38,9 +38,10 @@ tracker item closed ──webhook──> POST /api/hooks/{github,plane} -> Suppo
 ## Run it
 
 ```sh
-docker compose --profile support up -d      # chatwoot (UI :3200), chatwoot-sidekiq
+docker compose --profile support up -d      # chatwoot (UI :3300), chatwoot-sidekiq
 ```
 
+- Port: `CHATWOOT_PORT`, default 3300 (Langfuse in the `llmops` profile has 3200).
 - Image `chatwoot/chatwoot:v4.19.1-ce`: the community build, made by Chatwoot's CI after
   `rm -rf enterprise`. Never use the tag without `-ce` (it contains `enterprise/`,
   docs/LICENSES.md).
@@ -65,7 +66,7 @@ docker compose --profile support up -d      # chatwoot (UI :3200), chatwoot-side
 
 ## Set up Chatwoot (UI, once)
 
-1. Open `http://localhost:3200`, create the admin account and the first account (sign-up is
+1. Open `http://localhost:3300`, create the admin account and the first account (sign-up is
    otherwise off: `ENABLE_ACCOUNT_SIGNUP=false`). Invite agents under Settings -> Agents.
 2. **Website inbox** (Settings -> Inboxes -> Website): any name, your app's domain. Copy the
    **website token** to `VITE_CHATWOOT_WEBSITE_TOKEN`. Under Configuration, turn on **Enforce
@@ -102,9 +103,9 @@ incoming message of a conversation, whatever the inbox).
 ### Web app
 
 ```sh
-VITE_CHATWOOT_BASE_URL=http://localhost:3200   # build-time: where sdk.js and the widget come from
+VITE_CHATWOOT_BASE_URL=http://localhost:3300   # build-time: where sdk.js and the widget come from
 VITE_CHATWOOT_WEBSITE_TOKEN=...                # website inbox token
-SUPPORT_ORIGINS=http://localhost:3200          # web container: CSP script/frame/connect/img-src
+SUPPORT_ORIGINS=http://localhost:3300          # web container: CSP script/frame/connect/img-src
 CHATWOOT_HMAC_TOKEN=...                        # API: signs the user's identifier
 ```
 
@@ -161,7 +162,10 @@ organization: support conversations belong to the operator, not to a tenant, and
 Telegram conversations have no tenant at all. That org's admins see them on the AI calls page.
 Without `SUPPORT_AI_ORG_ID`, triage is off.
 
-System card: [docs/ai/support.triage.md](ai/support.triage.md). Prompts follow the repo's prompt convention: files `prompts/<purpose>/<name>.v<N>.md`, pinned by
+System card: [docs/ai/support.triage.md](ai/support.triage.md). Eval: `evals/support.triage/`
+(synthetic golden set, judge `prompts/judge/support.triage.v1.md`; `pnpm eval support.triage`,
+`pnpm eval:real support.triage` with your Claude subscription). The duplicate prompt is covered
+by `tests/test_support.py` only. Prompts follow the repo's prompt convention: files `prompts/<purpose>/<name>.v<N>.md`, pinned by
 hash in `prompts/lock.json`; a changed prompt is a new version file plus a bumped version in
 `worker/support.py` (`tests/test_support.py` fails on an edited released file).
 

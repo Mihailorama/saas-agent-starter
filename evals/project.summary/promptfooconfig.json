@@ -1,0 +1,24 @@
+{
+  "description": "project.summary: golden set (synthetic examples, no customer data)",
+  "gate": {
+    "prompt": { "id": "project.summary/system", "version": 1 },
+    "judge": { "id": "judge/project.summary", "version": 1 },
+    "purpose": "project.summary",
+    "minScore": 0.85
+  },
+  "prompts": ["file://../prompt.mjs"],
+  "providers": [{ "id": "anthropic:messages:claude-haiku-5-5", "config": { "max_tokens": 2048 } }],
+  "defaultTest": {
+    "options": { "provider": "anthropic:messages:claude-sonnet-5-5" },
+    "assert": [
+      {
+        "type": "javascript",
+        "metric": "max_30_words",
+        "value": "output.trim().split(/\\s+/).length <= 30"
+      },
+      { "type": "not-icontains", "metric": "no_preamble", "value": "summary:" },
+      { "type": "llm-rubric", "metric": "judge", "value": "See the judge prompt criteria." }
+    ]
+  },
+  "tests": "file://dataset.jsonl"
+}

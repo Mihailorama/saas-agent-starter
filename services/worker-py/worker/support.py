@@ -85,6 +85,11 @@ def obj(value: object) -> dict[str, Any]:
     return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
+def triage_input(kind_hint: str, transcript: str) -> str:
+    """The user message; evals/support.triage stores exactly this as `input`."""
+    return f"Kind picked in the widget: {kind_hint}\n\nConversation:\n{transcript}"
+
+
 def scrub(value: object, limit: int = 300) -> str:
     return EMAIL.sub("[email]", str(value))[:limit]
 
@@ -354,9 +359,7 @@ class SupportActivities:
 
         transcript = "\n\n".join(await cw.customer_messages(c))[:20_000]
         hint = scrub(context.get("request_kind") or "none", 40)
-        text = await self._llm(
-            c, TRIAGE_PROMPT, f"Kind picked in the widget: {hint}\n\nConversation:\n{transcript}"
-        )
+        text = await self._llm(c, TRIAGE_PROMPT, triage_input(hint, transcript))
         t = parse_triage(text)
         if t is None:
             await cw.note(c, "AI triage could not classify this conversation. Please triage it.")

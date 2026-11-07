@@ -17,12 +17,6 @@
   thousands of rows; stream with a server-side cursor before orgs reach ~100k calls.
 - **`audit_log` is not append-only** for the app role, unlike `ai_calls`. Consider adding it
   to the append-only list in `packages/db/src/migrate.ts` (check nothing updates it first).
-- **AI metrics are not emitted yet.** The LLM dashboard and the `AiScoreDrop`/`AiCostSpike`
-  alerts (`infra/grafana/dashboards/llm.json`, `infra/otel/alerts.yml`) read `ai_calls_total`,
-  `ai_call_latency_seconds`, `ai_cost_usd_total`, `ai_score_avg` (names in AGENTS.md
-  "Observability"); nothing produces them, so the panels are empty. Fix: an OTel meter in
-  `Gateway.call_llm` (`services/worker-py/worker/ai.py`) plus a MeterProvider next to the
-  TracerProvider in `worker/__main__.py`, and the eval job for `ai_score_avg`.
 - **Alert notifications.** Prometheus evaluates the rules but nothing routes them. Fix: add
   Alertmanager (Apache-2.0) to the observability profile with a receiver per deployment.
 - **Collector reads every container's log file on the host** (filtered to this compose project
@@ -76,11 +70,22 @@
   Chatwoot does not retry account webhooks (`apps/api/src/routes/support.ts`). Same fix as the
   project workflow outbox above, or a periodic sweep for conversations without
   `support_category`.
-- **Eval for `support.triage` once PR #24 (llm-ops) lands.** Its `tests/test_prompts.py`
-  requires `evals/<purpose>/promptfooconfig.json` for every prompted purpose; add
-  `evals/support.triage/` (a few conversations per category, the duplicate prompt too) and merge
-  `prompts/lock.json` entries (both branches add that file). `tests/test_support.py` pins the
-  hashes until then.
+- **Online LLM judges have nothing to judge yet** (ADR 0009 "Open"). PostHog privacy mode is on
+  by default and our spans carry no prompt/output text, so PostHog and Langfuse evaluators
+  (`pnpm llmops:evaluators`) see empty input/output; both tools also need an LLM provider API key
+  stored in the tool. Owner decides: privacy mode off for PostHog (DPA), and/or opt-in content on
+  the spans exported to the self-hosted Langfuse only (e.g. `gen_ai.input.messages` /
+  `gen_ai.output.messages` behind a flag, on a span processor used only for the Langfuse
+  exporter), plus which provider key.
+- **PostHog evaluation request is unverified against a live project.** `scripts/llmops-evaluators.mjs`
+  follows the API reference example (`output_type: boolean`, `model_configuration`,
+  `conditions` on `ai_purpose`); run `--apply` once with the owner's personal API key and check the
+  evaluation in the UI, then fix the body if PostHog rejects or reinterprets a field.
+- **`pnpm eval:real` may see the operator's Claude Code memory.** `--bare` would drop it but also
+  disables subscription auth. Run it from an account without steering CLAUDE.md, or switch to a
+  `--settings`/env option if Claude Code adds one that skips memory with OAuth.
+- **Open owner decision: does the small single-server tier run Langfuse?** (ADR 0009). PostHog
+  Cloud is the default; Langfuse costs about 1.9 GiB RAM measured (docs/STACK.md).
 - **Worker feature flags use PostHog's HTTP `/flags` API instead of the `posthog` SDK.** The SDK
   depends on `distro` (Apache-2.0), whose metadata string "Apache License, Version 2.0" the
   license gate does not map to `Apache-2.0`, and ADR 0005 forbids gate changes without a human.

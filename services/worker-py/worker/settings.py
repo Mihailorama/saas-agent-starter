@@ -72,6 +72,12 @@ SUPPORT_AI_ORG_ID = os.environ.get("SUPPORT_AI_ORG_ID", "")
 # "Released in vX.Y.Z" comment (docs/releases.md); anything else = private notes only.
 _notify = os.environ.get("SUPPORT_NOTIFY_ON_CLOSE", "false").lower()
 SUPPORT_NOTIFY = {"true": "close", "release": "release"}.get(_notify, "")
+# Traces only (e.g. Langfuse's OTLP endpoint, which takes no metrics); overrides the base URL.
+OTEL_TRACES_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+# LLM observability in PostHog (docs/adr/0009-llm-ops.md): each call as an $ai_generation event.
+# Uses POSTHOG_KEY / POSTHOG_HOST (defined with the feature flags below).
+# Unset = nothing is sent. Privacy mode (default on) leaves prompt and output text out.
+POSTHOG_PRIVACY_MODE = os.environ.get("POSTHOG_PRIVACY_MODE", "true").lower() != "false"
 # Transactional email (docs/email.md): smtps://user:pass@host:465, smtp://user:pass@host:587
 # (STARTTLS required) or smtp://host:1025?tls=none (local Mailpit). Empty = sending fails.
 SMTP_URL = os.environ.get("SMTP_URL", "")

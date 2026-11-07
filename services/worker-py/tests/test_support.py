@@ -3,7 +3,6 @@
 The gateway is real (Postgres + S3 from the compose stack), so the ai_calls audit is checked too.
 """
 
-import hashlib
 import json
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -329,15 +328,6 @@ def test_parsing() -> None:
     assert parse_triage("{not json}") is None
     texts = [f"{LINK} and {LINK}", "<p>http://cw/app/accounts/2/conversations/5</p>"]
     assert linked_conversations(texts) == [SupportConversation(1, 42), SupportConversation(2, 5)]
-
-
-def test_released_prompts_are_pinned() -> None:
-    lock = json.loads((settings.PROMPTS_DIR / "lock.json").read_text())
-    for key in ("support.triage/system.v1", "support.triage/duplicate.v1"):
-        path = settings.PROMPTS_DIR / f"{key}.md"
-        assert lock[key] == hashlib.sha256(path.read_bytes()).hexdigest(), (
-            f"{key}.md changed: released prompts are immutable, add a .v<N+1>.md instead"
-        )
 
 
 async def test_workflow_runs_once_per_conversation(pool: asyncpg.Pool) -> None:

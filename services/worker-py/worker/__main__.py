@@ -5,8 +5,11 @@ from datetime import timedelta
 
 import asyncpg
 import httpx2
-from opentelemetry import trace
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -21,6 +24,7 @@ from worker.ai import PROVIDERS, Gateway, load_registry
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
+from worker.posthog import PostHogAi
 from worker.s3 import S3
 from worker.support import (
     Chatwoot,
@@ -63,16 +67,22 @@ def support_tracker(http: httpx2.AsyncClient) -> Tracker:
 
 
 def setup_tracing() -> Runtime | None:
-    """Traces via the OTel SDK; Temporal SDK metrics (temporal_*) via the Core runtime."""
+    """Traces and ai_* metrics via the OTel SDK; Temporal SDK metrics (temporal_*) via the Core
+    runtime. The tracer provider is always installed, so every ai_calls row gets a trace id
+    (PostHog/Langfuse feedback joins on it) even when no trace backend is configured."""
+    resource = Resource.create({"service.name": "worker"})
+    provider = TracerProvider(resource=resource)
+    if settings.OTEL_ENDPOINT or settings.OTEL_TRACES_ENDPOINT:  # the latter: e.g. Langfuse
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
     if not settings.OTEL_ENDPOINT:
         return None
-    provider = TracerProvider(resource=Resource.create({"service.name": "worker"}))
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-    trace.set_tracer_provider(provider)
-    metrics = OpenTelemetryConfig(
+    reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+    metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=[reader]))
+    temporal_metrics = OpenTelemetryConfig(
         url=f"{settings.OTEL_ENDPOINT}/v1/metrics", http=True, durations_as_seconds=True
     )
-    return Runtime(telemetry=TelemetryConfig(metrics=metrics))
+    return Runtime(telemetry=TelemetryConfig(metrics=temporal_metrics))
 
 
 async def main() -> None:
@@ -93,6 +103,15 @@ async def main() -> None:
         secret_key=settings.S3_SECRET_ACCESS_KEY,
         bucket=settings.AI_CONTENT_BUCKET,
     )
+    posthog = (
+        PostHogAi(
+            host=settings.POSTHOG_HOST,
+            api_key=settings.POSTHOG_KEY,
+            privacy_mode=settings.POSTHOG_PRIVACY_MODE,
+        )
+        if settings.POSTHOG_HOST and settings.POSTHOG_KEY
+        else None
+    )
     ai: Gateway | None = None
     if settings.AI_CONTOUR:
         await s3.ensure_bucket()
@@ -103,6 +122,7 @@ async def main() -> None:
             registry=load_registry(settings.AI_MODELS_FILE, settings.AI_CONTOUR),
             providers=PROVIDERS,
             retention_days=settings.AI_CONTENT_RETENTION_DAYS,
+            posthog=posthog,
         )
     summary_model = (
         ModelChoice(settings.AI_PROJECT_SUMMARY_PROVIDER, settings.AI_PROJECT_SUMMARY_MODEL)
@@ -174,6 +194,8 @@ async def main() -> None:
         log.info("shutting down")
     await http.aclose()
     await s3.close()
+    if posthog:
+        await posthog.close()
     await pool.close()
 
 

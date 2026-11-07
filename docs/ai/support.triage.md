@@ -26,8 +26,8 @@
   except the opt-in "resolved" message after a human closed the item.
 - Known limitations and failure modes: misclassification (most likely bug vs question), a wrong
   or missed duplicate, a draft answer that states features the product lacks. Unparsable output
-  becomes "unclassified" with a note asking a human. Checked with unit tests (fake model) and
-  manual runs; add a Promptfoo eval when PR #24 lands (docs/TODO.md).
+  becomes "unclassified" with a note asking a human. Checked with unit tests (fake model), manual
+  runs and the golden set `evals/support.triage/` (judge `prompts/judge/support.triage.v1.md`).
 - Logging: one `ai_calls` row per call under `SUPPORT_AI_ORG_ID` (purpose, model, prompt id and
   version, tokens, cost, trace id, `actor_id = chatwoot:<account>/<conversation>`); content in the
   `AI_CONTENT_BUCKET` S3 objects for `AI_CONTENT_RETENTION_DAYS`; visible to that org's admins.

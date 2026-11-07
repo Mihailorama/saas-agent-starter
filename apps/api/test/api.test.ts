@@ -1,11 +1,18 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { aiCalls, auditLog, projects, withOrg } from '@app/db';
+import {
+  CreateBucketCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
+import { exportCalls } from '../src/eval-pull.ts';
 import { ensureBucket } from '../src/s3.ts';
 import {
   closeTemporal,
@@ -744,5 +751,75 @@ describe('service desk (Chatwoot)', () => {
     } finally {
       env.CHATWOOT_HMAC_TOKEN = secrets.CHATWOOT_HMAC_TOKEN;
     }
+  });
+});
+
+describe('eval:pull', () => {
+  it('exports logged calls of one purpose as Promptfoo cases, audit-logged', async () => {
+    const s3 = new S3Client({
+      region: env.S3_REGION,
+      endpoint: env.S3_ENDPOINT,
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId: env.S3_ACCESS_KEY_ID,
+        secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+      },
+    });
+    const put = (key: string, doc: object) =>
+      s3.send(
+        new PutObjectCommand({
+          Bucket: env.AI_CONTENT_BUCKET,
+          Key: key,
+          Body: JSON.stringify(doc),
+        }),
+      );
+    await s3
+      .send(new HeadBucketCommand({ Bucket: env.AI_CONTENT_BUCKET }))
+      .catch(() => s3.send(new CreateBucketCommand({ Bucket: env.AI_CONTENT_BUCKET })));
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    const ok = await recordAiCall(org, {
+      requestKey: `${org}/ok/request.json`,
+      responseKey: `${org}/ok/response.json`,
+      promptTemplateId: 'project.summary/system',
+    });
+    const expired = await recordAiCall(org, { responseKey: `${org}/gone/response.json` });
+    await recordAiCall(org, { status: 'error', responseKey: null });
+    await recordAiCall(org, { purpose: 'other.purpose' });
+    await put(ok.requestKey, {
+      messages: [
+        { role: 'system', content: 'Summarize.' },
+        { role: 'user', content: 'Project: Apollo' },
+      ],
+    });
+    await put(ok.responseKey!, { text: 'A Moon landing.' });
+
+    const cases = await exportCalls(org, { purpose: 'project.summary' });
+    expect(cases).toEqual([
+      {
+        description: `call ${ok.id}`,
+        vars: { input: 'Project: Apollo', recorded_output: 'A Moon landing.' },
+        metadata: {
+          callId: ok.id,
+          model: 'claude-haiku-5-5',
+          prompt: 'project.summary/system v1',
+        },
+      },
+    ]); // the expired call is skipped, the failed one and other purposes are not selected
+    expect(await exportCalls(org, { purpose: 'project.summary', callIds: [expired.id] })).toEqual(
+      [],
+    );
+    const audit = await withOrg(db, org, (tx) => tx.select().from(auditLog));
+    expect(audit.map((a) => [a.action, a.target, a.actorId])).toContainEqual([
+      'ai_call.exported_for_eval',
+      ok.id,
+      'eval:pull',
+    ]);
+
+    // Tenant isolation: another org exports nothing of this one.
+    const stranger = await signUp();
+    expect(await exportCalls(await createOrg(stranger), { purpose: 'project.summary' })).toEqual(
+      [],
+    );
   });
 });
