@@ -39,6 +39,8 @@ test('sign up, create an organization and a project', async ({ page }) => {
 
   // No third-party sink configured in tests: nothing to consent to, no foreign hosts.
   await expect(page.getByRole('region', { name: 'Analytics consent' })).toHaveCount(0);
+  // No Chatwoot configured: no Help entry and no widget request (docs/support.md).
+  await expect(page.getByRole('button', { name: 'Help' })).toHaveCount(0);
   expect([...hosts]).toEqual(['localhost']);
 });
 
@@ -71,5 +73,7 @@ test('AI transparency page is public', async ({ page }) => {
   await page.goto('/ai-transparency');
   await expect(page.getByRole('heading', { name: 'How we use AI' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Project summaries' })).toBeVisible();
-  await expect(page.getByText('claude-haiku-5-5', { exact: false })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Support request triage' })).toBeVisible();
+  // One model list per purpose.
+  await expect(page.getByText('claude-haiku-5-5', { exact: false })).toHaveCount(2);
 });
