@@ -7,9 +7,9 @@
     "minScore": 0.85
   },
   "prompts": ["file://../prompt.mjs"],
-  "providers": [{ "id": "anthropic:messages:claude-haiku-5-5", "config": { "max_tokens": 1500 } }],
+  "providers": [{ "id": "claude_cli:claude-haiku-5-5", "config": { "max_tokens": 1500 } }],
   "defaultTest": {
-    "options": { "provider": "anthropic:messages:claude-sonnet-5-5" },
+    "options": { "provider": "claude_cli:claude-opus-5-5" },
     "assert": [
       {
         "type": "javascript",

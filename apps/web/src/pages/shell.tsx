@@ -13,6 +13,7 @@ import {
   Check,
   ChevronsUpDown,
   Cookie,
+  Cpu,
   CreditCard,
   FolderKanban,
   KeyRound,
@@ -54,6 +55,7 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui
 import { Skeleton } from '@/components/ui/skeleton';
 import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
+import { useFlag } from '@/lib/flags';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
 
@@ -240,6 +242,7 @@ export function Shell() {
   const mustEnrol = policy.error?.message === TWO_FACTOR_REQUIRED;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
+  const byoProviders = useFlag('byo-llm-providers');
 
   if (isPending) {
     return (
@@ -289,6 +292,9 @@ export function Shell() {
             items: [
               { label: 'API keys', icon: KeyRound, to: '/settings/api-keys' as const },
               { label: 'Webhooks', icon: Webhook, to: '/settings/webhooks' as const },
+              ...(byoProviders
+                ? [{ label: 'AI providers', icon: Cpu, to: '/settings/ai-providers' as const }]
+                : []),
             ],
           },
         ]

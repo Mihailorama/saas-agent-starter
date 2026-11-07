@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Warns about models in config/ai-models.json without a price (docs/billing.md). The AI gateway
-// refuses them unless they are marked "unmetered": true, and unmetered calls are not counted
-// against LLM spend limits. Warnings only: a template ships placeholders; deployments fix them.
+// Lists models in config/ai-models.json without an explicit price (docs/billing.md). The gateway
+// then uses LiteLLM's cost map (vendor APIs and aggregators) and refuses the model if that has no
+// price either, unless it is "unmetered": true (limited by the plans' llmUsageMonthly instead of
+// money). Warnings only: a template ships placeholders; deployments fix them.
 import { readFileSync } from 'node:fs';
 
 const { contours } = JSON.parse(
@@ -15,8 +16,8 @@ for (const [contour, models] of Object.entries(contours)) {
     const id = `${contour}: ${m.provider}/${m.model}`;
     console.warn(
       m.unmetered === true
-        ? `warning: ${id} is unmetered: its calls are not limited by plan LLM spend limits`
-        : `warning: ${id} has no price: the AI gateway refuses it (set pricePer1kTokens or "unmetered": true)`,
+        ? `note: ${id} is unmetered: limited by llmUsageMonthly (calls/tokens), not by spend`
+        : `warning: ${id} has no explicit price: LiteLLM's cost map must price it, or the gateway refuses it`,
     );
   }
 }

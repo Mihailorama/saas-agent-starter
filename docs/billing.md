@@ -50,13 +50,28 @@ with the plan's `llmSpendMonthly` (or the admin-raised value, capped by `llmSpen
   activity then simply stores no summary, and the billing page says "AI features are paused".
 
 The sum is one index range scan on `ai_calls (org_id, created_at)` (checked by
-`tests/test_billing.py`). A model without a price (`pricePer1kTokens: null`) **fails closed**: the
-gateway refuses it with `ModelNotAllowed`, because its calls could not be counted. Mark a model
-`"unmetered": true` in `config/ai-models.json` only when you deliberately exempt it (for example a
-self-hosted model with no per-call cost); its calls are logged without cost and never limited.
-The shipped placeholder `example-self-hosted-model` is neither priced nor unmetered, so it is refused until you configure
-it. `pnpm check:ai-prices` (part of `pnpm check`) warns about every unpriced model. Every priced currency in `ai-models.json` needs a limit in every
-plan; `apps/api/test/billing.test.ts` checks that.
+`tests/test_billing.py`). Prices: an explicit `pricePer1kTokens` in `config/ai-models.json` wins;
+otherwise the gateway takes the model's price from LiteLLM's bundled model cost map (USD; vendor
+APIs and aggregators only, a zero price counts as unknown). A model with neither **fails closed**:
+the gateway refuses it with `ModelNotAllowed`, because its calls could not be counted. Mark a
+model `"unmetered": true` only when it has no per-call cost to you: CLI subscriptions and
+self-hosted models. The shipped placeholder `example-self-hosted-model` is neither priced nor
+unmetered, so it is refused until you configure it. `pnpm check:ai-prices` (part of
+`pnpm check`) lists every model without an explicit price. Every cost currency in
+`ai-models.json` (USD for map-priced models) needs a limit in every plan;
+`apps/api/test/billing.test.ts` checks that.
+
+## LLM usage limit (unmetered models)
+
+Unmetered models have no cost to cap, so the plan caps their use instead:
+`limits.llmUsageMonthly` with `calls` and/or `tokens` per billing period (same period as the
+spend limit). Before a call of an unmetered model the gateway counts the org's successful calls
+and their `total_tokens` across all unmetered models of the contour and refuses at the limit with
+the non-retryable `UsageLimitExceeded` (a subclass of `SpendLimitExceeded`, handled the same way
+by the activities). Metric: `billing_llm_usage_blocked_total` by `plan` and `unit`. A plan
+without `llmUsageMonthly` leaves unmetered models unlimited. Calls through an organization's own
+provider (feature `byoLlm`, docs/llm-providers.md) are not limited by either: the org pays its
+provider directly.
 
 Metrics (worker, OTLP -> Prometheus), labelled by `plan` and `currency`, never by org:
 `billing_llm_spend_ratio` (histogram of spend/limit at each call) and `billing_llm_blocked_total`.

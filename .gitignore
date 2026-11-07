@@ -21,3 +21,5 @@ evals/**/pulled.jsonl
 # Screenshots and reports stay out of git (baselines live in CI artifacts, docs/ui.md)
 .visual/
 .lighthouseci/
+# Subscription logins for the llm-cli container (docs/llm-providers.md); never commit them.
+.secrets/

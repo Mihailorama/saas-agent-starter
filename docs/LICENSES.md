@@ -38,6 +38,9 @@ on an image that is not. Their primary software licenses:
 | `ghcr.io/gitroomhq/postiz-app`         | social post scheduling (`marketing` profile)       | AGPL-3.0                    |
 | `towfiqi/serpbear`                     | keyword rank tracking (`marketing` profile)        | MIT                         |
 | `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
+| `vllm/vllm-openai`                     | self-hosted models, GPU (`local-llm` profile)      | Apache-2.0                  |
+| `vllm/vllm-openai-cpu`                 | self-hosted models, CPU smoke (`local-llm-cpu`)    | Apache-2.0                  |
+| `ollama/ollama`                        | self-hosted models, dev (`local-llm` profile)      | MIT                         |
 | `saas-agent-starter-pgbackup`          | Postgres + backup tools (`compose.backup.yaml`)    | PostgreSQL + MIT            |
 | `prom/pushgateway`                     | backup metrics for Prometheus (backup overlay)     | Apache-2.0                  |
 
@@ -150,6 +153,33 @@ Notes:
   never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
   dependencies). Details in [docs/billing.md](billing.md).
 
+- AI providers ([docs/llm-providers.md](llm-providers.md), [ADR 0024](adr/0024-llm-providers.md)).
+  Code dependency: `litellm` (PyPI, MIT; checked 2026-11-07 with 1.108.2). Its repository is MIT
+  outside `enterprise/` ([LICENSE](https://github.com/BerriAI/litellm/blob/main/LICENSE)); the
+  enterprise code is the separate `litellm-enterprise` package (`LicenseRef-Proprietary`), pulled
+  in only by the `proxy` extra, which the worker does not install, and nothing from it is used.
+  Open: 8 of LiteLLM's transitive dependencies fail the gate on their metadata (ADR 0024,
+  "Consequences"); no exception was added.
+- Vendor CLIs in the `llm-cli` image (`services/llm-cli/Dockerfile`, base `node`), installed from
+  npm at build time as separate tools, run unmodified, never code dependencies of this repo (no
+  package.json lists them, so the gate never sees them):
+  - `@anthropic-ai/claude-code` (Claude Code): proprietary, "© Anthropic PBC. All rights reserved.
+    Use is subject to Anthropic's Commercial Terms of Service"
+    ([LICENSE.md](https://github.com/anthropics/claude-code/blob/main/LICENSE.md)). Allowed only as
+    a separately installed tool: CI does not build or publish the llm-cli image; operators build
+    it and keep it in a private registry.
+  - `@openai/codex` (Codex CLI): Apache-2.0 ([LICENSE](https://github.com/openai/codex/blob/main/LICENSE)).
+  - `@google/gemini-cli` (Gemini CLI): Apache-2.0
+    ([LICENSE](https://github.com/google-gemini/gemini-cli/blob/main/LICENSE)).
+  - Not installed by default, configurable as a `command` CLI: Kimi Code (`MoonshotAI/kimi-code`,
+    MIT), xAI Grok Build (`xai-org/grok-build`, Apache-2.0 as detected by GitHub).
+    Using a subscription through these CLIs is governed by each vendor's terms of use, not by these
+    licenses (docs/llm-providers.md, "Terms of use").
+- `vllm/vllm-openai`, `vllm/vllm-openai-cpu` (vLLM, Apache-2.0,
+  [LICENSE](https://github.com/vllm-project/vllm/blob/main/LICENSE)) and `ollama/ollama` (MIT,
+  [LICENSE](https://github.com/ollama/ollama/blob/main/LICENSE)) are already permissive. Model
+  weights have their own licenses: the compose defaults `Qwen/Qwen3-0.6B` (Apache-2.0) and
+  `BAAI/bge-small-en-v1.5` (MIT), per their Hugging Face model cards.
 - Marketing layer ([docs/marketing.md](marketing.md), [ADR 0021](adr/0021-marketing-layer.md)),
   `marketing` profile, all run unmodified:
   - `ghcr.io/gitroomhq/postiz-app` (Postiz,
@@ -196,6 +226,11 @@ Notes:
   (`Apache-2.0 AND CNRI-Python`). Zlib and CNRI-Python were added to the allowlist for the last
   two (owner decision 2026-11-07, ADR 0005), and the aliases "BSD License" (`Jinja2`, `blis`),
   "Apache 2.0" (`requests-file`) and "ISC License" (`shellingham`).
+- LiteLLM gateway (ADR 0024): `litellm` (MIT) pulls `tiktoken` 0.14.0, whose metadata has no
+  License-Expression and no classifiers; its License field is the full MIT text. Checked against
+  its LICENSE file and accepted as `MIT` through a reviewed-package entry pinned to that exact
+  version (`REVIEWED` in `scripts/license-check.mjs`, owner approval 2026-11-07, ADR 0005); any
+  other version fails the gate again until reviewed.
 - License gate tooling (dev group of the worker, not in the image): `license-expression`
   (Apache-2.0, parses the SPDX expressions) with `boolean.py` (BSD-2-Clause). Its wheel also
   carries the ScanCode LicenseDB index (`license_expression/data/scancode-licensedb-index.json`),

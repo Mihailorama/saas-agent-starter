@@ -1,0 +1,44 @@
+{
+  "$comment": "llm-cli subscriptions (docs/llm-providers.md). Secrets are files under /run/secrets/llm-cli (mounted, never in the image): `env` maps a variable to the file holding its value, `files` copies a file into the subscription's private HOME. Missing files: that subscription is skipped. Add a subscription per account; requests round-robin across them, each with its own `concurrency`.",
+  "timeoutMs": 300000,
+  "cooldownMs": 60000,
+  "queue": {
+    "max": 100,
+    "timeoutMs": 120000
+  },
+  "clis": {
+    "claude": {
+      "subscriptions": [
+        {
+          "name": "claude-1",
+          "concurrency": 2,
+          "env": {
+            "CLAUDE_CODE_OAUTH_TOKEN": "/run/secrets/llm-cli/claude-1.token"
+          }
+        }
+      ]
+    },
+    "codex": {
+      "subscriptions": [
+        {
+          "name": "codex-1",
+          "concurrency": 1,
+          "files": {
+            ".codex/auth.json": "/run/secrets/llm-cli/codex-1.auth.json"
+          }
+        }
+      ]
+    },
+    "gemini": {
+      "subscriptions": [
+        {
+          "name": "gemini-1",
+          "concurrency": 1,
+          "files": {
+            ".gemini/oauth_creds.json": "/run/secrets/llm-cli/gemini-1.oauth_creds.json"
+          }
+        }
+      ]
+    }
+  }
+}
