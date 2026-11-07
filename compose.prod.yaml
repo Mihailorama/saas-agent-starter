@@ -79,6 +79,8 @@ services:
       - POSTHOG_PROJECT_ID
       - GITHUB_TOKEN
       - GITHUB_REPO
+      # profile pii: PII_REDACT_URL=http://pii:8000 (docs/support.md "Personal data")
+      - PII_REDACT_URL
       - EMAIL_TASK_QUEUE
       - REQUIRE_EMAIL_VERIFICATION
       - FLAGS_ON
@@ -119,7 +121,7 @@ services:
   worker:
     image: ${IMAGE_WORKER:?no release, deploy with scripts/deploy.mjs}
     logging: *logging
-    mem_limit: 384m
+    mem_limit: 512m # +~100 MiB for Presidio once support triage is on (docs/STACK.md)
     restart: unless-stopped
     environment:
       - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
@@ -173,6 +175,7 @@ services:
       - FLAGS_OFF
       - POSTHOG_KEY
       - POSTHOG_HOST
+      - POSTHOG_SECRET_KEY
       # billing: plans and LLM spend limits (default: config/plans.json in the image)
       - PLANS_FILE
       # data-subject rights (docs/privacy.md): retention and per-person export/deletion in tools
@@ -191,6 +194,28 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }
+
+  # --- profile pii: Presidio PII redaction for the API's feedback hook (docs/support.md "Personal
+  # data"). Same image as the worker. Enable with COMPOSE_PROFILES=pii and
+  # PII_REDACT_URL=http://pii:8000; the API then fails closed (503) while it is down.
+  pii:
+    profiles: [pii]
+    image: ${IMAGE_WORKER:?no release, deploy with scripts/deploy.mjs}
+    logging: *logging
+    mem_limit: 384m
+    restart: unless-stopped
+    command: ["python", "-m", "worker.pii"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz')",
+        ]
+      interval: 5s
+      start_period: 60s
+      retries: 12
 
   # Static files + /api proxy; sets CSP/HSTS/nosniff/Referrer-Policy (apps/web/nginx.conf.template).
   web:

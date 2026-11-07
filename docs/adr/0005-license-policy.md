@@ -13,7 +13,30 @@ copyleft license, including the file-level MPL-2.0, which kept Tailwind on v3 an
 
 - Every code dependency (npm, PyPI, crates.io; runtime and dev) must be one of: MIT, MIT-0, ISC,
   BSD-2-Clause, BSD-3-Clause, 0BSD, Apache-2.0, Unlicense, CC0-1.0, BlueOak-1.0.0, PostgreSQL,
-  Python-2.0, MPL-2.0. SPDX `OR` passes if any branch is allowed, `AND` only if all are.
+  Python-2.0, Zlib, CNRI-Python, MPL-2.0. SPDX `OR` passes if any branch is allowed, `AND` only
+  if all are.
+- Zlib and CNRI-Python are allowed (owner decision, 2026-11-07):
+  - Zlib: OSI-approved and permissive; it asks only not to misrepresent the origin, to mark
+    altered source versions and to keep the notice. `numpy` declares Zlib for bundled parts.
+  - CNRI-Python: OSI-approved (listed as superseded, it is part of the Python license stack),
+    a royalty-free grant to use, modify and distribute that asks to keep CNRI's agreement and
+    summarize changes in derivative works. `regex` declares it.
+- Expressions are parsed with `license-expression` (Apache-2.0, `scripts/spdx-allowed.py`), not
+  by hand. Package metadata that is not SPDX passes only through an exact alias in
+  `scripts/license-check.mjs` (`ALIASES`, e.g. "BSD License", "Apache Software License", "Apache 2.0",
+  "Apache License, Version 2.0", "ISC License", "MIT License", owner decision 2026-11-07).
+  Everything else fails closed: an unknown id, a string the parser rejects, an ambiguous name
+  ("BSD") and any `WITH` exception. The two trove classifiers "BSD License" and
+  "Apache Software License" name a family without a version; every member of both families is
+  permissive, so they map to BSD-3-Clause and Apache-2.0 (tokenizers, python-dateutil and jinja2
+  declare only these). The JS SPDX
+  libraries (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`) are not used: all of them
+  depend on `spdx-exceptions` (CC-BY-3.0), which the allowlist does not include.
+  `license-expression` itself ships a CC-BY-4.0 data file (`scancode-licensedb-index.json`):
+  accepted by the owner (2026-11-07) because CC-BY only asks to keep the credit, the credit ships
+  with the package, and the tool runs in `pnpm check` only, never in a shipped image. This does
+  not put CC-BY on the code allowlist. Adding an alias
+  or a license is an owner decision, like everything in this ADR.
 - MPL-2.0 is allowed (owner decision, 2026-11-05). It is file-level copyleft: its obligations
   attach only to the MPL-licensed files themselves, and only if we modify and distribute them.
   Using an unmodified MPL-2.0 package (as a dependency, bundled or not) puts no obligations on
@@ -36,7 +59,7 @@ copyleft license, including the file-level MPL-2.0, which kept Tailwind on v3 an
   finds, so they stay visible in review. It also fails if a container image is not documented in
   `docs/LICENSES.md`. CI runs it on every push.
 - Narrow, documented exceptions only:
-  - Python `typing_extensions` declares `PSF-2.0`, treated as `Python-2.0`.
+  - Python `typing_extensions` declares `PSF-2.0`, treated as `Python-2.0` (an alias).
   - Rust `unicode-ident` (`Unicode-3.0`) and `target-lexicon` (`Apache-2.0 WITH LLVM-exception`)
     are build-time-only crates of PyO3 (proc macros / build script), not compiled into the wheel.
     Both are permissive.
