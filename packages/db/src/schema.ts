@@ -148,18 +148,36 @@ export const attachments = pgTable(
   (t) => [index().on(t.projectId), tenantIsolation()],
 );
 
+/**
+ * Who did what, per organization. `org_id` is null only for operator actions on a user who belongs
+ * to no organization (docs/admin.md): no tenant sees those rows, and the `platform_audit` policy
+ * lets only the `app_operator_audit` role (withPlatformAudit, index.ts) insert them, and only
+ * `operator.*` ones.
+ */
 export const auditLog = pgTable(
   'audit_log',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    orgId: orgId(),
+    orgId: text('org_id').references(() => organization.id, { onDelete: 'cascade' }),
     actorId: text('actor_id'),
     action: text('action').notNull(),
     target: text('target'),
     ip: text('ip'),
+    /** Why an operator did it (`operator.*` actions, required there; docs/admin.md). */
+    reason: text('reason'),
+    /** Time-boxed actions (`operator.impersonation.started`): when the effect ends by itself. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index().on(t.orgId, t.createdAt), tenantIsolation()],
+  (t) => [
+    index().on(t.orgId, t.createdAt),
+    tenantIsolation(),
+    pgPolicy('platform_audit', {
+      for: 'insert',
+      to: 'app_operator_audit', // PLATFORM_AUDIT_ROLE (index.ts), created by migrate.ts
+      withCheck: sql`org_id is null and action like 'operator.%'`,
+    }),
+  ],
 );
 
 /**

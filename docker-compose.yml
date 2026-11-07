@@ -193,6 +193,8 @@ services:
       PLANE_PROJECT_ID: ${PLANE_PROJECT_ID:-}
       # Booking webhook -> CRM (docs/crm.md); empty = endpoint off.
       BOOKING_WEBHOOK_SECRET: ${BOOKING_WEBHOOK_SECRET:-}
+      # Operator console (docs/admin.md); empty = no operators.
+      OPERATOR_EMAILS: ${OPERATOR_EMAILS:-}
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
       # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1

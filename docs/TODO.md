@@ -1,5 +1,17 @@
 # Known limitations / backlog
 
+- **Operator console: no Chatwoot link per user/organization** (docs/admin.md). The integration
+  stores none (ADR 0013). If support wants one: read the contact by `identifier` (user id) through
+  the Chatwoot API in the worker or API and link `/app/accounts/<id>/contacts/<contact id>`; verify
+  the URL scheme against the deployed Chatwoot version first.
+- **Operator console: a suspended org's owner who switched away cannot request its export/deletion**
+  (`apps/api/src/operator-guard.ts` blocks `organization/set-active` into a suspended org;
+  `/api/privacy/org/*` needs it active). Fix: let set-active into a suspended org through (every
+  tenant route still answers 403) or give the privacy org routes an explicit org id checked
+  against owner membership. Test in `apps/api/test/admin.test.ts`.
+- **Operator console: the app DB login can `SET ROLE app_operator_read` / `app_operator_audit`**
+  (ADR 0025): a SQL injection in the API could read every tenant or write org-less audit rows.
+  Fix if the risk matters: a separate login for the console (`OPERATOR_DATABASE_URL`).
 - **LiteLLM's dependencies fail the license gate (blocks CI of ADR 0024).** `pnpm check:licenses`
   rejects `jinja2`, `fastuuid`, `aiosignal`, `s3transfer`, `tokenizers`, `tiktoken`,
   `python-dateutil` (metadata the gate cannot map) and `regex` (`Apache-2.0 AND CNRI-Python`). No

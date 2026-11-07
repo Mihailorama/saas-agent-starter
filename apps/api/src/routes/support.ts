@@ -197,11 +197,13 @@ export const supportRoutes: FastifyPluginAsyncZod = async (app) => {
     '/identity',
     {
       config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
-      schema: { response: { 200: Identity, 401: ErrorBody, 404: ErrorBody } },
+      schema: { response: { 200: Identity, 401: ErrorBody, 403: ErrorBody, 404: ErrorBody } },
     },
     async (req, reply) => {
       const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
       if (!session) return reply.code(401).send({ error: 'unauthorized' });
+      // An operator viewing as the user must not write to support in their name (docs/admin.md).
+      if (session.session.impersonatedBy) return reply.code(403).send({ error: 'forbidden' });
       if (!env.CHATWOOT_HMAC_TOKEN) return reply.code(404).send({ error: 'support is off' });
       const { user } = session;
       // Chatwoot recomputes this with the inbox's HMAC token: nobody can pose as another user.

@@ -25,6 +25,7 @@ from worker.ai import (
     Price,
     load_registry,
 )
+from worker.billing import OrgSuspended
 from worker.s3 import S3
 
 PROMPT = "Summarize: the secret launch plan for Apollo"
@@ -196,3 +197,41 @@ async def test_summarize_project_stores_generated_summary_once(
 async def test_summarize_is_off_without_a_model(pool: asyncpg.Pool, gateway: Gateway):
     event = ProjectCreated(orgId="x", projectId=str(uuid.uuid4()), name="x")
     assert await Activities(pool, gateway, None).summarize_project(event) is None
+
+
+async def suspended_org(pool: asyncpg.Pool) -> str:
+    org_id = await new_org(pool)
+    await pool.execute("update organization set suspended_at = now() where id = $1", org_id)
+    return org_id
+
+
+async def test_suspended_org_gets_no_llm_calls(gateway: Gateway, pool: asyncpg.Pool):
+    org_id = await suspended_org(pool)
+    with pytest.raises(OrgSuspended):
+        await call(gateway, org_id, "fake", "fake-model", "project.summary")
+    assert await ai_calls(pool, org_id) == []
+
+
+async def test_project_activities_refuse_a_suspended_org(gateway: Gateway, pool: asyncpg.Pool):
+    """Checked inside the activity: work queued before the suspension stops too."""
+    org_id, project_id = await suspended_org(pool), str(uuid.uuid4())
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+        await conn.execute(
+            "insert into projects (id, org_id, name, description) values ($1, $2, 'A', 'B')",
+            project_id,
+            org_id,
+        )
+    event = ProjectCreated(orgId=org_id, projectId=project_id, name="A")
+    activities = Activities(pool, gateway, ModelChoice("fake", "fake-model"))
+    with pytest.raises(OrgSuspended) as err:
+        await activities.fingerprint_project(event)
+    assert err.value.non_retryable
+    with pytest.raises(OrgSuspended):
+        await activities.summarize_project(event)
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+        project = await conn.fetchrow("select * from projects where id = $1", project_id)
+    assert project is not None
+    assert (project["fingerprint"], project["ai_summary"]) == (None, None)
+    assert await ai_calls(pool, org_id) == []

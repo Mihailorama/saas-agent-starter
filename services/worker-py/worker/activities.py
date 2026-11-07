@@ -6,7 +6,7 @@ from temporalio.exceptions import ApplicationError
 
 from worker import prompts
 from worker.ai import Gateway, Message
-from worker.billing import SpendLimitExceeded
+from worker.billing import SpendLimitExceeded, ensure_org_active
 from worker.text import simhash
 
 
@@ -57,6 +57,7 @@ class Activities:
         fingerprint = f"{simhash(event.name):016x}"
         async with self.pool.acquire() as conn, conn.transaction():
             # Same tenant scoping as the API: RLS only shows this org's rows.
+            await ensure_org_active(conn, event.orgId)
             await conn.execute("select set_config('app.org_id', $1, true)", event.orgId)
             updated = await conn.fetchval(
                 "update projects set fingerprint = $1"
@@ -87,6 +88,7 @@ class Activities:
         if self.ai is None or self.summary_model is None:
             return None
         async with self.pool.acquire() as conn, conn.transaction():
+            await ensure_org_active(conn, event.orgId)
             await conn.execute("select set_config('app.org_id', $1, true)", event.orgId)
             project = await conn.fetchrow(
                 "select name, description, ai_summary from projects where id = $1",

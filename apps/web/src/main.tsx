@@ -15,6 +15,9 @@ import { Toaster } from '@/components/ui/sonner';
 import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
+import { AdminShell } from '@/pages/admin';
+import { AdminOrgPage, AdminOrgsPage } from '@/pages/admin-orgs';
+import { AdminUserPage, AdminUsersPage } from '@/pages/admin-users';
 import { AiCallsPage } from '@/pages/ai-calls';
 import { AiProvidersPage } from '@/pages/ai-providers';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
@@ -148,6 +151,34 @@ const securityRoute = createRoute({
   component: SecurityPage,
 });
 
+// Operator console (docs/admin.md): its own layout, outside the customer shell. The API decides
+// who may use it; others see "not available".
+const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin',
+  beforeLoad: requireSession,
+  component: AdminShell,
+});
+const adminOrgsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/',
+  component: AdminOrgsPage,
+});
+const adminOrgRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/orgs/$orgId',
+  component: AdminOrgPage,
+});
+const adminUsersRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/users',
+  component: AdminUsersPage,
+});
+const adminUserRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/users/$userId',
+  component: AdminUserPage,
+});
 const privacyRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/privacy',
@@ -161,6 +192,7 @@ const router = createRouter({
     resetPasswordRoute,
     acceptInvitationRoute,
     aiTransparencyRoute,
+    adminRoute.addChildren([adminOrgsRoute, adminOrgRoute, adminUsersRoute, adminUserRoute]),
     appRoute.addChildren([
       projectsRoute,
       projectRoute,

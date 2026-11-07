@@ -967,7 +967,8 @@ class PrivacyActivities:
         # reference it and must be kept for the record-keeping period (docs/privacy.md).
         await self.pool.execute(
             "update organization set name = 'Deleted organization', slug = 'deleted-' || id,"
-            " logo = null, metadata = null, require_two_factor = false where id = $1",
+            " logo = null, metadata = null, require_two_factor = false, suspend_reason = null"
+            " where id = $1",
             s.id,
         )
         return outcome(
