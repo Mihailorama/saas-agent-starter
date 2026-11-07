@@ -16,6 +16,8 @@ export const user = pgTable('user', {
   email: text('email').notNull().unique(),
   emailVerified: boolean('email_verified').notNull().default(false),
   image: text('image'),
+  /** twoFactor plugin: true once TOTP enrolment is verified. */
+  twoFactorEnabled: boolean('two_factor_enabled').default(false),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -68,6 +70,8 @@ export const organization = pgTable('organization', {
   logo: text('logo'),
   createdAt: timestamp('created_at').notNull(),
   metadata: text('metadata'),
+  /** Org policy, set by admins (routes/security.ts): members need 2FA to reach tenant data. */
+  requireTwoFactor: boolean('require_two_factor').notNull().default(false),
 });
 
 export const member = pgTable('member', {
@@ -128,4 +132,44 @@ export const apikey = pgTable(
     metadata: text('metadata'),
   },
   (t) => [index().on(t.referenceId)],
+);
+
+// twoFactor plugin (better-auth/plugins): TOTP secret and backup codes, both encrypted.
+export const twoFactor = pgTable(
+  'two_factor',
+  {
+    id: text('id').primaryKey(),
+    secret: text('secret').notNull(),
+    backupCodes: text('backup_codes').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    verified: boolean('verified').default(true),
+    failedVerificationCount: integer('failed_verification_count').default(0),
+    lockedUntil: timestamp('locked_until'),
+    /** Ours, not the plugin's: last accepted TOTP time step, so a code works once (mfa.ts). */
+    lastTotpStep: integer('last_totp_step'),
+  },
+  (t) => [index().on(t.secret), index().on(t.userId)],
+);
+
+// Passkey plugin (@better-auth/passkey): WebAuthn credentials (public keys only).
+export const passkey = pgTable(
+  'passkey',
+  {
+    id: text('id').primaryKey(),
+    name: text('name'),
+    publicKey: text('public_key').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    credentialID: text('credential_id').notNull(),
+    counter: integer('counter').notNull(),
+    deviceType: text('device_type').notNull(),
+    backedUp: boolean('backed_up').notNull(),
+    transports: text('transports'),
+    createdAt: timestamp('created_at'),
+    aaguid: text('aaguid'),
+  },
+  (t) => [index().on(t.userId), index().on(t.credentialID)],
 );

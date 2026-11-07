@@ -27,6 +27,11 @@ and easy to get subtly wrong. Usage: [docs/public-api.md](../public-api.md).
 - Keys are created and revoked only through `/api/api-keys` (session, org admin): it sets
   scopes (server-only in the plugin) and writes `audit_log`. The plugin's own
   `/api/auth/api-key/*` HTTP endpoints are closed. A key can never manage keys.
+- Keys are exempt from an organization's "require 2FA" policy (ADR 0017) by design: a key is a
+  machine credential with no person to present a second factor, it is itself a long random
+  secret (scoped, expiring, revocable, rate-limited, audit-logged), and only a session that
+  satisfies the policy can mint or revoke one (`/api/api-keys` goes through `requireRole`).
+  Turning the policy on does not revoke existing keys; admins should review the key list then.
 - Rate limits stay in `@fastify/rate-limit` + Redis, per key; the plugin's per-row counter is
   off (one store for all limits, shared across replicas).
 

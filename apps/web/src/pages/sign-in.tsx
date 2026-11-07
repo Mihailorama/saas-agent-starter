@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { Layers, MailCheck } from 'lucide-react';
+import { KeyRound, Layers, MailCheck } from 'lucide-react';
 import { type FormEvent, type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -83,6 +83,15 @@ export function SignInPage() {
     }
   }
 
+  async function onPasskey() {
+    setPending(true);
+    const { error } = await authClient.signIn.passkey();
+    setPending(false);
+    if (error) return toast.error(error.message ?? 'Passkey sign-in failed');
+    track('passkey_signin_completed');
+    navigate({ href: redirect ?? '/' });
+  }
+
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -113,7 +122,7 @@ export function SignInPage() {
       if (!data.token) return setSentTo(email); // email confirmation required first
       return navigate({ href: redirect ?? '/' });
     }
-    const { error } = await authClient.signIn.email({
+    const { data, error } = await authClient.signIn.email({
       email,
       password,
       callbackURL: redirect ?? '/',
@@ -123,6 +132,10 @@ export function SignInPage() {
       return toast.error('Confirm your email first: we have sent you a new link.');
     }
     if (error) return toast.error(error.message ?? 'Something went wrong');
+    // Account with 2FA: the password was right, the second step is next (no session yet).
+    if ('twoFactorRedirect' in data && data.twoFactorRedirect) {
+      return navigate({ to: '/two-factor', search: { redirect } });
+    }
     track('signin_completed');
     navigate({ href: redirect ?? '/' });
   }
@@ -197,6 +210,17 @@ export function SignInPage() {
           {submit}
         </Button>
       </form>
+      {mode === 'sign-in' && (
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-3 w-full"
+          disabled={pending}
+          onClick={onPasskey}
+        >
+          <KeyRound className="size-4" aria-hidden /> Sign in with a passkey
+        </Button>
+      )}
       {config?.sso && mode === 'sign-in' && (
         <Button
           type="button"

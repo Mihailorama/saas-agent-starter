@@ -5,7 +5,7 @@ one-command quality gate, small colocated files and an `AGENTS.md` that tells ag
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
 obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
-- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles), Drizzle + Postgres
+- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,

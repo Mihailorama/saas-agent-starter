@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   auditLog,
+  organization,
   user,
   webhookDeliveries,
   webhookEndpoints,
@@ -200,6 +201,24 @@ describe('API keys', () => {
     );
     await (await temporal()).workflow.getHandle(`project-created-${project.id}`).terminate('test');
     await (await temporal()).workflow.getHandle(`project-created-${other.id}`).terminate('test');
+  });
+
+  it('keys are exempt from the org 2FA policy; only a compliant session can mint them', async () => {
+    const { owner, org } = await newOrg();
+    const { key } = await createKey(owner, ['projects:read']);
+    // The org now requires 2FA and the owner has none (ADR 0017).
+    await db.update(organization).set({ requireTwoFactor: true }).where(eq(organization.id, org));
+    const sessionRead = await call(owner, 'GET', '/api/projects');
+    expect(sessionRead.statusCode).toBe(403);
+    expect(sessionRead.json().error).toBe('two-factor authentication required');
+    const mint = await call(owner, 'POST', '/api/api-keys', {
+      name: 'x',
+      scopes: ['projects:read'],
+      expiresInDays: null,
+    });
+    expect(mint.statusCode).toBe(403);
+    // A key is a machine credential: it keeps working (ADR 0018).
+    expect((await withKey(key, 'GET', '/api/projects')).statusCode).toBe(200);
   });
 
   it('rate limits per key', async () => {

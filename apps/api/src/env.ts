@@ -64,6 +64,12 @@ const schema = z
       ),
     /** Outbound webhooks: largest JSON body publishEvent() accepts (the worker checks it too). */
     WEBHOOK_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().default(65_536),
+    /** Shown in authenticator apps (TOTP issuer) and passkey prompts (WebAuthn RP name). */
+    APP_NAME: z.string().min(1).default('Workspace'),
+    /** WebAuthn relying party: registrable domain, defaults to the BETTER_AUTH_URL host. */
+    PASSKEY_RP_ID: z.string().min(1).optional(),
+    /** Origin(s) passkey ceremonies run on, comma-separated; defaults to BETTER_AUTH_URL's. */
+    PASSKEY_ORIGIN: list,
     OIDC_ISSUER: z.url().optional(),
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),

@@ -16,6 +16,9 @@ Revoking deletes the key at once. Create and revoke are written to `audit_log`.
 curl -H "Authorization: Bearer $API_KEY" https://app.example.com/api/projects
 ```
 
+If the organization requires 2FA, keys keep working (machine credentials, ADR 0018), but only an
+admin who has 2FA can create or revoke them; turning the policy on does not revoke existing keys.
+
 A key acts in the organization that owns it: the request runs in that tenant's RLS transaction
 like a session would (ADR 0002), and `audit_log.actor_id` is `apikey:<key id>`.
 
