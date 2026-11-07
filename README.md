@@ -19,6 +19,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
+- **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and
+  Telegram; AI triage writes private notes and files or "+1"s GitHub / Plane Intake items, and
+  closed items are reported back to the conversation.
 - **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
   `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
   dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
@@ -117,6 +120,24 @@ stay in place (on-prem, RU)? `docker compose --profile analytics up -d` runs Uma
 same Postgres. Optional, consent-gated: GA4, Yandex Metrika. AI-answer thumbs go to PostHog AI
 observability and/or Langfuse. Events are catalogued in `config/events.json` and checked in CI.
 Details: [docs/product-analytics.md](docs/product-analytics.md).
+
+## Service desk
+
+Off until you set env. `docker compose --profile support up -d` runs Chatwoot (MIT core, `-ce`
+image) with its own pgvector Postgres. Set the website inbox token and HMAC token for the Help
+menu, the webhook secret for triage, and a model for `support.triage`; tickets stay in Chatwoot,
+backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
+Details: [docs/support.md](docs/support.md).
+
+## LLM-ops
+
+Quality loop ([ADR 0009](docs/adr/0009-llm-ops.md)): prompts are versioned files in `prompts/`;
+`pnpm eval` runs the Promptfoo golden sets in `evals/` (key-free; `pnpm eval:real` runs the real
+model and judge through your Claude subscription via the `claude` CLI); with `POSTHOG_KEY`
+and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (privacy mode on), so
+the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
+(`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
+(about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
 
 ## Feature flags and releases
 

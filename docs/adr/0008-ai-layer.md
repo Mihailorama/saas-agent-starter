@@ -59,10 +59,10 @@ fact is impossible if calls are scattered across the code base.
 - **Prompt content in spans**: convenient in trace UIs, but it copies personal data into a
   second store with its own retention and access rules. Use the `*_ref` attributes instead.
 
-## Using Langfuse as a UI (optional, not shipped)
+## Using Langfuse as a UI
 
-[Langfuse](https://github.com/langfuse/langfuse) can display the same spans. Facts below are
-from its docs and repository, checked 2026-11-05:
+Superseded by the `llmops` compose profile and [ADR 0009](0009-llm-ops.md) (Langfuse v4,
+checked 2026-11-06). The notes below are the original v3-era assessment, checked 2026-11-05:
 
 - **License**: MIT ("MIT Expat") for everything outside the `ee/`, `web/src/ee/`,
   `worker/src/ee/` and `packages/shared/src/server/ee/` directories, which are under a separate

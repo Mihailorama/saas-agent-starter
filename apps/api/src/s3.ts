@@ -31,6 +31,17 @@ export async function ensureBucket() {
   }
 }
 
+/** LLM request/response JSON written by the worker; null when gone (retention expired). */
+export async function getAiContent(key: string): Promise<unknown> {
+  try {
+    const res = await s3.send(new GetObjectCommand({ Bucket: env.AI_CONTENT_BUCKET, Key: key }));
+    return JSON.parse((await res.Body?.transformToString()) ?? 'null');
+  } catch (err) {
+    if ((err as { name?: string }).name === 'NoSuchKey') return null;
+    throw err;
+  }
+}
+
 const EXPIRES = 300;
 
 export const presignUpload = (key: string, contentType: string, size: number) =>

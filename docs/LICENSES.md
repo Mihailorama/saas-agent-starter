@@ -7,27 +7,33 @@ unmodified, not distributed with the app**, so any license is acceptable, AGPL a
 source-available included. Every image must still be listed below; `pnpm check:licenses` fails
 on an image that is not. Their primary software licenses:
 
-| Image                                  | Used for                                           | License                  |
-| -------------------------------------- | -------------------------------------------------- | ------------------------ |
-| `postgres`                             | database (app + Temporal)                          | PostgreSQL               |
-| `redis`                                | rate-limit store                                   | RSALv2 / SSPLv1 / AGPLv3 |
-| `valkey/valkey`                        | rate-limit store (permissive twin)                 | BSD-3-Clause             |
-| `chrislusf/seaweedfs`                  | local S3-compatible storage (dev only)             | Apache-2.0               |
-| `temporalio/server`                    | workflow engine                                    | MIT                      |
-| `temporalio/admin-tools`               | Temporal schema setup, namespace                   | MIT                      |
-| `temporalio/ui`                        | Temporal Web UI                                    | MIT                      |
-| `otel/opentelemetry-collector-contrib` | telemetry pipeline, container logs (observability) | Apache-2.0               |
-| `jaegertracing/jaeger`                 | traces (observability profile)                     | Apache-2.0               |
-| `prom/prometheus`                      | metrics, alert rules (observability)               | Apache-2.0               |
-| `grafana/loki`                         | logs (observability profile)                       | AGPL-3.0                 |
-| `grafana/grafana`                      | dashboards, single pane (observability)            | AGPL-3.0                 |
-| `glitchtip/glitchtip`                  | error tracking, Sentry API (glitchtip profile)     | MIT                      |
-| `node`                                 | API runtime and web build                          | MIT                      |
-| `nginxinc/nginx-unprivileged`          | web static files + `/api` proxy                    | BSD-2-Clause             |
-| `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0        |
-| `python`                               | worker runtime                                     | Python-2.0 (PSF)         |
-| `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                      |
-| `axllent/mailpit`                      | catches outgoing mail in dev (UI/API :8025)        | MIT                      |
+| Image                                  | Used for                                           | License                     |
+| -------------------------------------- | -------------------------------------------------- | --------------------------- |
+| `postgres`                             | database (app + Temporal)                          | PostgreSQL                  |
+| `redis`                                | rate-limit store                                   | RSALv2 / SSPLv1 / AGPLv3    |
+| `valkey/valkey`                        | rate-limit store (permissive twin)                 | BSD-3-Clause                |
+| `chrislusf/seaweedfs`                  | local S3-compatible storage (dev only)             | Apache-2.0                  |
+| `temporalio/server`                    | workflow engine                                    | MIT                         |
+| `temporalio/admin-tools`               | Temporal schema setup, namespace                   | MIT                         |
+| `temporalio/ui`                        | Temporal Web UI                                    | MIT                         |
+| `otel/opentelemetry-collector-contrib` | telemetry pipeline, container logs (observability) | Apache-2.0                  |
+| `jaegertracing/jaeger`                 | traces (observability profile)                     | Apache-2.0                  |
+| `prom/prometheus`                      | metrics, alert rules (observability)               | Apache-2.0                  |
+| `grafana/loki`                         | logs (observability profile)                       | AGPL-3.0                    |
+| `grafana/grafana`                      | dashboards, single pane (observability)            | AGPL-3.0                    |
+| `glitchtip/glitchtip`                  | error tracking, Sentry API (glitchtip profile)     | MIT                         |
+| `node`                                 | API runtime and web build                          | MIT                         |
+| `nginxinc/nginx-unprivileged`          | web static files + `/api` proxy                    | BSD-2-Clause                |
+| `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0           |
+| `python`                               | worker runtime                                     | Python-2.0 (PSF)            |
+| `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                         |
+| `axllent/mailpit`                      | catches outgoing mail in dev (UI/API :8025)        | MIT                         |
+| `ghcr.io/promptfoo/promptfoo`          | eval engine for `pnpm eval` (eval profile)         | MIT                         |
+| `langfuse/langfuse`                    | Langfuse web (llmops profile)                      | MIT core + `ee/` commercial |
+| `langfuse/langfuse-worker`             | Langfuse worker (llmops profile)                   | MIT core + `ee/` commercial |
+| `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
+| `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
+| `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -68,6 +74,16 @@ Notes:
   `posthog-js` is `Apache-2.0 AND MIT` (both permissive; ship the notices), `@langfuse/browser`
   is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
+- `ghcr.io/promptfoo/promptfoo`: Promptfoo itself is MIT, but its npm dependency tree is not
+  (checked 2026-11-06 with `promptfoo@0.125.1`: `@img/sharp-libvips-*` LGPL-3.0-or-later,
+  `binaryextensions`/`istextorbinary`/... Artistic-2.0, `sylvester` unknown), so it would fail
+  the code-dependency gate. It runs as an unmodified dev-tool container instead
+  ([ADR 0009](adr/0009-llm-ops.md)).
+- `langfuse/*`: MIT for everything outside the `ee/` directories, which are under a commercial
+  license and only active with a license key. Everything this repo uses (OTLP ingestion,
+  scores, prompt management) is in the MIT core
+  ([LICENSE](https://github.com/langfuse/langfuse/blob/main/LICENSE),
+  [license key](https://langfuse.com/self-hosting/license-key)).
 - Feature-flag code dependencies ([docs/feature-flags.md](feature-flags.md), checked by the gate):
   `posthog-node` (MIT, API); `posthog-js` (above) in the web. The worker calls PostHog's `/flags`
   HTTP API with the existing `httpx2`: the `posthog` PyPI SDK (MIT) depends on `distro`, whose
@@ -90,6 +106,17 @@ Notes:
   (Apache-2.0 OR BSD-3-Clause; with `cffi` MIT-0 and `pycparser` BSD-3-Clause), which decrypts
   the signing secrets. Self-hosted Svix (`svix/svix-server`, MIT) was evaluated and not added:
   its open-source edition has no customer app portal.
+- `chatwoot/chatwoot` (service desk, [docs/support.md](support.md)): the repository's
+  [LICENSE](https://github.com/chatwoot/chatwoot/blob/develop/LICENSE) puts everything outside
+  `enterprise/` under MIT (Expat) and `enterprise/` under its own license (`enterprise/LICENSE`).
+  We run only the `-ce` tag (`v4.19.1-ce`), which Chatwoot's
+  [publish_foss_docker.yml](https://github.com/chatwoot/chatwoot/blob/develop/.github/workflows/publish_foss_docker.yml)
+  builds after `rm -rf enterprise`, so no enterprise code is in the image and none of its
+  features (Captain AI, SLA, custom roles, audit logs) are used. The plain `vX.Y.Z` tag
+  contains `enterprise/`: do not switch to it. Chatwoot Cloud is an external service, not shipped.
+- `pgvector/pgvector`: the official Postgres image plus the pgvector extension (PostgreSQL
+  License, [LICENSE](https://github.com/pgvector/pgvector/blob/master/LICENSE)). Chatwoot's schema
+  enables `vector`, which `postgres:17-alpine` does not ship, so Chatwoot gets this server.
 
 ## Permissive twin (replacement map)
 

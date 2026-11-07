@@ -22,6 +22,7 @@ import { aiCallRoutes } from './routes/ai-calls.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
+import { supportHookRoutes, supportRoutes } from './routes/support.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
 import { redactUrl } from './sentry.ts';
 import { bearerToken } from './tenant.ts';
@@ -188,6 +189,8 @@ export async function buildApp() {
   await app.register(hookRoutes, { prefix: '/api/hooks' });
   await app.register(apiKeyRoutes, { prefix: '/api/api-keys' });
   await app.register(webhookRoutes, { prefix: '/api/webhooks' });
+  await app.register(supportHookRoutes, { prefix: '/api/hooks' });
+  await app.register(supportRoutes, { prefix: '/api/support' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.
   app.get('/api/openapi.json', { schema: { hide: true } }, async () => app.swagger());

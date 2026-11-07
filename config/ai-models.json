@@ -5,21 +5,29 @@
       {
         "provider": "anthropic",
         "model": "claude-haiku-5-5",
-        "purposes": ["project.summary"],
-        "pricePer1kTokens": { "input": 0.0001, "output": 0.0005, "currency": "USD" }
+        "purposes": ["project.summary", "support.triage"],
+        "pricePer1kTokens": {
+          "input": 0.0001,
+          "output": 0.0005,
+          "currency": "USD"
+        }
       },
       {
         "provider": "anthropic",
         "model": "claude-sonnet-5-5",
-        "purposes": ["project.summary"],
-        "pricePer1kTokens": { "input": 0.002, "output": 0.01, "currency": "USD" }
+        "purposes": ["project.summary", "judge", "support.triage"],
+        "pricePer1kTokens": {
+          "input": 0.002,
+          "output": 0.01,
+          "currency": "USD"
+        }
       }
     ],
     "ru": [
       {
         "provider": "openai_compatible",
         "model": "example-self-hosted-model",
-        "purposes": ["project.summary"],
+        "purposes": ["project.summary", "judge"],
         "pricePer1kTokens": null
       }
     ]
