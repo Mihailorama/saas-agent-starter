@@ -62,9 +62,9 @@ with `Released in v` means the fix is live in that version, while "closed" only 
 - Resources created with the workflow's `GITHUB_TOKEN` (release-please's tag and release) do
   not start other workflows, apart from `workflow_dispatch`. That is why `release-please.yml`
   calls `released.yml` directly and dispatches, on the new tag, every workflow that has both a
-  `tags:` trigger and `workflow_dispatch` (today `ci.yml` and `sbom.yml`). A deploy workflow that
-  builds images on `v*` tags must add `workflow_dispatch:` to its triggers to be started this
-  way; no PAT or other secret is needed.
+  `tags:` trigger and `workflow_dispatch` (today `ci.yml`, `sbom.yml` and `release.yml`, which builds
+  the images, docs/deploy.md). A new workflow that runs on `v*` tags must add `workflow_dispatch:`
+  to its triggers to be started this way; no PAT or other secret is needed.
 - release-please opens its PR with `GITHUB_TOKEN`. That needs Settings -> Actions -> General ->
   "Allow GitHub Actions to create and approve pull requests", which is on in this repository
   (set 2026-11-07); a fork or copy of the template must turn it on too. Checks on that PR (CI, PR title) start in an approval-required state, because it was opened

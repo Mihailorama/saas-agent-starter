@@ -93,7 +93,8 @@ LLM spend in the currencies of your models.
 3. Add a webhook endpoint `https://<your app>/api/billing/webhooks/stripe` with the events
    `customer.subscription.created`, `customer.subscription.updated`,
    `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`.
-4. Env (API): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (the endpoint's signing secret);
+4. Env (API; forwarded by `compose.prod.yaml`, set in `deploy/env/<env>.enc.env`):
+   `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (the endpoint's signing secret);
    leave `STRIPE_API_URL` empty. Signatures are checked with the SDK's `constructEventAsync`.
 
 Payment-provider merchant onboarding is outside the template: the merchant entity, the
