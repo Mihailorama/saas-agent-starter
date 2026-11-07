@@ -70,7 +70,8 @@ docker compose --profile support up -d      # chatwoot (UI :3300), chatwoot-side
 - `SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true`: Chatwoot blocks webhooks to private addresses by
   default, and the API is `http://api:3000` on the compose network. Turn it off when the API has
   a public URL.
-- Production: set `CHATWOOT_SECRET_KEY_BASE` (`openssl rand -hex 64`), `CHATWOOT_FRONTEND_URL`
+- Production: set `CHATWOOT_DB_PASSWORD` (its database shares the server with app data),
+  `CHATWOOT_SECRET_KEY_BASE` (`openssl rand -hex 64`), `CHATWOOT_FRONTEND_URL`
   (its public HTTPS URL; Telegram and email need it) and the SMTP variables. Put it behind the
   same reverse proxy as the app.
 

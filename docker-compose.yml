@@ -550,13 +550,16 @@ services:
     profiles: [support]
     image: postgres:17-alpine # psql only
     depends_on: { postgres: { condition: service_healthy } }
-    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    environment:
+      { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres, CHATWOOT_DB_PASSWORD: &cwpw "${CHATWOOT_DB_PASSWORD:-local-dev-chatwoot}" }
     entrypoint: ["/bin/sh", "-c"]
     # Extensions as superuser: `vector` and `pg_stat_statements` are not trusted extensions.
+    # The password is (re)set on every run, so changing CHATWOOT_DB_PASSWORD takes effect.
     command:
       - >-
         (psql -tAc "select 1 from pg_roles where rolname = 'chatwoot'" | grep -q 1 ||
-         psql -c "create role chatwoot login password 'chatwoot'") &&
+         psql -c "create role chatwoot login") &&
+        echo "alter role chatwoot password :'pw'" | psql -v pw="$$CHATWOOT_DB_PASSWORD" &&
         (psql -tAc "select 1 from pg_database where datname = 'chatwoot'" | grep -q 1 ||
          psql -c "create database chatwoot owner chatwoot") &&
         psql -d chatwoot -c "create extension if not exists vector" -c "create extension if not exists pg_stat_statements"
@@ -574,7 +577,7 @@ services:
         FRONTEND_URL: ${CHATWOOT_FRONTEND_URL:-http://localhost:${CHATWOOT_PORT:-3300}}
         POSTGRES_HOST: postgres
         POSTGRES_USERNAME: chatwoot
-        POSTGRES_PASSWORD: chatwoot
+        POSTGRES_PASSWORD: *cwpw
         POSTGRES_DATABASE: chatwoot
         REDIS_URL: redis://redis:6379/2
         RAILS_LOG_TO_STDOUT: "true"
