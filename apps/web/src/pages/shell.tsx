@@ -6,6 +6,7 @@ import {
   Check,
   ChevronsUpDown,
   Cookie,
+  Cpu,
   CreditCard,
   Eye,
   FolderKanban,
@@ -50,6 +51,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
+import { useFlag } from '@/lib/flags';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -315,6 +317,7 @@ export function Shell() {
   const suspended = policy.error?.message === ORG_SUSPENDED;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
+  const byoProviders = useFlag('byo-llm-providers');
 
   const banner = viewedBy && session && (
     <ImpersonationBanner
@@ -395,6 +398,15 @@ export function Shell() {
                 >
                   <Webhook className="size-4" /> Webhooks
                 </Link>
+                {byoProviders && (
+                  <Link
+                    to="/settings/ai-providers"
+                    className={navLink}
+                    activeProps={{ className: navActive }}
+                  >
+                    <Cpu className="size-4" /> AI providers
+                  </Link>
+                )}
               </>
             )}
           </nav>

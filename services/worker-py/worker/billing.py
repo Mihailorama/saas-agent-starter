@@ -2,7 +2,9 @@
 
 - `Plans`: config/plans.json, the same file the API reads (apps/api/src/billing/plans.ts).
 - `ensure_org_active`: refuses work of an org an operator suspended (activities, the gateway).
-- `check_llm_budget`: the LLM spend limit, called by `Gateway.call_llm` before every call.
+- `check_llm_budget`: the LLM spend limit, called by `Gateway.call_llm` before a priced call.
+- `check_llm_usage`: the calls/tokens limit, called before a call of an unmetered model (CLI
+  subscriptions, self-hosted), which has no cost to limit.
 - `BillingActivities.apply_billing_event`: writes a normalized provider event (from the API's
   webhook route, via BillingEventWorkflow) to `subscriptions`. Idempotent: older events never
   overwrite newer state, and audit rows are written once per event.
@@ -10,7 +12,8 @@
 
 import json
 import logging
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -33,6 +36,10 @@ spend_ratio = meter.create_histogram(
 blocked_calls = meter.create_counter(
     "billing.llm_blocked", description="AI calls refused because the spend limit was reached"
 )
+usage_blocked = meter.create_counter(
+    "billing.llm_usage_blocked",
+    description="Unmetered AI calls refused because the calls/tokens limit was reached",
+)
 
 WARN_RATIO = Decimal("0.8")  # same as LLM_WARN_RATIO in apps/api/src/routes/billing.ts
 PAID = frozenset({"active", "past_due"})
@@ -51,6 +58,9 @@ class Plan:
     llm_spend_max: dict[str, Decimal]
     llm_limit_raise: bool
     prices: dict[str, Price]
+    # Unmetered models (subscriptions, self-hosted): {"calls": n, "tokens": n}, either optional.
+    llm_usage_monthly: dict[str, int] = field(default_factory=dict[str, int])
+    byo_llm: bool = False  # organizations may bring their own provider (ai_providers)
 
 
 @dataclass(frozen=True)
@@ -87,6 +97,10 @@ def load_plans(path: Path) -> Plans:
             llm_spend_max=_money(p["llmSpendMax"]),
             llm_limit_raise=bool(p["features"].get("llmLimitRaise", False)),
             prices={c: Price(x["amount"], x["interval"]) for c, x in p["prices"].items()},
+            llm_usage_monthly={
+                k: int(v) for k, v in p["limits"].get("llmUsageMonthly", {}).items()
+            },
+            byo_llm=bool(p["features"].get("byoLlm", False)),
         )
         for plan_id, p in doc["plans"].items()
     }
@@ -120,8 +134,26 @@ class Budget:
 
 
 class SpendLimitExceeded(ApplicationError):
+    def __init__(self, message: str, type: str = "SpendLimitExceeded") -> None:
+        super().__init__(message, type=type, non_retryable=True)
+
+
+class UsageLimitExceeded(SpendLimitExceeded):
+    """The calls/tokens limit for unmetered models; callers handle it like the spend limit."""
+
     def __init__(self, message: str) -> None:
-        super().__init__(message, type="SpendLimitExceeded", non_retryable=True)
+        super().__init__(message, type="UsageLimitExceeded")
+
+
+_SUBSCRIPTION = (
+    "select plan_id, status, current_period_start, current_period_end, llm_spend_limits"
+    " from subscriptions"
+)
+
+
+async def byo_allowed(conn: PoolConnectionProxy, plans: Plans) -> bool:
+    """Whether the org's plan in force includes BYO providers (`conn` scoped to the org)."""
+    return plans.effective(await conn.fetchrow(_SUBSCRIPTION), datetime.now(UTC))[1].byo_llm
 
 
 class OrgSuspended(ApplicationError):
@@ -146,10 +178,7 @@ async def llm_budget(
     conn: PoolConnectionProxy, plans: Plans, org_id: str, currency: str, now: datetime
 ) -> Budget:
     """Spend vs. limit; `conn` must be in a transaction with app.org_id set (RLS)."""
-    sub = await conn.fetchrow(
-        "select plan_id, status, current_period_start, current_period_end, llm_spend_limits"
-        " from subscriptions"
-    )
+    sub = await conn.fetchrow(_SUBSCRIPTION)
     plan_id, plan = plans.effective(sub, now)
     start, end = billing_period(plans, sub, now)
     # Index range scan on ai_calls (org_id, created_at); tests/test_billing.py checks the plan.
@@ -191,6 +220,43 @@ async def check_llm_budget(pool: asyncpg.Pool, plans: Plans, org_id: str, curren
         )
     if ratio >= WARN_RATIO:
         log.warning("org %s: LLM spend at %d%% of the limit", org_id, int(ratio * 100))
+
+
+async def check_llm_usage(
+    pool: asyncpg.Pool, plans: Plans, org_id: str, models: Sequence[str]
+) -> None:
+    """Raises UsageLimitExceeded once the org's successful calls of unmetered models
+    (`models`: provider/model) or their tokens reach the plan's llmUsageMonthly.
+
+    ponytail: check-then-act like the spend limit; concurrent calls can overshoot by one each.
+    """
+    now = datetime.now(UTC)
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+        sub = await conn.fetchrow(_SUBSCRIPTION)
+        plan_id, plan = plans.effective(sub, now)
+        if not plan.llm_usage_monthly:
+            return
+        start, end = billing_period(plans, sub, now)
+        # Same index range scan as the spend sum, then a filter on the few unmetered models.
+        used = await conn.fetchrow(
+            "select count(*) as calls, coalesce(sum(total_tokens), 0) as tokens from ai_calls"
+            " where org_id = $1 and created_at >= $2 and created_at < $3 and status = 'ok'"
+            " and provider || '/' || request_model = any($4::text[])",
+            org_id,
+            start,
+            end,
+            list(models),
+        )
+    assert used is not None
+    for unit in ("calls", "tokens"):
+        limit = plan.llm_usage_monthly.get(unit)
+        if limit is not None and used[unit] >= limit:
+            usage_blocked.add(1, {"plan": plan_id, "unit": unit})
+            log.warning("org %s: LLM usage limit (%s) reached, call refused", org_id, unit)
+            raise UsageLimitExceeded(
+                f"LLM usage limit ({unit}) for this billing period is reached; upgrade the plan"
+            )
 
 
 @dataclass(frozen=True)

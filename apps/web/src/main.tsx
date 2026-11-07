@@ -19,6 +19,7 @@ import { AdminShell } from '@/pages/admin';
 import { AdminOrgPage, AdminOrgsPage } from '@/pages/admin-orgs';
 import { AdminUserPage, AdminUsersPage } from '@/pages/admin-users';
 import { AiCallsPage } from '@/pages/ai-calls';
+import { AiProvidersPage } from '@/pages/ai-providers';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { ApiKeysPage } from '@/pages/api-keys';
 import { BillingPage } from '@/pages/billing';
@@ -138,6 +139,12 @@ const webhooksRoute = createRoute({
   component: WebhooksPage,
 });
 
+const aiProvidersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/ai-providers',
+  component: AiProvidersPage,
+});
+
 const securityRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/security',
@@ -194,6 +201,7 @@ const router = createRouter({
       privacyRoute,
       apiKeysRoute,
       webhooksRoute,
+      aiProvidersRoute,
       billingRoute,
     ]),
   ]),

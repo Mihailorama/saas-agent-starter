@@ -1,7 +1,7 @@
 // node --test 'scripts/*.test.mjs'  (part of pnpm check:ts; needs the worker venv for uv)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ALIASES, verdicts } from './license-check.mjs';
+import { ALIASES, pyLicenses, pyVerdict, verdicts } from './license-check.mjs';
 
 const check = (licenses) => Object.fromEntries(verdicts(licenses));
 const all = (licenses, want) =>
@@ -54,4 +54,17 @@ test('fails closed on unknown, ambiguous, malformed and disallowed strings', () 
     ],
     false,
   );
+});
+
+test('reviewed packages pass only at the exact reviewed version', () => {
+  const row = (Version) => ({
+    Name: 'tiktoken',
+    Version,
+    'License-Expression': 'UNKNOWN',
+    'License-Metadata': 'MIT License\n\nCopyright (c) 2022 OpenAI, Shantanu Jain\n\nPermission ...',
+    'License-Classifier': 'UNKNOWN',
+  });
+  const verdict = (p) => pyVerdict(p, verdicts(pyLicenses(p)))[0];
+  assert.equal(verdict(row('0.14.0')), true);
+  assert.equal(verdict(row('0.14.1')), false);
 });

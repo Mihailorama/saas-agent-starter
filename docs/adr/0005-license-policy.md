@@ -63,6 +63,11 @@ copyleft license, including the file-level MPL-2.0, which kept Tailwind on v3 an
   - Rust `unicode-ident` (`Unicode-3.0`) and `target-lexicon` (`Apache-2.0 WITH LLVM-exception`)
     are build-time-only crates of PyO3 (proc macros / build script), not compiled into the wheel.
     Both are permissive.
+  - Python `tiktoken` 0.14.0 (via LiteLLM): its License field is the full MIT text, with no
+    License-Expression or classifier the gate can read. Checked against its LICENSE file and
+    accepted as `MIT` (owner approval 2026-11-07) through `REVIEWED` in
+    `scripts/license-check.mjs`: exact name and version only, and the entry's SPDX id still has
+    to pass the allowlist, so another version fails again until it is reviewed.
 - The allowlist applies only to code dependencies. Infrastructure runs as separate containers,
   run unmodified and not distributed with the app, so their license may be anything, AGPL and
   source-available included (owner decision, 2026-11-05); prefer mainstream tools. Each image

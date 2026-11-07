@@ -13,16 +13,18 @@ import { env } from '../env.ts';
 import { startBillingEvent } from '../temporal.ts';
 import { httpError, requireRole, withTenant } from '../tenant.ts';
 
-/** Cost currencies the LLM spend is shown in: those of the priced models of AI_CONTOUR. */
+/**
+ * Cost currencies the LLM spend is shown in: those of the metered models of AI_CONTOUR. A
+ * model without an explicit price is priced from LiteLLM's cost map, in USD (worker/ai.py).
+ */
 const aiModels = JSON.parse(
   readFileSync(new URL('../../../../config/ai-models.json', import.meta.url), 'utf8'),
-) as { contours: Record<string, { pricePer1kTokens: { currency: string } | null }[]> };
+) as { contours: Record<string, AiModel[]> };
+type AiModel = { pricePer1kTokens?: { currency: string } | null; unmetered?: boolean };
+export const costCurrency = (m: AiModel) =>
+  m.unmetered ? null : (m.pricePer1kTokens?.currency ?? 'USD');
 export const costCurrencies = [
-  ...new Set(
-    (aiModels.contours[env.AI_CONTOUR] ?? []).flatMap((m) =>
-      m.pricePer1kTokens ? [m.pricePer1kTokens.currency] : [],
-    ),
-  ),
+  ...new Set((aiModels.contours[env.AI_CONTOUR] ?? []).flatMap((m) => costCurrency(m) ?? [])),
 ];
 /** Soft warning from this share of the limit on; calls are refused at 1 (worker/billing.py). */
 export const LLM_WARN_RATIO = 0.8;

@@ -86,7 +86,7 @@ a reason. Usage: [docs/admin.md](../admin.md).
 - **No feature flag** (owner decision, 2026-11-07): the console is exempt from the feature-flag
   rule (AGENTS.md). It is gated by `OPERATOR_EMAILS` + TOTP + a fresh session, so it is off until
   an operator is listed, and the template has no live users before 1.0.
-- Migration `0006_operator_admin`: nullable/defaulted columns and one policy (expand-only).
+- Migration `0007_operator_admin`: nullable/defaulted columns and one policy (expand-only).
   `migrate.ts` creates the roles, grants and policies on every run; managed PostgreSQL must allow `CREATE ROLE`
   for the migration owner (it already creates the app role).
 - The operator read role sees every column of tenant tables; the routes choose what to show
