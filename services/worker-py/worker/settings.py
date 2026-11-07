@@ -47,3 +47,11 @@ AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
 # Provider credentials: ANTHROPIC_API_KEY and OPENAI_API_KEY are read by the SDKs.
 # OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+
+# Feature flags (docs/feature-flags.md). PostHog decides when POSTHOG_KEY is set; FLAGS_ON /
+# FLAGS_OFF (comma-separated names) override it and the catalog default in config/flags.json.
+FLAGS_FILE = Path(os.environ.get("FLAGS_FILE", _ROOT / "config" / "flags.json"))
+FLAGS_ON = frozenset(f.strip() for f in os.environ.get("FLAGS_ON", "").split(",") if f.strip())
+FLAGS_OFF = frozenset(f.strip() for f in os.environ.get("FLAGS_OFF", "").split(",") if f.strip())
+POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
+POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
