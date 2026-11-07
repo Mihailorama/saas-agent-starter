@@ -9,22 +9,34 @@ export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-backup-e2e}
 export COMPOSE_FILE=docker-compose.yml:compose.backup.yaml
 export POSTGRES_PORT=${POSTGRES_PORT:-27532} S3_PORT=${S3_PORT:-27533}
 export RESTORE_POSTGRES_PORT=${RESTORE_POSTGRES_PORT:-27535}
+export REDIS_PORT=${REDIS_PORT:-27536} CHATWOOT_PORT=${CHATWOOT_PORT:-27537}
 export PUSHGATEWAY_PORT=${PUSHGATEWAY_PORT:-27591} PROMETHEUS_PORT=${PROMETHEUS_PORT:-27590}
 export DATABASE_URL=postgres://app_user:app_user_password@127.0.0.1:$POSTGRES_PORT/app
 export MIGRATION_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:$POSTGRES_PORT/app
 PROM_IMAGE=prom/prometheus:v3.15.1
 
-for port in $POSTGRES_PORT $S3_PORT $RESTORE_POSTGRES_PORT $PUSHGATEWAY_PORT $PROMETHEUS_PORT; do
+for port in $POSTGRES_PORT $S3_PORT $RESTORE_POSTGRES_PORT $REDIS_PORT $CHATWOOT_PORT $PUSHGATEWAY_PORT $PROMETHEUS_PORT; do
   if ss -ltnH "sport = :$port" | grep -q .; then echo "port $port is in use, aborting" >&2 && exit 1; fi
 done
 
-dc() { docker compose --profile restore "$@"; }
+dc() { docker compose --profile restore --profile support "$@"; }
 step() { echo "=== $(date -u +%T) $*"; }
 fail() { echo "FAIL: $*" >&2 && exit 1; }
 live() { dc exec -T postgres psql -X -q -U postgres -d "${2:-app}" -v ON_ERROR_STOP=1 -tAc "$1"; }
 copy() { dc exec -T postgres-restore psql -X -q -U postgres -d app -v ON_ERROR_STOP=1 -tAc "$1"; }
 expect() { [ "$2" = "$3" ] || fail "$1: expected '$3', got '$2'"; }
 in_backup() { dc exec -T backup "$@"; }
+# Chatwoot (support profile) through its own models: database `chatwoot` + the `chatwoot` bucket.
+# Rails logs to stdout too, so the scripts mark their result with "CW:".
+chatwoot() { dc run --rm --no-deps -T chatwoot-prepare bundle exec rails runner "$1" | sed -n 's/^CW://p'; }
+CW_WRITE='a = Account.create!(name: "E2E"); i = Inbox.create!(account: a, name: "e2e", channel: Channel::Api.create!(account: a))
+c = Contact.create!(account: a, name: "Backup E2E"); ci = ContactInbox.create!(contact: c, inbox: i, source_id: "e2e")
+v = Conversation.create!(account: a, inbox: i, contact: c, contact_inbox: ci)
+m = v.messages.create!(account: a, inbox: i, message_type: :incoming, sender: c, content: "written before the backup")
+m.attachments.create!(account: a, file_type: :file, file: { io: StringIO.new("attachment from e2e"), filename: "e2e.txt", content_type: "text/plain" })
+puts "CW:conversation #{v.display_id}: #{Message.count} message(s), #{ActiveStorage::Blob.count} blob(s)"'
+CW_READ='m = Message.find_by!(content: "written before the backup"); f = m.attachments.first!.file
+puts "CW:" + [m.conversation.display_id, f.download, f.service_name, Rails.application.routes.url_helpers.rails_blob_path(f, only_path: true)].join("|")'
 prom() { curl -fsS "http://127.0.0.1:$PROMETHEUS_PORT/api/v1/query" --data-urlencode "query=$1"; }
 until_ok() { # until_ok <seconds> <command...>
   local end=$((SECONDS + $1)) && shift
@@ -49,6 +61,11 @@ dc run --rm temporal-setup >/dev/null # Temporal's databases live on the same se
 pnpm db:migrate
 live "insert into organization (id, name, slug, created_at) values ('org-e2e', 'E2E', 'e2e', now())"
 live "insert into projects (org_id, name) select 'org-e2e', 'p' || g from generate_series(1, 1000) g"
+step "Chatwoot: schema on the main server, a conversation with an attachment"
+dc up -d --wait redis
+dc run --rm chatwoot-prepare >/dev/null 2>&1 || { dc run --rm chatwoot-prepare | tail -n 30; fail "chatwoot-prepare"; }
+chatwoot "$CW_WRITE"
+expect "vector extension in database chatwoot" "$(live "select extname from pg_extension where extname = 'vector'" chatwoot)" vector
 migration=$(live "select hash from drizzle.__drizzle_migrations order by id desc limit 1")
 temporal_version=$(live "select curr_version from schema_version" temporal)
 
@@ -91,6 +108,15 @@ expect "temporal schema version" "$(live "select curr_version from schema_versio
 in_backup /backup/bin/objects.sh restore
 expect "restored object" "$(in_backup sh -c '. /backup/bin/lib.sh && rclone_env && rclone cat app:attachments/e2e/hello.txt')" "hello from e2e"
 
+step "Chatwoot after the restore: conversation, attachment in S3, served over HTTP"
+dc up -d --wait chatwoot
+cw=$(chatwoot "$CW_READ")
+IFS='|' read -r cw_conv cw_body cw_service cw_path <<<"$cw"
+expect "Chatwoot conversation" "$cw_conv" 1
+expect "Chatwoot attachment (read from the restored bucket)" "$cw_body" "attachment from e2e"
+expect "Chatwoot storage service" "$cw_service" s3_compatible
+expect "attachment over HTTP (proxied by Chatwoot)" "$(curl -fsS "http://127.0.0.1:$CHATWOOT_PORT$cw_path")" "attachment from e2e"
+
 step "restore check catches a difference (unlogged tables are not in backups)"
 live "create unlogged table e2e_unlogged as select generate_series(1, 100) as n"
 if dc exec -T -e RESTORE_CHECK_TABLES=app.public.e2e_unlogged backup /backup/bin/restore-check.sh; then
@@ -115,5 +141,5 @@ until_ok 120 seen || fail "Prometheus does not see the latest restore check"
 prom 'time() - max(backup_last_success_timestamp_seconds)' | jq -r '"Prometheus: last backup \(.data.result[0].value[1] | tonumber | floor)s ago"'
 
 step "memory of the backup containers"
-docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' $(dc ps -q backup backup-s3 pushgateway postgres)
+docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' $(dc ps -q backup backup-s3 pushgateway postgres chatwoot)
 step "OK: backup -> destroy -> restore verified"

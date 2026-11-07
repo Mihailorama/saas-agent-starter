@@ -1,7 +1,8 @@
-import json
+from typing import Any
 
-import httpx2
+import posthog.client
 import pytest
+from posthog import Posthog
 
 from worker.flags import FlagContext, evaluate, posthog_remote
 
@@ -44,25 +45,32 @@ async def test_unknown_flag_is_an_error() -> None:
         await evaluate("typo", CTX, defaults=DEFAULTS)
 
 
-async def test_posthog_request_has_user_org_group_and_plan() -> None:
-    sent: list[dict[str, object]] = []
+async def test_posthog_sdk_gets_user_org_group_and_plan_and_sends_exposures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[dict[str, Any]] = []
+    events: list[tuple[str, dict[str, Any]]] = []
 
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        assert str(request.url) == "https://eu.i.posthog.com/flags?v=2"
-        sent.append(json.loads(request.content))
-        flags = {"new-form": {"key": "new-form", "enabled": True, "variant": "b"}}
-        return httpx2.Response(200, json={"flags": flags})
+    def flags(api_key: str, host: str, **body: Any) -> dict[str, Any]:
+        assert (api_key, host) == ("phc_example", "https://eu.i.posthog.com")
+        sent.append(body)
+        found = {"new-form": {"key": "new-form", "enabled": True, "variant": "b"}}
+        return {"flags": {k: v for k, v in found.items() if k in body["flag_keys_to_evaluate"]}}
 
-    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    remote = posthog_remote("phc_example", "https://eu.i.posthog.com", http)
-    assert await remote("new-form", CTX) is True
-    assert await remote("old-form", FlagContext("u2")) is None
-    assert sent == [
-        {
-            "api_key": "phc_example",
-            "distinct_id": "u1",
-            "groups": {"organization": "o1"},
-            "group_properties": {"organization": {"plan": "pro"}},
-        },
-        {"api_key": "phc_example", "distinct_id": "u2"},
+    def capture(event: str, **kw: Any) -> None:
+        events.append((event, kw))
+
+    monkeypatch.setattr(posthog.client, "flags", flags)
+    client = Posthog("phc_example", host="https://eu.i.posthog.com")
+    monkeypatch.setattr(client, "capture", capture)
+    remote = posthog_remote(client)
+
+    assert await remote("new-form", CTX) is True  # a variant counts as on
+    assert await remote("old-form", FlagContext("u2")) is None  # PostHog does not know it
+    assert [(b["distinct_id"], b["groups"], b["group_properties"]) for b in sent] == [
+        ("u1", {"organization": "o1"}, {"organization": {"$group_key": "o1", "plan": "pro"}}),
+        ("u2", {}, {}),
     ]
+    assert [b["flag_keys_to_evaluate"] for b in sent] == [["new-form"], ["old-form"]]
+    exposure = [(e, kw["distinct_id"], kw["properties"]["$feature_flag"]) for e, kw in events]
+    assert exposure[0] == ("$feature_flag_called", "u1", "new-form")

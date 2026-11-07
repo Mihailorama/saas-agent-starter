@@ -100,6 +100,11 @@ const schema = z
     PLANE_APP_URL: z.string().optional(),
     PLANE_WORKSPACE: z.string().optional(),
     PLANE_API_TOKEN: z.string().optional(),
+    /**
+     * Presidio PII sidecar (compose profile `pii`), e.g. http://pii:8000. Set: survey answers are
+     * redacted there and the hook fails closed (503) when it is down. Empty: emails masked only.
+     */
+    PII_REDACT_URL: z.union([z.url(), z.literal('')]).optional(),
     /** Optional GitHub Issues tracker (TRACKER=github): fine-grained token, owner/name. */
     GITHUB_TOKEN: z.string().optional(),
     GITHUB_REPO: z.string().optional(),

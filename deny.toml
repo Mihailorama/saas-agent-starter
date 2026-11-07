@@ -11,7 +11,8 @@ version = 2
 confidence-threshold = 0.93
 allow = [
   "MIT", "MIT-0", "ISC", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "Apache-2.0",
-  "Unlicense", "CC0-1.0", "BlueOak-1.0.0", "PostgreSQL", "Python-2.0", "MPL-2.0",
+  "Unlicense", "CC0-1.0", "BlueOak-1.0.0", "PostgreSQL", "Python-2.0", "Zlib", "CNRI-Python",
+  "MPL-2.0",
 ]
 unused-allowed-license = "allow"
 # Build-time-only crates pulled in by PyO3 (proc macros / build script). Neither is

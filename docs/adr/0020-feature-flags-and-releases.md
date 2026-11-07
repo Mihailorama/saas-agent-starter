@@ -17,9 +17,9 @@ Feature flags ([docs/feature-flags.md](../feature-flags.md)):
 - PostHog feature flags in the PostHog project we already use for analytics (ADR 0012). The repo
   keeps the contract: `config/flags.json` (name, description, owner, default, expiry) checked by
   `pnpm check:flags`, `pnpm flags:sync` to create flags through PostHog's API, and one wrapper per
-  runtime: `posthog-js` in the web, `posthog-node` (MIT) in the API, and PostHog's documented
-  `/flags?v=2` HTTP endpoint through the existing `httpx2` in the Python worker (the `posthog`
-  PyPI SDK pulls `distro`, whose license string the gate does not accept yet; see
+  runtime: `posthog-js` in the web, `posthog-node` (MIT) in the API, and the `posthog` Python
+  SDK (MIT) in the worker (until 2026-11-07 the worker called the `/flags?v=2` HTTP endpoint,
+  because the gate did not map the license string of the SDK's `distro` dependency; see
   docs/feature-flags.md).
 - One evaluation order everywhere: `FLAGS_ON`/`FLAGS_OFF` env, then PostHog, then the catalog
   default. Without PostHog (Umami-only, on-prem, RU contour) the code path is the same and flags
@@ -65,7 +65,7 @@ Release notes ([docs/releases.md](../releases.md)):
 
 ## Consequences
 
-- New code dependency: `posthog-node` (MIT, API); the worker adds none. Actions:
+- New code dependencies: `posthog-node` (MIT, API) and `posthog` (MIT, worker). Actions:
   `googleapis/release-please-action` (Apache-2.0), `amannn/action-semantic-pull-request` (MIT),
   both pinned by SHA.
 - Without PostHog there are no percentage or per-organization rollouts, only on/off per

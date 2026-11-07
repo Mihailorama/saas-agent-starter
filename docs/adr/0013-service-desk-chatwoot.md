@@ -48,9 +48,11 @@ still lack channels, an agent inbox and a widget.
 
 Picks that are not obvious, one line each:
 
-- Own pgvector Postgres for Chatwoot: its schema enables `vector`; the stack's
-  `postgres:17-alpine` has no pgvector, and changing the app's database image for a profile
-  would affect every deployment.
+- Chatwoot's database on the stack's Postgres server (own database and role), its attachments
+  in the stack's S3 (bucket `chatwoot`), so the backup overlay (ADR 0015) covers them. Its schema
+  enables `vector`, so the stack's image is `postgres:17-alpine` plus the pgvector extension
+  files; databases that do not create the extension are unchanged. (Until 2026-11-07 Chatwoot had
+  its own `pgvector/pgvector` server and a file volume, which no backup reached.)
 - Shared Redis (db 2): Sidekiq needs `noeviction`, which the stack's Redis/Valkey already has;
   measured fine on both twins.
 - Agent access token of a bot user, not an Agent Bot: notes then appear under a named agent and
@@ -72,9 +74,9 @@ Picks that are not obvious, one line each:
 
 ## Consequences
 
-- New infra containers: `chatwoot/chatwoot` (MIT, `-ce` only) and `pgvector/pgvector`
-  (PostgreSQL License), listed in docs/LICENSES.md and covered by `pnpm sbom` (all profiles).
-  Measured ~1.0 GiB idle, ~1.2 GiB under load for the profile (docs/support.md).
+- New infra container: `chatwoot/chatwoot` (MIT, `-ce` only); the stack's Postgres image is
+  built with pgvector (PostgreSQL License). Listed in docs/LICENSES.md and covered by `pnpm sbom`
+  (all profiles). Measured ~1.0 GiB idle, ~1.2 GiB under load for the profile (docs/support.md).
 - No new code dependency: the worker uses `httpx2` (already there), the web Chatwoot's script.
 - Chatwoot still checks `hub.2.chatwoot.com` for new versions with telemetry off; block it at
   the network where nothing may leave.

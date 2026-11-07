@@ -220,8 +220,10 @@ create GitHub issues unless an installation switches the whole tracker to `TRACK
 - `$insight_alert_firing` -> producer `cjm-regression`, title `[cjm] <alert name>`, body with
   the breach text and the insight link; a repeat of the same alert comments on the open item
   (found in the project's Intake or by Plane's work item search, every page).
-- `survey sent` from the feedback survey -> producer `from-users`, the answers (emails masked),
-  page, release and the session replay link.
+- `survey sent` from the feedback survey -> producer `from-users`, the answers (personal data
+  redacted by the Presidio sidecar when `PII_REDACT_URL` is set, and nothing filed while it is
+  down; emails masked otherwise, docs/support.md "Personal data"), page, release and the session
+  replay link.
 - Producers map to labels and to Intake or a target state in `config/tracker.json`. New items
   land in Plane's Intake by default, where a human accepts, declines or snoozes them. Nothing
   here closes an item or moves it to a completed state.
