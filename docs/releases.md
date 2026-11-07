@@ -66,5 +66,7 @@ with `Released in v` means the fix is live in that version, while "closed" only 
   way; no PAT or other secret is needed.
 - release-please opens its PR with `GITHUB_TOKEN`, which needs the repository setting
   Settings -> Actions -> General -> "Allow GitHub Actions to create and approve pull requests".
+  Checks on that PR (CI, PR title) start in an approval-required state, because it was opened
+  with `GITHUB_TOKEN`: click "Approve workflows to run" on the release PR before merging it.
 - For the PR-title rule to hold for every merge, set Settings -> General -> Pull Requests to
   allow squash merging only, with the default commit message "Pull request title".
