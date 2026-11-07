@@ -23,6 +23,10 @@ const schema = z
     TEMPORAL_ADDRESS: z.string().default('localhost:7233'),
     TEMPORAL_NAMESPACE: z.string().default('default'),
     TEMPORAL_TASK_QUEUE: z.string().default('projects'),
+    /** Task queue of the worker's SendEmailWorkflow (docs/email.md). */
+    EMAIL_TASK_QUEUE: z.string().default('email'),
+    /** Sign-in needs a confirmed email address. Off only for setups that verify elsewhere. */
+    REQUIRE_EMAIL_VERIFICATION: z.stringbool().default(true),
     S3_ENDPOINT: z.url().optional(),
     /** Endpoint browsers use for presigned URLs; defaults to S3_ENDPOINT. */
     S3_PUBLIC_ENDPOINT: z.url().optional(),
