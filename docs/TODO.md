@@ -118,3 +118,9 @@
 - **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
   ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
   transaction (ADR 0019 "Alternatives").
+- **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
+  replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
+  relay pending deliveries whose workflow never started.
+- **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
+  portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
+  the delivery UI with the portal.

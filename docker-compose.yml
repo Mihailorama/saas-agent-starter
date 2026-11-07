@@ -27,6 +27,8 @@ x-app-env: &app-env
   POSTHOG_KEY: ${POSTHOG_KEY:-}
   POSTHOG_HOST: ${POSTHOG_HOST:-}
   POSTHOG_SECRET_KEY: ${POSTHOG_SECRET_KEY:-}
+  # Encrypts webhook signing secrets at rest; API and worker need the same keys (docs/public-api.md).
+  WEBHOOK_ENCRYPTION_KEYS: ${WEBHOOK_ENCRYPTION_KEYS:-local-dev:change-me-local-dev-webhook-encryption-key}
 
 services:
   postgres:

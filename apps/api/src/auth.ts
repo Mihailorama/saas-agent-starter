@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { apiKeys, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
@@ -75,6 +76,7 @@ export const auth = betterAuth({
     organization({
       // Seats come from the plan (config/plans.json); checked on add-member and invite accept.
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
+      ...orgAccess,
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>
         sendEmail(
@@ -86,6 +88,7 @@ export const auth = betterAuth({
           { org: data.organization.name, inviter: data.inviter.user.name },
         ),
     }),
+    apiKeys,
     // 2FA and passkeys (ADR 0017). TOTP + backup codes + trusted devices; passwordless = SSO
     // users may enrol too (a password is still asked whenever the account has one).
     twoFactor({ issuer: env.APP_NAME, allowPasswordless: true }),

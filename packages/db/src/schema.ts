@@ -10,6 +10,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { organization } from './auth-schema.ts';
@@ -163,4 +164,101 @@ export const subscriptions = pgTable(
     ),
     tenantIsolation(),
   ],
+);
+
+/**
+ * Outbound webhooks (docs/public-api.md). A customer endpoint subscribes to event types. The
+ * signing secret (Standard Webhooks `whsec_...`) is stored encrypted (`v1:<key id>:<iv>:<data>`,
+ * AES-256-GCM, WEBHOOK_ENCRYPTION_KEYS); only the worker decrypts it to sign. After a rotation the
+ * previous secret keeps signing until `previous_secret_expires_at`. The worker disables an
+ * endpoint on 410 Gone or after WEBHOOK_DISABLE_AFTER_FAILURES failed deliveries in a row.
+ */
+export const webhookEndpoints = pgTable(
+  'webhook_endpoints',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    url: text('url').notNull(),
+    description: text('description'),
+    eventTypes: text('event_types').array().notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    /** Why it is disabled: manual, gone (410), failures (too many failed deliveries). */
+    disabledReason: text('disabled_reason', { enum: ['manual', 'gone', 'failures'] }),
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+    /** Failed deliveries since the last successful one. */
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    secret: text('secret').notNull(),
+    previousSecret: text('previous_secret'),
+    previousSecretExpiresAt: timestamp('previous_secret_expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index().on(t.orgId),
+    check(
+      'webhook_endpoints_disabled_reason',
+      sql`${t.disabledReason} in ('manual', 'gone', 'failures')`,
+    ),
+    tenantIsolation(),
+  ],
+);
+
+/** One row per published event that had at least one subscribed endpoint; `payload` is the
+ * exact JSON body sent (and re-sent on replay). Written by publishEvent() in apps/api. */
+export const webhookEvents = pgTable(
+  'webhook_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    type: text('type').notNull(),
+    payload: text('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.orgId, t.createdAt), tenantIsolation()],
+);
+
+/** An event for one endpoint. The worker (WebhookEventWorkflow) moves it to succeeded/failed. */
+export const webhookDeliveries = pgTable(
+  'webhook_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => webhookEvents.id, { onDelete: 'cascade' }),
+    endpointId: uuid('endpoint_id')
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: 'cascade' }),
+    status: text('status', { enum: ['pending', 'succeeded', 'failed'] })
+      .notNull()
+      .default('pending'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index().on(t.orgId, t.createdAt),
+    index().on(t.endpointId),
+    unique().on(t.eventId, t.endpointId),
+    check('webhook_deliveries_status', sql`${t.status} in ('pending', 'succeeded', 'failed')`),
+    tenantIsolation(),
+  ],
+);
+
+/** Every HTTP attempt of a delivery: what the customer sees in "delivery attempts". No bodies. */
+export const webhookAttempts = pgTable(
+  'webhook_attempts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    deliveryId: uuid('delivery_id')
+      .notNull()
+      .references(() => webhookDeliveries.id, { onDelete: 'cascade' }),
+    attempt: integer('attempt').notNull(),
+    /** HTTP status, null when no response arrived (see `error`). */
+    statusCode: integer('status_code'),
+    /** Short error class: timeout, connection_error, blocked_address, invalid_url, ... */
+    error: text('error'),
+    durationMs: integer('duration_ms').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.deliveryId), tenantIsolation()],
 );

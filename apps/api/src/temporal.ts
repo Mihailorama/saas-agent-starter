@@ -118,3 +118,29 @@ export async function startBillingEvent(event: BillingEvent) {
     if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
   }
 }
+
+/** Contract with services/worker-py (worker/webhooks.py): ids only, the payload stays in the DB. */
+export type WebhookEvent = {
+  orgId: string;
+  eventId: string;
+  deliveryIds: string[];
+  /** Replay: send even if the delivery already succeeded. */
+  replay?: boolean;
+};
+
+/**
+ * Delivers one event to its endpoints (retries with backoff in the worker). `workflowId` is
+ * `webhook-event-<eventId>` for the first delivery (duplicates rejected) and unique per replay.
+ */
+export async function startWebhookEvent(event: WebhookEvent, workflowId: string) {
+  try {
+    await (await temporal()).workflow.start('WebhookEventWorkflow', {
+      taskQueue: env.TEMPORAL_TASK_QUEUE,
+      workflowId,
+      workflowIdReusePolicy: 'REJECT_DUPLICATE',
+      args: [event],
+    });
+  } catch (err) {
+    if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
+  }
+}

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -19,12 +19,15 @@ import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
+import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
 import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { securityRoutes } from './routes/security.ts';
 import { supportHookRoutes, supportRoutes } from './routes/support.ts';
+import { webhookRoutes } from './routes/webhooks.ts';
 import { redactUrl } from './sentry.ts';
+import { bearerToken } from './tenant.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -70,8 +73,47 @@ export async function buildApp() {
   await app.register(cors, { origin: allowedOrigins, credentials: true });
   await app.register(rateLimit, { global: false, redis });
   await app.register(swagger, {
-    openapi: { info: { title: 'API', version: '1.0.0' } },
-    transform: jsonSchemaTransform,
+    openapi: {
+      info: { title: 'API', version: '1.0.0' },
+      components: {
+        securitySchemes: {
+          apiKey: { type: 'http', scheme: 'bearer', description: 'Organization API key (sk_...)' },
+          session: { type: 'apiKey', in: 'cookie', name: 'better-auth.session_token' },
+        },
+      },
+    },
+    // Routes declared with access(scope) (tenant.ts) accept API keys: document that here.
+    transform: (args) => {
+      const out = jsonSchemaTransform(args);
+      const scope = args.route.config?.scope;
+      if (!scope) return out;
+      const schema = out.schema as { description?: string };
+      return {
+        ...out,
+        schema: {
+          ...out.schema,
+          security: [{ apiKey: [] }, { session: [] }],
+          description: [schema.description, `API key scope: \`${scope}\`.`]
+            .filter(Boolean)
+            .join(' '),
+        },
+      };
+    },
+  });
+
+  // Public API routes (access(scope)): every request with an API key counts against that key's
+  // limit (Redis, so it holds across replicas), valid key or not. Other routes keep their own
+  // limits (the plugin runs one limiter per request, so this must not touch them).
+  const perKey = app.rateLimit({
+    max: env.API_KEY_RATE_LIMIT_PER_MINUTE,
+    timeWindow: '1 minute',
+    keyGenerator: (req) =>
+      `apikey:${createHash('sha256')
+        .update(bearerToken(req) ?? '')
+        .digest('base64url')}`,
+  });
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.routeOptions.config?.scope && bearerToken(req)) return perKey.call(app, req, reply);
   });
 
   // CSRF defense in depth (cookies are already SameSite=Lax): browsers always
@@ -138,6 +180,10 @@ export async function buildApp() {
   // Public: tells the sign-in page whether to offer "Sign in with SSO".
   app.get('/api/auth-config', { schema: { hide: true } }, async () => ({ sso: ssoEnabled }));
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
+  // API keys are managed through /api/api-keys (scopes, audit log), not the plugin's endpoints.
+  app.all('/api/auth/api-key/*', { schema: { hide: true } }, async (_req, reply) =>
+    reply.code(404).send({ error: 'not found' }),
+  );
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
   // Second factors and passkey sign-in (the twoFactor plugin also locks the account itself).
@@ -151,10 +197,14 @@ export async function buildApp() {
   await app.register(hookRoutes, { prefix: '/api/hooks' });
   await app.register(billingRoutes, { prefix: '/api/billing' });
   await app.register(billingWebhookRoutes, { prefix: '/api/billing/webhooks' });
+  await app.register(apiKeyRoutes, { prefix: '/api/api-keys' });
+  await app.register(webhookRoutes, { prefix: '/api/webhooks' });
   await app.register(securityRoutes, { prefix: '/api/security' });
   await app.register(supportHookRoutes, { prefix: '/api/hooks' });
   await app.register(supportRoutes, { prefix: '/api/support' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
+  // Same spec under /api, which the web origin proxies: what API customers can reach.
+  app.get('/api/openapi.json', { schema: { hide: true } }, async () => app.swagger());
 
   return app;
 }

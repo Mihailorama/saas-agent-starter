@@ -18,6 +18,7 @@ import { authClient } from '@/lib/auth';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
 import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
+import { ApiKeysPage } from '@/pages/api-keys';
 import { BillingPage } from '@/pages/billing';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
@@ -26,6 +27,7 @@ import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
 import { SignInPage, safeRedirect } from '@/pages/sign-in';
 import { TwoFactorPage } from '@/pages/two-factor';
+import { WebhooksPage } from '@/pages/webhooks';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 
@@ -122,6 +124,18 @@ const billingRoute = createRoute({
   component: BillingPage,
 });
 
+const apiKeysRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/api-keys',
+  component: ApiKeysPage,
+});
+
+const webhooksRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/webhooks',
+  component: WebhooksPage,
+});
+
 const securityRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/security',
@@ -135,7 +149,15 @@ const router = createRouter({
     resetPasswordRoute,
     acceptInvitationRoute,
     aiTransparencyRoute,
-    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute, securityRoute, billingRoute]),
+    appRoute.addChildren([
+      projectsRoute,
+      projectRoute,
+      aiCallsRoute,
+      securityRoute,
+      apiKeysRoute,
+      webhooksRoute,
+      billingRoute,
+    ]),
   ]),
 });
 

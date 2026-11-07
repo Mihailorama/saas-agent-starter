@@ -3,7 +3,7 @@ import { and, count, desc, eq, gte, lt, or, type SQL } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { httpError, requireRole, withTenant } from '../tenant.ts';
+import { access, httpError, withTenant } from '../tenant.ts';
 
 /** Audit log of LLM calls (written by the worker's ai.call_llm). Org admins only, read-only. */
 const AiCall = z.object({
@@ -76,7 +76,7 @@ const activeOrg = (req: FastifyRequest, orgId: string) => {
 };
 
 export const aiCallRoutes: FastifyPluginAsyncZod = async (app) => {
-  const admin = { preHandler: requireRole('admin') };
+  const admin = access('ai_calls:read');
   const tags = ['ai'];
 
   app.get(

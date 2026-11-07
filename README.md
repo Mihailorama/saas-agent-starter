@@ -17,6 +17,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 - **Billing**: plans with limits in `config/plans.json`, prices per currency, Stripe behind a
   swappable provider interface (one provider per contour), webhooks via Temporal, per-org LLM
   spend limit enforced in the AI gateway. See [docs/billing.md](docs/billing.md).
+- **Public API**: organization API keys with scopes (Better Auth API key plugin), per-key
+  rate limits, OpenAPI; outbound webhooks signed per Standard Webhooks, retried by Temporal,
+  with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
 - **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and

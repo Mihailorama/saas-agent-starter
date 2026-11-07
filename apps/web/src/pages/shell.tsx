@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   CreditCard,
   FolderKanban,
+  KeyRound,
   Layers,
   LifeBuoy,
   Lightbulb,
@@ -18,6 +19,7 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
+  Webhook,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -228,8 +230,9 @@ export function Shell() {
   useEffect(() => {
     if (userId) identify(userId);
   }, [userId]);
-  const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
-  const onBilling = useLocation({ select: (l) => l.pathname === '/settings/billing' });
+  const onProjects = useLocation({
+    select: (l) => l.pathname === '/' || l.pathname.startsWith('/projects'),
+  });
   const onSecurity = useLocation({ select: (l) => l.pathname === '/settings/security' });
   // Org requires 2FA and this user has none: the API refuses tenant data, so enrol first.
   const policy = useQuery({ ...policyQuery, enabled: Boolean(orgs?.length) });
@@ -275,10 +278,7 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link
-            to="/"
-            className={cn(navLink, !onAiCalls && !onSecurity && !onBilling && navActive)}
-          >
+          <Link to="/" className={cn(navLink, onProjects && navActive)}>
             <FolderKanban className="size-4" /> Projects
           </Link>
           {isAdmin && (
@@ -289,6 +289,25 @@ export function Shell() {
           <Link to="/settings/billing" className={navLink} activeProps={{ className: navActive }}>
             <CreditCard className="size-4" /> Billing
           </Link>
+          {isAdmin && (
+            <>
+              <p className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground">Settings</p>
+              <Link
+                to="/settings/api-keys"
+                className={navLink}
+                activeProps={{ className: navActive }}
+              >
+                <KeyRound className="size-4" /> API keys
+              </Link>
+              <Link
+                to="/settings/webhooks"
+                className={navLink}
+                activeProps={{ className: navActive }}
+              >
+                <Webhook className="size-4" /> Webhooks
+              </Link>
+            </>
+          )}
         </nav>
         {supportEnabled && (
           <HelpMenu className="mx-2 mb-1 h-auto py-2 text-sm font-normal text-muted-foreground" />

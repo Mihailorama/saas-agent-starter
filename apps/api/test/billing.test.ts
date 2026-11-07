@@ -203,6 +203,30 @@ describe('entitlement guard', () => {
     expect((await call(owner, 'POST', '/api/projects', { name: 'd' })).statusCode).toBe(201);
   });
 
+  it('applies the project limit to API key requests, in the org of the key', async () => {
+    const { owner, org } = await ownerWithOrg();
+    const created = await call(owner, 'POST', '/api/api-keys', {
+      name: 'ci',
+      scopes: ['projects:write'],
+      expiresInDays: null,
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const withKey = (name: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/projects',
+        remoteAddress: ip(),
+        headers: { authorization: `Bearer ${created.json().key}` },
+        payload: { name },
+      });
+    for (const name of ['a', 'b', 'c']) expect((await withKey(name)).statusCode).toBe(201);
+    const blocked = await withKey('d');
+    expect(blocked.statusCode).toBe(402);
+    expect(blocked.json()).toEqual({ error: 'plan limit reached: projects' });
+    await subscribe(org);
+    expect((await withKey('d')).statusCode).toBe(201);
+  });
+
   it('limits seats to the plan', async () => {
     const { org } = await ownerWithOrg();
     for (let i = 0; i < 2; i++) {
