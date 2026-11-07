@@ -40,7 +40,9 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 ```
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
-  src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
+  src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP) and passkey plugins
+  src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
+  src/tenant.ts       requireRole() + withTenant(): RBAC, org 2FA policy, RLS transaction, audit log
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
@@ -96,7 +98,7 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Postgres + Drizzle: SQL-first ORM with typed schema, migrations and RLS policy support.
 - Postgres RLS for tenancy: isolation holds even when application code forgets a filter.
 - Better Auth: auth as a library on our own tables (orgs, roles, sessions); Keycloak is the
-  heavier alternative when enterprises need a separate IdP.
+  heavier alternative when enterprises need a separate IdP. 2FA/passkeys via its plugins (ADR 0017).
 - Temporal: durable workflows with retries/timeouts, typed SDKs for TS and Python, Web UI.
 - Redis (official image, via ioredis): shared rate-limit store across API replicas.
 - S3 API via the AWS SDK: works with AWS, R2, MinIO, SeaweedFS (local dev uses SeaweedFS).

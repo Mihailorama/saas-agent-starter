@@ -23,6 +23,26 @@
       "pii": false,
       "props": {}
     },
+    "passkey_signin_completed": {
+      "description": "Signed in with a passkey (WebAuthn).",
+      "pii": false,
+      "props": {}
+    },
+    "two_factor_enabled": {
+      "description": "TOTP two-factor authentication was turned on (authenticator code verified) on the security page.",
+      "pii": false,
+      "props": {}
+    },
+    "two_factor_disabled": {
+      "description": "Two-factor authentication was turned off on the security page.",
+      "pii": false,
+      "props": {}
+    },
+    "passkey_added": {
+      "description": "A passkey was registered on the security page.",
+      "pii": false,
+      "props": {}
+    },
     "password_reset_requested": {
       "description": "A password reset link was requested from the sign-in page (mailed only if the account exists).",
       "pii": false,

@@ -1,22 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
-
-// The worker delivers every mail to the compose Mailpit; read it like the user's inbox would.
-const mailpit = process.env.MAILPIT_URL ?? 'http://localhost:8025';
-async function mailedLink(to: string, subject: RegExp): Promise<string> {
-  for (let i = 0; i < 100; i++) {
-    const query = new URLSearchParams({ query: `to:${to}` });
-    const { messages } = await (await fetch(`${mailpit}/api/v1/search?${query}`)).json();
-    const hit = messages.find((m: { Subject: string }) => subject.test(m.Subject));
-    if (hit) {
-      const mail = await (await fetch(`${mailpit}/api/v1/message/${hit.ID}`)).json();
-      const link = new URL(mail.Text.match(/https?:\/\/[^\s\]]+/)[0]);
-      return link.pathname + link.search; // same app, whatever port the test server runs on
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`no mail to ${to} in Mailpit: are Mailpit and the worker (pnpm worker) up?`);
-}
+import { mailedLink } from './mail';
 
 async function signUp(page: Page, email: string) {
   await page.goto('/');
@@ -81,7 +65,7 @@ test('forgotten password: reset through the mailed link', async ({ page, context
 
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill('a-brand-new-passphrase');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByLabel('Organization name')).toBeVisible();
 });
 

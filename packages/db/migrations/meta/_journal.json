@@ -15,6 +15,13 @@
       "when": 1793896942648,
       "tag": "0001_safe_jack_murdock",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794050236719,
+      "tag": "0002_smart_dragon_man",
+      "breakpoints": true
     }
   ]
 }
