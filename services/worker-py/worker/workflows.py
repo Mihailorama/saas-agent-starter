@@ -17,6 +17,7 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from worker.activities import Activities, ProjectCreated
+    from worker.mail import SendEmail, send_email
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
 
 
@@ -106,3 +107,23 @@ async def ensure_maintenance_schedule(
     )
     with contextlib.suppress(ScheduleAlreadyRunningError):
         await client.create_schedule(schedule_id, schedule)
+
+
+@workflow.defn(name="SendEmailWorkflow")
+class SendEmailWorkflow:
+    """Started by the API (apps/api/src/temporal.ts) with id `email-<kind>-<hash of the key>`."""
+
+    @workflow.run
+    async def run(self, email: SendEmail) -> str:
+        # Retry SMTP outages for as long as the links stay valid (verification/reset: 1 hour).
+        return await workflow.execute_activity(
+            send_email,
+            email,
+            start_to_close_timeout=timedelta(seconds=60),
+            schedule_to_close_timeout=timedelta(hours=1),
+            retry_policy=RetryPolicy(
+                initial_interval=timedelta(seconds=5),
+                backoff_coefficient=2,
+                maximum_interval=timedelta(minutes=5),
+            ),
+        )

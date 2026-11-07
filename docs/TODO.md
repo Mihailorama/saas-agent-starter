@@ -64,6 +64,32 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Worker feature flags use PostHog's HTTP `/flags` API instead of the `posthog` SDK.** The SDK
+  depends on `distro` (Apache-2.0), whose metadata string "Apache License, Version 2.0" the
+  license gate does not map to `Apache-2.0`, and ADR 0005 forbids gate changes without a human.
+  Consequence: the worker has no local evaluation and sends no `$feature_flag_called` exposure
+  events (`services/worker-py/worker/flags.py`). Fix once approved: add the alias to `ALIASES` in
+  `scripts/license-check.mjs`, `uv add posthog`, and use `Posthog(...).evaluate_flags(...)`.
+- **Tag workflows on other branches must accept `workflow_dispatch`.** Releases are created with
+  `GITHUB_TOKEN`, which starts no `push: tags` workflow; `release-please.yml` dispatches every
+  workflow that has both `tags:` and `workflow_dispatch:` (docs/releases.md). The `deploy`
+  branch's image build needs `workflow_dispatch:` added or it will not run on releases.
+- **Mailed links live in Temporal history.** `SendEmailWorkflow` gets the rendered mail, link
+  included, as its argument (`apps/api/src/temporal.ts`), kept until the namespace retention
+  drops it. Same trust boundary as Better Auth's `verification` table while Temporal runs on our
+  Postgres server; with Temporal Cloud or a separate cluster, add an encrypting `PayloadCodec`
+  on the API client and the worker (key from env) for the `email` queue (ADR 0014).
+- **Bounce/complaint webhooks.** Providers keep their own suppression lists (docs/email.md);
+  nothing in the app reacts to hard bounces or spam complaints. When volumes grow, accept the
+  provider's webhook in `apps/api/src/routes/hooks.ts` and alert on bounce rate.
+- **No "invite member" UI.** Invitations are sent through Better Auth's
+  `organization.inviteMember` API (tested in `apps/api/test/api.test.ts`) and accepted on
+  `/accept-invitation/$invitationId`, but the web has no members page to send them from. Add one
+  under the shell (list, invite form, role) when member management is needed.
+- **Mail language is the request's `Accept-Language`.** Users have no stored locale, so an
+  invitation is written in the inviter's browser language. Store a locale on the user (and
+  pass it for invitations) when the web gets i18n; strings move to i18next then
+  (`apps/api/src/email.ts`).
 - **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.

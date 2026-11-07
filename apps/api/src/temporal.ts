@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Client, Connection, WorkflowExecutionAlreadyStartedError } from '@temporalio/client';
 import { OpenTelemetryWorkflowClientInterceptor } from '@temporalio/interceptors-opentelemetry/lib/client';
 import { env } from './env.ts';
@@ -38,6 +39,32 @@ export async function startProjectCreated(event: ProjectCreated) {
       workflowId: projectWorkflowId(event.projectId),
       workflowIdReusePolicy: 'REJECT_DUPLICATE',
       args: [event],
+    });
+  } catch (err) {
+    if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
+  }
+}
+
+/** Contract with services/worker-py (worker/mail.py): one rendered email to one recipient. */
+export type SendEmail = {
+  kind: 'verify-email' | 'reset-password' | 'invitation';
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+};
+/** `key` identifies one send (token, invitation id + expiry); only its hash is in the id. */
+export const emailWorkflowId = (kind: SendEmail['kind'], key: string) =>
+  `email-${kind}-${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
+
+/** Delivery and SMTP retries happen in the worker; a duplicate start for the same key is a no-op. */
+export async function startSendEmail(email: SendEmail, key: string) {
+  try {
+    await (await temporal()).workflow.start('SendEmailWorkflow', {
+      taskQueue: env.EMAIL_TASK_QUEUE,
+      workflowId: emailWorkflowId(email.kind, key),
+      workflowIdReusePolicy: 'REJECT_DUPLICATE',
+      args: [email],
     });
   } catch (err) {
     if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;

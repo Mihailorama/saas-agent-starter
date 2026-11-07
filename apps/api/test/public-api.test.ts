@@ -1,7 +1,14 @@
 // Public API: organization API keys (auth, scopes, revoke, tenancy, rate limit) and the webhook
 // management routes + publishEvent(). Delivery itself is tested in services/worker-py.
 import { randomUUID } from 'node:crypto';
-import { auditLog, webhookDeliveries, webhookEndpoints, webhookEvents, withOrg } from '@app/db';
+import {
+  auditLog,
+  user,
+  webhookDeliveries,
+  webhookEndpoints,
+  webhookEvents,
+  withOrg,
+} from '@app/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 
@@ -26,18 +33,30 @@ afterAll(async () => {
 type User = { id: string; cookie: string };
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
+/** Signs up and signs in. The address is marked verified in the DB: the mailed confirmation
+ * flow itself is covered in api.test.ts. */
 async function signUp(): Promise<User> {
+  const credentials = { email: `${randomUUID()}@example.com`, password: 'correct-horse-battery' };
   const res = await app.inject({
     method: 'POST',
     url: '/api/auth/sign-up/email',
     remoteAddress: ip(),
     headers: { origin },
-    payload: { email: `${randomUUID()}@example.com`, password: 'correct-horse-battery', name: 'T' },
+    payload: { ...credentials, name: 'T' },
   });
   expect(res.statusCode).toBe(200);
+  await db.update(user).set({ emailVerified: true }).where(eq(user.email, credentials.email));
+  const signedIn = await app.inject({
+    method: 'POST',
+    url: '/api/auth/sign-in/email',
+    remoteAddress: ip(),
+    headers: { origin },
+    payload: credentials,
+  });
+  expect(signedIn.statusCode).toBe(200);
   return {
     id: res.json().user.id,
-    cookie: res.cookies.map((c) => `${c.name}=${c.value}`).join('; '),
+    cookie: signedIn.cookies.map((c) => `${c.name}=${c.value}`).join('; '),
   };
 }
 
