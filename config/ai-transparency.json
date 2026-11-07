@@ -12,6 +12,13 @@
       "oversight": "The summary is labeled \"AI-generated\" until a member of your organization confirms or corrects it. Corrections replace the summary; the original output stays in the audit log."
     },
     {
+      "purpose": "support.triage",
+      "title": "Support request triage",
+      "what": "When you write to support (in-app help, email or Telegram), a language model sorts the request (question, bug, feature request, billing, spam), checks whether the same problem is already known and drafts an answer for the support team.",
+      "data": "The messages you sent in that conversation and the page you were on. Nothing from your organization's projects is sent.",
+      "oversight": "The model only writes internal notes for the support team. A person reads every request and decides what to answer; the model never replies to you on its own."
+    },
+    {
       "purpose": "judge",
       "title": "Quality checks of AI output",
       "what": "We check the quality of AI output: before a change ships, against a fixed set of made-up examples, and, if enabled, by letting a second language model grade a small sample of recent outputs against fixed, versioned criteria in our quality tool. The grade is used for monitoring only and never changes what you see.",

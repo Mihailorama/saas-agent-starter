@@ -22,8 +22,10 @@ import { BillingPage } from '@/pages/billing';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { ResetPasswordPage } from '@/pages/reset-password';
+import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
 import { SignInPage, safeRedirect } from '@/pages/sign-in';
+import { TwoFactorPage } from '@/pages/two-factor';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 
@@ -45,6 +47,16 @@ const signInRoute = createRoute({
     redirect: safeRedirect(s.redirect),
   }),
   component: SignInPage,
+});
+
+// Second sign-in step (2FA); works only with the challenge cookie set by /sign-in.
+const twoFactorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/two-factor',
+  validateSearch: (s: Record<string, unknown>): { redirect?: string } => ({
+    redirect: safeRedirect(s.redirect),
+  }),
+  component: TwoFactorPage,
 });
 
 // Public: the emailed reset link lands here with ?token= (or ?error= when it is invalid).
@@ -110,13 +122,20 @@ const billingRoute = createRoute({
   component: BillingPage,
 });
 
+const securityRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/security',
+  component: SecurityPage,
+});
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
+    twoFactorRoute,
     resetPasswordRoute,
     acceptInvitationRoute,
     aiTransparencyRoute,
-    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute, billingRoute]),
+    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute, securityRoute, billingRoute]),
   ]),
 });
 

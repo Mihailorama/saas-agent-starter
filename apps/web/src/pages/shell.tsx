@@ -1,16 +1,21 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { Link, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, Navigate, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import {
+  Bug,
   Building2,
   Check,
   ChevronsUpDown,
   CreditCard,
   FolderKanban,
   Layers,
+  LifeBuoy,
+  Lightbulb,
   LogOut,
+  MessageCircle,
   Moon,
   Plus,
   ScrollText,
+  ShieldCheck,
   Sparkles,
   Sun,
 } from 'lucide-react';
@@ -39,8 +44,10 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { identify, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
+import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
+import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
 
 const initials = (s: string) =>
   s
@@ -163,15 +170,46 @@ function UserMenu() {
           {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
           {theme === 'dark' ? 'Light mode' : 'Dark mode'}
         </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate({ to: '/settings/security' })}>
+          <ShieldCheck className="size-4" /> Security
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={async () => {
             await authClient.signOut();
             identify(undefined);
+            resetSupport();
             navigate({ to: '/sign-in' });
           }}
         >
           <LogOut className="size-4" /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The one entry point for questions, problem reports and ideas (Chatwoot, docs/support.md). */
+function HelpMenu({ className }: { className?: string }) {
+  const { data: active } = authClient.useActiveOrganization();
+  const open = (kind: Parameters<typeof openSupport>[0]) => () =>
+    openSupport(kind, active?.id).catch(() => toast.error('Help is unavailable right now'));
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className={cn('justify-start gap-3 px-2', className)}>
+          <LifeBuoy className="size-4" /> Help
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-60" align="start" side="top">
+        <DropdownMenuItem onSelect={open('question')}>
+          <MessageCircle className="size-4" /> Ask a question
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={open('bug')}>
+          <Bug className="size-4" /> Report a problem
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={open('feature_request')}>
+          <Lightbulb className="size-4" /> Suggest an improvement
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -190,9 +228,12 @@ export function Shell() {
   useEffect(() => {
     if (userId) identify(userId);
   }, [userId]);
-  const onOther = useLocation({
-    select: (l) => l.pathname.startsWith('/ai-calls') || l.pathname.startsWith('/settings'),
-  });
+  const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
+  const onBilling = useLocation({ select: (l) => l.pathname === '/settings/billing' });
+  const onSecurity = useLocation({ select: (l) => l.pathname === '/settings/security' });
+  // Org requires 2FA and this user has none: the API refuses tenant data, so enrol first.
+  const policy = useQuery({ ...policyQuery, enabled: Boolean(orgs?.length) });
+  const mustEnrol = policy.error?.message === TWO_FACTOR_REQUIRED;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
 
@@ -203,6 +244,8 @@ export function Shell() {
       </div>
     );
   }
+
+  if (mustEnrol && !onSecurity) return <Navigate to="/settings/security" />;
 
   if (!orgs?.length) {
     return (
@@ -232,7 +275,10 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, !onOther && navActive)}>
+          <Link
+            to="/"
+            className={cn(navLink, !onAiCalls && !onSecurity && !onBilling && navActive)}
+          >
             <FolderKanban className="size-4" /> Projects
           </Link>
           {isAdmin && (
@@ -244,6 +290,9 @@ export function Shell() {
             <CreditCard className="size-4" /> Billing
           </Link>
         </nav>
+        {supportEnabled && (
+          <HelpMenu className="mx-2 mb-1 h-auto py-2 text-sm font-normal text-muted-foreground" />
+        )}
         <Link
           to="/ai-transparency"
           className="mx-2 mb-2 flex items-center gap-3 rounded-md px-2 py-2 text-xs text-muted-foreground hover:text-foreground"
@@ -259,6 +308,7 @@ export function Shell() {
           <div className="min-w-0 flex-1">
             <OrgSwitcher />
           </div>
+          {supportEnabled && <HelpMenu />}
           <div className="w-44">
             <UserMenu />
           </div>

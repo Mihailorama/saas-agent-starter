@@ -19,8 +19,15 @@
     {
       "idx": 2,
       "version": "7",
-      "when": 1794052215984,
-      "tag": "0002_billing_subscriptions",
+      "when": 1794050236719,
+      "tag": "0002_smart_dragon_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794054205674,
+      "tag": "0003_billing_subscriptions",
       "breakpoints": true
     }
   ]

@@ -5,7 +5,7 @@ one-command quality gate, small colocated files and an `AGENTS.md` that tells ag
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
 obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
-- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles), Drizzle + Postgres
+- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
@@ -19,6 +19,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   spend limit enforced in the AI gateway. See [docs/billing.md](docs/billing.md).
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
+- **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and
+  Telegram; AI triage writes private notes and files or "+1"s GitHub / Plane Intake items, and
+  closed items are reported back to the conversation.
 - **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
   `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
   dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
@@ -117,6 +120,14 @@ stay in place (on-prem, RU)? `docker compose --profile analytics up -d` runs Uma
 same Postgres. Optional, consent-gated: GA4, Yandex Metrika. AI-answer thumbs go to PostHog AI
 observability and/or Langfuse. Events are catalogued in `config/events.json` and checked in CI.
 Details: [docs/product-analytics.md](docs/product-analytics.md).
+
+## Service desk
+
+Off until you set env. `docker compose --profile support up -d` runs Chatwoot (MIT core, `-ce`
+image) with its own pgvector Postgres. Set the website inbox token and HMAC token for the Help
+menu, the webhook secret for triage, and a model for `support.triage`; tickets stay in Chatwoot,
+backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
+Details: [docs/support.md](docs/support.md).
 
 ## LLM-ops
 

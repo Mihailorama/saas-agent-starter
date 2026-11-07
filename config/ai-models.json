@@ -5,7 +5,7 @@
       {
         "provider": "anthropic",
         "model": "claude-haiku-5-5",
-        "purposes": ["project.summary"],
+        "purposes": ["project.summary", "support.triage"],
         "pricePer1kTokens": {
           "input": 0.0001,
           "output": 0.0005,
@@ -15,7 +15,7 @@
       {
         "provider": "anthropic",
         "model": "claude-sonnet-5-5",
-        "purposes": ["project.summary", "judge"],
+        "purposes": ["project.summary", "judge", "support.triage"],
         "pricePer1kTokens": {
           "input": 0.002,
           "output": 0.01,

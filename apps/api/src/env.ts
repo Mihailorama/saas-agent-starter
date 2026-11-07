@@ -46,6 +46,12 @@ const schema = z
     OTEL_EXPORTER_OTLP_ENDPOINT: z.union([z.url(), z.literal('')]).optional(),
     /** Error tracking (Sentry protocol: Sentry or GlitchTip); empty = off. Read in sentry.ts. */
     SENTRY_DSN: z.union([z.url(), z.literal('')]).optional(),
+    /** Shown in authenticator apps (TOTP issuer) and passkey prompts (WebAuthn RP name). */
+    APP_NAME: z.string().min(1).default('Workspace'),
+    /** WebAuthn relying party: registrable domain, defaults to the BETTER_AUTH_URL host. */
+    PASSKEY_RP_ID: z.string().min(1).optional(),
+    /** Origin(s) passkey ceremonies run on, comma-separated; defaults to BETTER_AUTH_URL's. */
+    PASSKEY_ORIGIN: list,
     OIDC_ISSUER: z.url().optional(),
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),
@@ -75,6 +81,16 @@ const schema = z
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     /** Only for stripe-mock in tests/dev, e.g. http://localhost:12111; empty = api.stripe.com. */
     STRIPE_API_URL: z.union([z.url(), z.literal('')]).optional(),
+    // Service desk (docs/support.md). Every secret empty = that endpoint is off (401/404).
+    /** Secret of the Chatwoot account webhook (Settings -> Integrations -> Webhooks). */
+    CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
+    /** HMAC token of the Chatwoot website inbox (identity validation of logged-in users). */
+    CHATWOOT_HMAC_TOKEN: z.string().optional(),
+    /** Secret of the GitHub `issues` webhook (return path: closed issue -> conversation note). */
+    GITHUB_WEBHOOK_SECRET: z.string().optional(),
+    /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
+    PLANE_WEBHOOK_SECRET: z.string().optional(),
+    PLANE_PROJECT_ID: z.string().optional(),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
@@ -86,6 +102,14 @@ const schema = z
       message: 'POSTHOG_WEBHOOK_SECRET still has the example value',
       path: ['POSTHOG_WEBHOOK_SECRET'],
     },
+  )
+  .refine(
+    (e) =>
+      e.NODE_ENV !== 'production' ||
+      ![e.CHATWOOT_WEBHOOK_SECRET, e.CHATWOOT_HMAC_TOKEN, e.GITHUB_WEBHOOK_SECRET].some((v) =>
+        v?.startsWith('local-dev'),
+      ),
+    { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   )
   .refine(
     (e) =>

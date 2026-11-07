@@ -41,8 +41,11 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 ```
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
-  src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
-  src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
+  src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP) and passkey plugins
+  src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
+  src/tenant.ts       requireRole() + withTenant(): RBAC, org 2FA policy, RLS transaction, audit log
+  src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
+                      hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md)
@@ -62,6 +65,7 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/prompts.py   versioned prompt loader (prompts/<purpose>/<name>.v<N>.md)
   worker/posthog.py   each LLM call as a PostHog `$ai_generation` (when POSTHOG_* is set)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
+  worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
@@ -83,6 +87,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
+docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
 
@@ -98,7 +103,7 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Postgres + Drizzle: SQL-first ORM with typed schema, migrations and RLS policy support.
 - Postgres RLS for tenancy: isolation holds even when application code forgets a filter.
 - Better Auth: auth as a library on our own tables (orgs, roles, sessions); Keycloak is the
-  heavier alternative when enterprises need a separate IdP.
+  heavier alternative when enterprises need a separate IdP. 2FA/passkeys via its plugins (ADR 0017).
 - Temporal: durable workflows with retries/timeouts, typed SDKs for TS and Python, Web UI.
 - Redis (official image, via ioredis): shared rate-limit store across API replicas.
 - S3 API via the AWS SDK: works with AWS, R2, MinIO, SeaweedFS (local dev uses SeaweedFS).
@@ -117,6 +122,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   own flag store; release-please + Conventional PR titles for changelogs and `v*` tags (ADR 0020).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
+- Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items in GitHub Issues or
+  Plane Intake; triage is a Temporal workflow in the worker, no own ticket table (ADR 0013).
 
 ## Where code goes (TS vs Python vs Rust)
 

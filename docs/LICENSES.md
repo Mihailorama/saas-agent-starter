@@ -32,6 +32,8 @@ on an image that is not. Their primary software licenses:
 | `langfuse/langfuse`                    | Langfuse web (llmops profile)                      | MIT core + `ee/` commercial |
 | `langfuse/langfuse-worker`             | Langfuse worker (llmops profile)                   | MIT core + `ee/` commercial |
 | `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
+| `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
+| `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
 | `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
@@ -98,6 +100,25 @@ Notes:
   a provider over SMTP instead. Email code dependencies: `@react-email/render` (MIT; React
   Email's renderer, `react`/`react-dom` MIT); the worker sends with Python's standard
   `smtplib`, no package.
+- Two-factor and passkey code dependencies ([ADR 0017](adr/0017-two-factor-and-passkeys.md)),
+  checked by the gate like every npm package: `@better-auth/passkey` (MIT) with
+  `@simplewebauthn/server` and `@simplewebauthn/browser` (MIT; the server's transitive deps are
+  `@peculiar/*`, `@hexagon/base64`, `@levischuck/tiny-cbor`, `pvtsutils`, `tsyringe` (MIT),
+  `asn1js` (BSD-3-Clause), `reflect-metadata` (Apache-2.0), `tslib` 1.x (0BSD)), `qrcode.react`
+  (ISC) for the enrolment QR code, and `otpauth` (MIT, tests only) to generate TOTP codes. The
+  TOTP plugin itself ships inside `better-auth` (MIT).
+
+- `chatwoot/chatwoot` (service desk, [docs/support.md](support.md)): the repository's
+  [LICENSE](https://github.com/chatwoot/chatwoot/blob/develop/LICENSE) puts everything outside
+  `enterprise/` under MIT (Expat) and `enterprise/` under its own license (`enterprise/LICENSE`).
+  We run only the `-ce` tag (`v4.19.1-ce`), which Chatwoot's
+  [publish_foss_docker.yml](https://github.com/chatwoot/chatwoot/blob/develop/.github/workflows/publish_foss_docker.yml)
+  builds after `rm -rf enterprise`, so no enterprise code is in the image and none of its
+  features (Captain AI, SLA, custom roles, audit logs) are used. The plain `vX.Y.Z` tag
+  contains `enterprise/`: do not switch to it. Chatwoot Cloud is an external service, not shipped.
+- `pgvector/pgvector`: the official Postgres image plus the pgvector extension (PostgreSQL
+  License, [LICENSE](https://github.com/pgvector/pgvector/blob/master/LICENSE)). Chatwoot's schema
+  enables `vector`, which `postgres:17-alpine` does not ship, so Chatwoot gets this server.
 - `stripe/stripe-mock` ([MIT](https://github.com/stripe/stripe-mock/blob/master/LICENSE),
   Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
   never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime

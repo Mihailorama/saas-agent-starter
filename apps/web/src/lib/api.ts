@@ -72,6 +72,9 @@ export type Billing = {
     price: { amount: string; interval: string } | null;
   }[];
 };
+let lastTrace: string | null = null;
+/** Trace id of the latest API response (`x-trace-id`), attached to support requests. */
+export const lastTraceId = () => lastTrace;
 
 /** JSON fetch against our API. Throws with the server's error message on non-2xx. */
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
@@ -92,6 +95,7 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
     failed(0, null);
     throw err;
   });
+  lastTrace = res.headers.get('x-trace-id') ?? lastTrace;
   if (!res.ok) {
     failed(res.status, res.headers.get('x-trace-id'));
     const body = await res.json().catch(() => ({}));
