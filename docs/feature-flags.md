@@ -75,10 +75,11 @@ rollouts, the replacement is a self-hosted flag service (see ADR 0020), not code
   (`flagKeys` limits it to the one flag), so it adds a network round trip to the request and is
   billed as one flag request (PostHog: first 1M flag requests per month free).
 - Local (API), with `POSTHOG_SECRET_KEY`: `posthog-node` polls the flag definitions every 30 s
-  and evaluates in process, no request per check. Costs one more secret per deployment and
-  about 86,400 billed requests per running instance per month (polls answered `304` count as 1, changed definitions
-  as 10). Flags that need person properties PostHog stores but we do not pass still fall back to
-  a remote request.
+  and evaluates in process, no request per check. Costs one more secret per deployment; a poll is
+  billed as 10 flag requests when the definitions changed and is free when they did not (ETag,
+  `304`), per [PostHog's billing docs](https://posthog.com/docs/billing/estimating-usage-costs)
+  (checked 2026-11-07). Flags that need person properties PostHog stores but we do not pass
+  still fall back to a remote request.
 
 The worker always evaluates remotely: it posts to PostHog's public
 [`/flags?v=2`](https://posthog.com/docs/api/flags) endpoint with the project key through
