@@ -108,15 +108,6 @@ jobs:
           tar xzf age-v1.3.2-linux-amd64.tar.gz
           install -m 755 sops age/age age/age-keygen "$bin/"
           echo "$bin" >> "$GITHUB_PATH"
-      - name: Docker with the containerd image store (local images get digests)
-        run: |
-          if [[ $(docker info 2>/dev/null) != *io.containerd.snapshotter* ]]; then
-            conf=/etc/docker/daemon.json
-            { sudo cat "$conf" 2>/dev/null || echo '{}'; } |
-              jq '.features["containerd-snapshotter"] = true' | sudo tee "$conf.new" >/dev/null
-            sudo mv "$conf.new" "$conf" && sudo systemctl restart docker
-          fi
-          docker info | grep -i 'driver-type'
       - run: deploy/rehearsal.sh
 
   gitleaks:

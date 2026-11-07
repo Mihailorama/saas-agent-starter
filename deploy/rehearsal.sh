@@ -9,9 +9,6 @@ cd "$(dirname "$0")/.."
 for tool in sops age-keygen docker curl jq ss; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
-# Local images have digests only with the containerd image store (default in Docker 29).
-[[ $(docker info 2>/dev/null) == *io.containerd.snapshotter* ]] ||
-  { echo "needs Docker's containerd image store (features.containerd-snapshotter)" >&2; exit 1; }
 HTTP_PORT=${HTTP_PORT:-28080}
 HTTPS_PORT=${HTTPS_PORT:-28443}
 PROJECT=${PROJECT:-saas-deploy-rehearsal}
@@ -32,10 +29,8 @@ trap cleanup EXIT
 step() { printf '\n=== %s\n' "$*"; }
 in_server() { (cd "$server" && "$@"); }
 sql() { in_server docker compose exec -T postgres psql -U postgres -d app -tAc "$1"; }
-digest_of() {
-  docker image inspect --format '{{json .RepoDigests}}' "$REPO/$1" |
-    jq -r --arg r "$REPO/${1%%:*}@" '.[] | select(startswith($r))'
-}
+# DEPLOY_HOST=local pins images by image ID (scripts/deploy.mjs).
+digest_of() { docker image inspect --format '{{.Id}}' "$REPO/$1"; }
 expect_api() {
   local got want
   got=$(in_server docker compose ps --format '{{.Image}}' api)

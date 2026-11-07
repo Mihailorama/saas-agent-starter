@@ -61,20 +61,19 @@ const ip = [undefined, '', '0.0.0.0'].includes(env.PUBLISH_IP) ? '127.0.0.1' : e
 function digest(name) {
   const pinned = process.env[`IMAGE_${name.toUpperCase()}`];
   if (pinned) {
-    if (!pinned.includes('@sha256:')) die(`IMAGE_${name.toUpperCase()} must be pinned by digest`);
+    if (!/(^|@)sha256:[0-9a-f]{64}$/.test(pinned)) {
+      die(`IMAGE_${name.toUpperCase()} must be pinned by digest (repo@sha256:...)`);
+    }
     return pinned;
   }
   const repo = `${cfg('IMAGE_REPO').toLowerCase()}/${name}`;
   const ref = `${repo}:${version}`;
   const sh = (...a) => execFileSync('docker', a, { encoding: 'utf8' }).trim();
-  // Remote targets pull from the registry, so its digest is the truth; DEPLOY_HOST=local
-  // (rehearsals, air-gapped hosts after `docker load`) uses the image already in the daemon.
-  if (host === 'local') {
-    const local = JSON.parse(sh('image', 'inspect', '--format', '{{json .RepoDigests}}', ref));
-    const hit = local.find((d) => d.startsWith(`${repo}@`));
-    if (!hit) die(`${ref} has no digest in the local daemon`);
-    return hit;
-  }
+  // Remote targets pull from the registry, so its digest is the truth. DEPLOY_HOST=local
+  // (rehearsals, air-gapped hosts after `docker load`) pins the image already in the daemon by
+  // its image ID (sha256 of its config, as immutable as a digest): `repo@sha256` of a locally
+  // built or loaded image does not resolve on every Docker setup, the ID does.
+  if (host === 'local') return sh('image', 'inspect', '--format', '{{.Id}}', ref);
   const manifest = JSON.parse(
     sh('buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest}}', ref),
   );

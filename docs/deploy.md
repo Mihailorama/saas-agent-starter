@@ -217,8 +217,8 @@ Not provided. The images, env contract and health endpoints are ready for it; wh
   GitLab or Nexus registry, a cloud registry in that region):
   `crane copy ghcr.io/<owner>/<repo>/api@sha256:... <mirror>/api:v1.4.0` (crane, Apache-2.0,
   copies the manifest unchanged, so the digest stays the same), and set `IMAGE_REPO` to the
-  mirror. Fully offline: `docker save`/`docker load` and `DEPLOY_HOST=local`, which resolves
-  digests from the local daemon.
+  mirror. Fully offline: `docker save`/`docker load` and `DEPLOY_HOST=local`, which pins the
+  loaded images by their image ID (the sha256 of the image config, as immutable as a digest).
 - Infrastructure images (Postgres, Redis/Valkey, Temporal, Caddy, SeaweedFS) are mirrored the same
   way; list them with `docker compose -f compose.prod.yaml config --images`.
 - Without outbound access to an ACME CA use `CADDY_TLS=internal` and distribute Caddy's root, or
@@ -262,5 +262,5 @@ migration now runs first as a one-off. (2) An unset pass-through variable (`- NA
 `${ANALYTICS_ORIGINS}`, so `web` passes its variables with explicit empty defaults.
 
 Not covered by the rehearsal: the SSH transport (`DEPLOY_HOST=local` runs the same script with
-`sh -s` instead of `ssh <host> sh -s`), real ACME certificates, a registry pull (images were
-resolved from the local daemon) and the GitHub Actions `Release images` workflow.
+`sh -s` instead of `ssh <host> sh -s`), real ACME certificates, a registry pull (`DEPLOY_HOST=local`
+pins the locally built images by image ID instead of a registry digest) and the GitHub Actions `Release images` workflow.
