@@ -25,3 +25,24 @@ export function withOrg<T>(db: Db, orgId: string, fn: (tx: Tx) => Promise<T>): P
     return fn(tx);
   });
 }
+
+/**
+ * Role whose RLS policy `operator_read` (packages/db/src/migrate.ts) sees every tenant's rows,
+ * and which holds SELECT only. The app role is a member without inheriting it, so nothing changes
+ * unless a transaction switches to it.
+ */
+export const OPERATOR_READ_ROLE = 'app_operator_read';
+
+/**
+ * Read-only transaction across all tenants, for the operator console (docs/admin.md). The ONLY
+ * place that leaves tenant scoping: `apps/api/src/routes/admin-*.ts` call it behind
+ * requireOperator, and a test fails if anything else does. Writes inside fail (no privilege);
+ * operator changes go through `withOrg` for the one organization they concern.
+ */
+export function withOperatorRead<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`set transaction read only`);
+    await tx.execute(sql.raw(`set local role ${OPERATOR_READ_ROLE}`));
+    return fn(tx);
+  });
+}

@@ -184,6 +184,8 @@ services:
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       PLANE_WEBHOOK_SECRET: ${PLANE_WEBHOOK_SECRET:-}
       PLANE_PROJECT_ID: ${PLANE_PROJECT_ID:-}
+      # Operator console (docs/admin.md); empty = no operators.
+      OPERATOR_EMAILS: ${OPERATOR_EMAILS:-}
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
       # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1

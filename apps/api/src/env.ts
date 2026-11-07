@@ -109,6 +109,13 @@ const schema = z
     /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
     PLANE_WEBHOOK_SECRET: z.string().optional(),
     PLANE_PROJECT_ID: z.string().optional(),
+    // Operator console (docs/admin.md). Empty list = no operators, /api/admin answers 403.
+    /** Emails of operators (support staff), comma-separated; `pnpm operators:sync` applies it. */
+    OPERATOR_EMAILS: list.transform((l) => l.map((e) => e.toLowerCase())),
+    /** Operator routes need a session younger than this (minutes); then sign in again. */
+    OPERATOR_SESSION_MAX_AGE_MINUTES: z.coerce.number().int().positive().default(60),
+    /** Length of a "view as user" session (minutes). */
+    OPERATOR_IMPERSONATION_MINUTES: z.coerce.number().int().positive().max(240).default(30),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',

@@ -16,6 +16,12 @@ const Plan = z.object({
     llmSpendMonthly: Money,
   }),
   llmSpendMax: Money,
+  /** How far an operator may override seats/projects for one org (docs/admin.md); absent = the
+   * plan's own limit. */
+  limitsMax: z
+    .object({ seats: z.number().int().positive(), projects: z.number().int().nonnegative() })
+    .partial()
+    .optional(),
   features: z.record(z.string(), z.boolean()),
   prices: z.record(z.string(), Price),
 });

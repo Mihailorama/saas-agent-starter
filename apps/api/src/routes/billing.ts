@@ -17,7 +17,7 @@ import { httpError, requireRole, withTenant } from '../tenant.ts';
 const aiModels = JSON.parse(
   readFileSync(new URL('../../../../config/ai-models.json', import.meta.url), 'utf8'),
 ) as { contours: Record<string, { pricePer1kTokens: { currency: string } | null }[]> };
-const costCurrencies = [
+export const costCurrencies = [
   ...new Set(
     (aiModels.contours[env.AI_CONTOUR] ?? []).flatMap((m) =>
       m.pricePer1kTokens ? [m.pricePer1kTokens.currency] : [],

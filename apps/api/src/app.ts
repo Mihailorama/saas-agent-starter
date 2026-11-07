@@ -18,6 +18,7 @@ import { Redis } from 'ioredis';
 import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
+import { adminRoutes, impersonationRoutes } from './routes/admin.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
@@ -60,6 +61,7 @@ export async function buildApp() {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorateRequest('tenant');
+  app.decorateRequest('operator');
 
   // Redis store: limits hold across API replicas.
   const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 1 });
@@ -184,6 +186,10 @@ export async function buildApp() {
   app.all('/api/auth/api-key/*', { schema: { hide: true } }, async (_req, reply) =>
     reply.code(404).send({ error: 'not found' }),
   );
+  // Operator actions go through /api/admin (reason, audit log), not the admin plugin's endpoints.
+  app.all('/api/auth/admin/*', { schema: { hide: true } }, async (_req, reply) =>
+    reply.code(404).send({ error: 'not found' }),
+  );
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
   // Second factors and passkey sign-in (the twoFactor plugin also locks the account itself).
@@ -202,6 +208,8 @@ export async function buildApp() {
   await app.register(securityRoutes, { prefix: '/api/security' });
   await app.register(supportHookRoutes, { prefix: '/api/hooks' });
   await app.register(supportRoutes, { prefix: '/api/support' });
+  await app.register(adminRoutes, { prefix: '/api/admin' });
+  await app.register(impersonationRoutes, { prefix: '/api/impersonation' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.
   app.get('/api/openapi.json', { schema: { hide: true } }, async () => app.swagger());

@@ -1,5 +1,16 @@
 # Known limitations / backlog
 
+- **Operator console: user-level audit rows are not atomic with the change**
+  (`apps/api/src/routes/admin-common.ts`, `auditUser`): sessions revoked, verification resent and
+  impersonation start/end are written after Better Auth acts, like the 2FA rows below. Same fix.
+- **Operator console: no Chatwoot link per user/organization** (docs/admin.md). The integration
+  stores none (ADR 0013). If support wants one: read the contact by `identifier` (user id) through
+  the Chatwoot API in the worker or API and link `/app/accounts/<id>/contacts/<contact id>`; verify
+  the URL scheme against the deployed Chatwoot version first.
+- **Operator console: suspension does not stop work already queued** (webhook deliveries,
+  started workflows). Fix if needed: check `organization.suspended_at` in the worker activities
+  that call out (webhooks, LLM gateway) and skip with a logged reason.
+
 - **2FA/passkey audit rows are not atomic with the change** (`apps/api/src/mfa.ts`): written
   after Better Auth commits, so a crash in between loses the row. Fix if it matters: Better Auth
   database hooks inside its transaction once they cover plugin models.

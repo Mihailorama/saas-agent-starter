@@ -6,6 +6,11 @@ for (const file of ['../../.env', '../../.env.example']) {
   } catch {}
 }
 
+// The operator console spec (e2e/admin.spec.ts) signs up this operator; the API it starts below
+// inherits the list. Set here once, so the test workers see the same address.
+process.env.E2E_OPERATOR_EMAIL ??= `operator-${Date.now()}@example.com`;
+process.env.OPERATOR_EMAILS ??= process.env.E2E_OPERATOR_EMAIL;
+
 // Override when 5173 is taken (e.g. agents running in parallel).
 const webPort = process.env.PLAYWRIGHT_PORT ?? '5173';
 

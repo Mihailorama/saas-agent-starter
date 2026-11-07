@@ -95,6 +95,13 @@ export function stripeProvider(opts: {
       await stripe.subscriptions.update(sub.providerSubscriptionId, { cancel_at_period_end: true });
     },
 
+    // Test-mode keys (sk_test_...) see their objects under /test in the dashboard.
+    dashboardUrl(sub) {
+      const base = `https://dashboard.stripe.com${opts.secretKey.startsWith('sk_test_') ? '/test' : ''}`;
+      if (sub.providerSubscriptionId) return `${base}/subscriptions/${sub.providerSubscriptionId}`;
+      return sub.customerId ? `${base}/customers/${sub.customerId}` : null;
+    },
+
     async webhook(req) {
       const signature = req.headers['stripe-signature'];
       if (typeof signature !== 'string') throw new WebhookRejected('missing signature');

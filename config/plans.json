@@ -1,5 +1,5 @@
 {
-  "$comment": "Plans, limits and prices (docs/billing.md). Read by the API (entitlements, checkout, billing page) and the worker (LLM spend limit). Bump `version` when you change a plan; existing subscriptions keep their plan id. `contours` pick the payment provider and the currencies offered. Prices are per currency; `providerPriceId` is the provider's price object (Stripe price id, created in the Stripe dashboard) or null for a provider that takes the amount with each payment. `amount` is a decimal string in major units. `llmSpendMonthly` caps what an organization's AI calls may cost per billing period, per cost currency of config/ai-models.json; `llmSpendMax` is how far an admin may raise it (needs the `llmLimitRaise` feature). A `past_due` subscription keeps its plan for `pastDueGraceDays` after the paid period ends, then falls back to `defaultPlan`. The example price ids are placeholders: replace them with your own.",
+  "$comment": "Plans, limits and prices (docs/billing.md). Read by the API (entitlements, checkout, billing page) and the worker (LLM spend limit). Bump `version` when you change a plan; existing subscriptions keep their plan id. `contours` pick the payment provider and the currencies offered. Prices are per currency; `providerPriceId` is the provider's price object (Stripe price id, created in the Stripe dashboard) or null for a provider that takes the amount with each payment. `amount` is a decimal string in major units. `llmSpendMonthly` caps what an organization's AI calls may cost per billing period, per cost currency of config/ai-models.json; `llmSpendMax` is how far an admin or operator may raise it (needs the `llmLimitRaise` feature). `limitsMax` (optional) is how far an operator may override seats and projects for one organization (docs/admin.md). A `past_due` subscription keeps its plan for `pastDueGraceDays` after the paid period ends, then falls back to `defaultPlan`. The example price ids are placeholders: replace them with your own.",
   "version": 1,
   "defaultPlan": "free",
   "pastDueGraceDays": 7,
@@ -24,6 +24,10 @@
         "USD": 1,
         "EUR": 1
       },
+      "limitsMax": {
+        "seats": 5,
+        "projects": 10
+      },
       "features": {
         "llmLimitRaise": false
       },
@@ -42,6 +46,10 @@
       "llmSpendMax": {
         "USD": 200,
         "EUR": 200
+      },
+      "limitsMax": {
+        "seats": 50,
+        "projects": 500
       },
       "features": {
         "llmLimitRaise": true
