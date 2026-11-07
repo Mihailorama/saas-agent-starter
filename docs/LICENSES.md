@@ -27,6 +27,7 @@ on an image that is not. Their primary software licenses:
 | `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0        |
 | `python`                               | worker runtime                                     | Python-2.0 (PSF)         |
 | `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                      |
+| `axllent/mailpit`                      | catches outgoing mail in dev (UI/API :8025)        | MIT                      |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -68,6 +69,11 @@ Notes:
   is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
 
+- `axllent/mailpit` ([MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)): local
+  SMTP catcher for transactional email, see [docs/email.md](email.md). Production sends through
+  a provider over SMTP instead. Email code dependencies: `@react-email/render` (MIT; React
+  Email's renderer, `react`/`react-dom` MIT); the worker sends with Python's standard
+  `smtplib`, no package.
 - Two-factor and passkey code dependencies ([ADR 0017](adr/0017-two-factor-and-passkeys.md)),
   checked by the gate like every npm package: `@better-auth/passkey` (MIT) with
   `@simplewebauthn/server` and `@simplewebauthn/browser` (MIT; the server's transitive deps are

@@ -6,7 +6,3 @@ import { createAuthClient } from 'better-auth/react';
 export const authClient = createAuthClient({
   plugins: [organizationClient(), twoFactorClient(), passkeyClient()],
 });
-
-/** Where to go after sign-in: only same-app paths, never another origin (open redirect). */
-export const safeRedirect = (to: unknown) =>
-  typeof to === 'string' && to.startsWith('/') && !to.startsWith('//') ? to : '/';

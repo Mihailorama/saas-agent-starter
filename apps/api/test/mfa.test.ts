@@ -1,6 +1,6 @@
 // 2FA, backup codes, re-auth, audit and the org 2FA policy (ADR 0017). Passkeys: e2e.
 import { randomUUID } from 'node:crypto';
-import { auditLog, session, withOrg } from '@app/db';
+import { auditLog, session, user as users, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import * as OTPAuth from 'otpauth';
@@ -74,7 +74,12 @@ async function signUp(): Promise<User> {
   const email = `${randomUUID()}@example.com`;
   const res = await post(null, '/api/auth/sign-up/email', { email, password, name: 'T' });
   expect(res.statusCode).toBe(200);
-  return { id: res.json().user.id, email, cookie: jar(res) };
+  // The confirmation mail is covered in api.test.ts; here the address is simply confirmed.
+  const id: string = res.json().user.id;
+  await db.update(users).set({ emailVerified: true }).where(eq(users.id, id));
+  const signedIn = await post(null, '/api/auth/sign-in/email', { email, password });
+  expect(signedIn.statusCode).toBe(200);
+  return { id, email, cookie: jar(signedIn) };
 }
 
 async function createOrg(user: User) {

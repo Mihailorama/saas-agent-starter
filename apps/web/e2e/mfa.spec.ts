@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 import * as OTPAuth from 'otpauth';
+import { mailedLink } from './mail';
 
 const password = 'correct-horse-battery';
 // Many steps against a dev server that compiles on first use: the 30s default is too tight.
@@ -15,6 +16,8 @@ async function signUpWithOrg(page: Page) {
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
+  await page.goto(await mailedLink(email, /Confirm/));
   await page.getByLabel('Organization name').fill('Compilers');
   await page.getByRole('button', { name: 'Create organization' }).click();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
