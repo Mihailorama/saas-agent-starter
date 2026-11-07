@@ -1,0 +1,201 @@
+name: UI
+
+# UI quality checks for apps/web (docs/ui.md, ADR 0022). Accessibility (axe, every page and the
+# dev gallery) runs in CI's e2e suite; this workflow adds:
+# - impeccable: the design anti-pattern detector (Apache-2.0) on the source and the rendered pages.
+# - visual: screenshots of the dev gallery and public pages, compared with a baseline made on
+#   main. Baselines are never committed (no media in git): main keeps them as the
+#   `visual-baseline` artifact, PRs download the latest one. To accept an intended change, add
+#   the `visual-change-approved` label; main writes the new baseline after the merge.
+# - lighthouse: Lighthouse CI budgets (accessibility, best practices) on the public pages.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - apps/web/**
+      - config/ai-models.json
+      - config/ai-transparency.json
+      - pnpm-lock.yaml
+      - .github/workflows/ui.yml
+  push:
+    branches: [main]
+    paths:
+      - apps/web/**
+      - config/ai-models.json
+      - config/ai-transparency.json
+      - pnpm-lock.yaml
+      - .github/workflows/ui.yml
+  schedule:
+    - cron: "23 5 * * 1" # weekly: a fresh baseline before the 90-day artifact expiry
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # https://github.com/pbakaus/impeccable/releases (engine binary, Apache-2.0); bump both together.
+  IMPECCABLE_VERSION: 0.1.19
+  IMPECCABLE_SHA256: 07b763dc00012e9acf219fe2d2e8980f0810fb8af2e4a41c090107a8351d412f
+  PLAYWRIGHT_PORT: "5173"
+
+jobs:
+  impeccable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter web...
+      # Offline after download: no account, no key, no network at scan time. URL scans drive
+      # the runner's Google Chrome against the local dev server.
+      - name: Install the detector (pinned, checksum-verified)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/impeccable" \
+            "https://github.com/pbakaus/impeccable/releases/download/engine-v$IMPECCABLE_VERSION/impeccable-linux-x64"
+          echo "$IMPECCABLE_SHA256  $RUNNER_TEMP/impeccable" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/impeccable"
+      - name: Scan the source
+        run: '"$RUNNER_TEMP/impeccable" detect --github apps/web/src'
+      - name: Scan the rendered gallery, reference screens and public pages
+        run: |
+          pnpm --filter web exec vite --port "$PLAYWRIGHT_PORT" --strictPort > vite.log 2>&1 &
+          base="http://localhost:$PLAYWRIGHT_PORT"
+          timeout 60 sh -c "until curl -sf $base/ > /dev/null; do sleep 1; done"
+          urls="$base/dev/ui $base/sign-in $base/ai-transparency"
+          for s in list detail form settings empty loading error; do urls="$urls $base/dev/ui/screens/$s"; done
+          status=0
+          for viewport in 1280x800 390x844; do
+            "$RUNNER_TEMP/impeccable" detect --viewport "$viewport" $urls || status=1
+          done
+          exit $status
+
+  visual:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read # download the baseline artifact from main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter web...
+      - run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Download the latest baseline from main
+        id: baseline
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=visual-baseline&per_page=50" \
+            --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main")][0].workflow_run.id // empty')
+          if [ -n "$run_id" ] && gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name visual-baseline --dir apps/web/.visual/baseline; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Baseline: run $run_id on main" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Compare with the baseline
+        id: compare
+        if: steps.baseline.outputs.found == 'true'
+        continue-on-error: true
+        run: pnpm --filter web visual
+      - name: Write a new baseline
+        if: github.event_name != 'pull_request' || steps.baseline.outputs.found != 'true'
+        run: pnpm --filter web visual:update
+      - name: Summary
+        if: always()
+        env:
+          FOUND: ${{ steps.baseline.outputs.found }}
+          OUTCOME: ${{ steps.compare.outcome }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          {
+            echo "## Visual regression"
+            if [ "$EVENT" != pull_request ]; then
+              echo "Baseline written and stored as the \`visual-baseline\` artifact."
+            elif [ "$FOUND" != true ]; then
+              echo "No baseline from main yet: screenshots taken, nothing compared (report only)."
+            elif [ "$OUTCOME" = success ]; then
+              echo "No visual changes against main."
+            else
+              echo "Screenshots that differ from main (diffs in the \`visual-report\` artifact):"
+              jq -r '[.. | objects | select(has("specs")) | .specs[].tests[]
+                | select(.status == "unexpected") | .projectName as $p | .results[-1].attachments[]
+                | select(.name | endswith("-diff.png")) | "- \($p): \(.name | sub("-diff.png$"; ""))"]
+                | unique | .[]' apps/web/.visual/results.json
+              echo
+              echo "Intended? Add the \`visual-change-approved\` label to accept (docs/ui.md)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Store the baseline
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-baseline
+          path: apps/web/.visual/baseline/
+          retention-days: 90
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-report
+          path: |
+            apps/web/.visual/report/
+            apps/web/.visual/results/
+          if-no-files-found: ignore
+      - name: Fail on unapproved visual changes
+        if: steps.compare.outcome == 'failure'
+        env:
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'visual-change-approved') }}
+        run: |
+          if [ "$APPROVED" = true ]; then
+            echo "::notice::Visual changes accepted with the visual-change-approved label."
+          else
+            echo "::error::Screenshots differ from main; see the job summary and the visual-report artifact."
+            exit 1
+          fi
+
+  lighthouse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      # The sign-in page asks the API for its config; Postgres and Redis are all the API needs.
+      - run: docker compose up -d --wait postgres redis
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - name: Start the API
+        run: |
+          pnpm --filter api start > api.log 2>&1 &
+          timeout 60 sh -c 'until curl -sf http://localhost:3000/readyz > /dev/null; do sleep 1; done'
+      - run: pnpm --filter web build
+      - name: The dev gallery is not in the production build
+        run: '! grep -rlE "UI gallery|Reference screens" apps/web/dist'
+      # Lighthouse CI runs via dlx, not as a dependency, like the marketing site's check:
+      # lighthouse pulls @sentry/node and with it the FSL-licensed `sentry` CLI (docs/LICENSES.md).
+      - run: pnpm --filter web lhci
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lighthouse-web-reports
+          path: apps/web/.lighthouseci/reports/
+          if-no-files-found: ignore
+      - if: failure()
+        run: tail -n 50 api.log; docker compose logs --tail 50

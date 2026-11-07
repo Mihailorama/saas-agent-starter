@@ -11,6 +11,8 @@ const webPort = process.env.PLAYWRIGHT_PORT ?? '5173';
 
 export default defineConfig({
   testDir: 'e2e',
+  // Screenshots run with their own config (playwright.visual.config.ts, CI workflow ui.yml).
+  testIgnore: 'visual.spec.ts',
   retries: process.env.CI ? 1 : 0,
   use: { baseURL: `http://localhost:${webPort}`, trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],

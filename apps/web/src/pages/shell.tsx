@@ -1,5 +1,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, Navigate, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
+import {
+  Link,
+  Navigate,
+  Outlet,
+  useLocation,
+  useMatches,
+  useNavigate,
+} from '@tanstack/react-router';
 import {
   Bug,
   Building2,
@@ -7,21 +14,19 @@ import {
   ChevronsUpDown,
   FolderKanban,
   KeyRound,
-  Layers,
   LifeBuoy,
   Lightbulb,
   LogOut,
   MessageCircle,
-  Moon,
   Plus,
   ScrollText,
   ShieldCheck,
   Sparkles,
-  Sun,
   Webhook,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { AppShell, type NavGroup } from '@/components/patterns/app-shell';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,12 +47,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { identify, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
-import { setTheme, useTheme } from '@/lib/theme';
-import { cn } from '@/lib/utils';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
 
 const initials = (s: string) =>
@@ -104,19 +108,16 @@ function OrgSwitcher() {
     <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            className="h-auto w-full justify-start gap-3 px-2 py-2"
-            aria-label="Switch organization"
-          >
+          <SidebarMenuButton size="lg">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Building2 className="size-4" />
+              <Building2 className="size-4" aria-hidden />
             </span>
             <span className="min-w-0 flex-1 truncate text-left text-sm font-medium">
+              <span className="sr-only">Switch organization: </span>
               {active?.name ?? 'Select organization'}
             </span>
-            <ChevronsUpDown className="size-4 text-muted-foreground" />
-          </Button>
+            <ChevronsUpDown className="text-muted-foreground" />
+          </SidebarMenuButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-60" align="start">
           <DropdownMenuLabel className="text-xs text-muted-foreground">
@@ -150,13 +151,12 @@ function OrgSwitcher() {
 function UserMenu() {
   const navigate = useNavigate();
   const { data: session } = authClient.useSession();
-  const theme = useTheme();
   const user = session?.user;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="h-auto w-full justify-start gap-3 px-2 py-2">
+        <SidebarMenuButton size="lg">
           <Avatar className="size-8">
             <AvatarFallback className="text-xs">{initials(user?.name ?? '?')}</AvatarFallback>
           </Avatar>
@@ -164,13 +164,9 @@ function UserMenu() {
             <span className="block truncate text-sm font-medium">{user?.name}</span>
             <span className="block truncate text-xs text-muted-foreground">{user?.email}</span>
           </span>
-        </Button>
+        </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60" align="start" side="top">
-        <DropdownMenuItem onSelect={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          {theme === 'dark' ? 'Light mode' : 'Dark mode'}
-        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/security' })}>
           <ShieldCheck className="size-4" /> Security
         </DropdownMenuItem>
@@ -191,16 +187,16 @@ function UserMenu() {
 }
 
 /** The one entry point for questions, problem reports and ideas (Chatwoot, docs/support.md). */
-function HelpMenu({ className }: { className?: string }) {
+function HelpMenu() {
   const { data: active } = authClient.useActiveOrganization();
   const open = (kind: Parameters<typeof openSupport>[0]) => () =>
     openSupport(kind, active?.id).catch(() => toast.error('Help is unavailable right now'));
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className={cn('justify-start gap-3 px-2', className)}>
-          <LifeBuoy className="size-4" /> Help
-        </Button>
+        <SidebarMenuButton>
+          <LifeBuoy /> <span>Help</span>
+        </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60" align="start" side="top">
         <DropdownMenuItem onSelect={open('question')}>
@@ -217,10 +213,6 @@ function HelpMenu({ className }: { className?: string }) {
   );
 }
 
-const navLink =
-  'flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
-const navActive = 'bg-accent font-medium text-foreground!';
-
 export function Shell() {
   const { data: orgs, isPending } = authClient.useListOrganizations();
   const { data: member } = authClient.useActiveMember();
@@ -229,10 +221,9 @@ export function Shell() {
   useEffect(() => {
     if (userId) identify(userId);
   }, [userId]);
-  const onProjects = useLocation({
-    select: (l) => l.pathname === '/' || l.pathname.startsWith('/projects'),
-  });
   const onSecurity = useLocation({ select: (l) => l.pathname === '/settings/security' });
+  // Breadcrumbs are declared per route (`staticData.crumbs` in main.tsx).
+  const crumbs = useMatches().at(-1)?.staticData.crumbs ?? [];
   // Org requires 2FA and this user has none: the API refuses tenant data, so enrol first.
   const policy = useQuery({ ...policyQuery, enabled: Boolean(orgs?.length) });
   const mustEnrol = policy.error?.message === TWO_FACTOR_REQUIRED;
@@ -267,71 +258,63 @@ export function Shell() {
     );
   }
 
+  const nav: NavGroup[] = [
+    {
+      items: [
+        {
+          label: 'Projects',
+          icon: FolderKanban,
+          to: '/',
+          active: (p) => p === '/' || p.startsWith('/projects'),
+        },
+        ...(isAdmin ? [{ label: 'AI calls', icon: ScrollText, to: '/ai-calls' as const }] : []),
+      ],
+    },
+    ...(isAdmin
+      ? [
+          {
+            label: 'Settings',
+            items: [
+              { label: 'API keys', icon: KeyRound, to: '/settings/api-keys' as const },
+              { label: 'Webhooks', icon: Webhook, to: '/settings/webhooks' as const },
+            ],
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="flex min-h-screen">
-      <aside className="hidden w-64 shrink-0 flex-col border-r bg-muted/30 md:flex">
-        <div className="flex h-14 items-center gap-2 px-4 font-semibold">
-          <Layers className="size-5 text-primary" /> Workspace
-        </div>
-        <div className="px-2">
-          <OrgSwitcher />
-        </div>
-        <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, onProjects && navActive)}>
-            <FolderKanban className="size-4" /> Projects
-          </Link>
-          {isAdmin && (
-            <Link to="/ai-calls" className={navLink} activeProps={{ className: navActive }}>
-              <ScrollText className="size-4" /> AI calls
-            </Link>
-          )}
-          {isAdmin && (
-            <>
-              <p className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground">Settings</p>
-              <Link
-                to="/settings/api-keys"
-                className={navLink}
-                activeProps={{ className: navActive }}
-              >
-                <KeyRound className="size-4" /> API keys
-              </Link>
-              <Link
-                to="/settings/webhooks"
-                className={navLink}
-                activeProps={{ className: navActive }}
-              >
-                <Webhook className="size-4" /> Webhooks
-              </Link>
-            </>
-          )}
-        </nav>
-        {supportEnabled && (
-          <HelpMenu className="mx-2 mb-1 h-auto py-2 text-sm font-normal text-muted-foreground" />
-        )}
-        <Link
-          to="/ai-transparency"
-          className="mx-2 mb-2 flex items-center gap-3 rounded-md px-2 py-2 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <Sparkles className="size-3.5" /> How we use AI
-        </Link>
-        <div className="border-t p-2">
-          <UserMenu />
-        </div>
-      </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-2 border-b px-4 md:hidden">
-          <div className="min-w-0 flex-1">
+    <AppShell
+      nav={nav}
+      crumbs={crumbs}
+      sidebarHeader={
+        <SidebarMenu>
+          <SidebarMenuItem>
             <OrgSwitcher />
-          </div>
-          {supportEnabled && <HelpMenu />}
-          <div className="w-44">
+          </SidebarMenuItem>
+        </SidebarMenu>
+      }
+      sidebarFooter={
+        <SidebarMenu>
+          {supportEnabled && (
+            <SidebarMenuItem>
+              <HelpMenu />
+            </SidebarMenuItem>
+          )}
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild size="sm" className="text-muted-foreground">
+              <Link to="/ai-transparency">
+                <Sparkles /> <span>How we use AI</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
             <UserMenu />
-          </div>
-        </header>
-        <main className="flex-1 p-4 md:p-8">
-          <Outlet />
-        </main>
-      </div>
-    </div>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      }
+    >
+      <Outlet />
+    </AppShell>
   );
 }

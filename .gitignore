@@ -13,3 +13,6 @@ __pycache__/
 evals/**/.out/
 evals/**/.effective.json
 evals/**/pulled.jsonl
+# Screenshots and reports stay out of git (baselines live in CI artifacts, docs/ui.md)
+.visual/
+.lighthouseci/

@@ -12,7 +12,10 @@ import {
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ConsentBanner } from '@/components/consent-banner';
+import type { Crumb } from '@/components/patterns/app-shell';
 import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { devRoutes } from '@/dev/routes';
 import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
@@ -32,11 +35,11 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } 
 
 const rootRoute = createRootRoute({
   component: () => (
-    <>
+    <TooltipProvider>
       <Outlet />
-      <Toaster richColors closeButton />
+      <Toaster closeButton />
       <ConsentBanner />
-    </>
+    </TooltipProvider>
   ),
 });
 
@@ -102,36 +105,42 @@ const appRoute = createRoute({
 const projectsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/',
+  staticData: { crumbs: [{ label: 'Projects' }] },
   component: ProjectsPage,
 });
 
 const projectRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/projects/$projectId',
+  staticData: { crumbs: [{ label: 'Projects', to: '/' }, { label: 'Project' }] },
   component: ProjectPage,
 });
 
 const aiCallsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/ai-calls',
+  staticData: { crumbs: [{ label: 'AI calls' }] },
   component: AiCallsPage,
 });
 
 const apiKeysRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/api-keys',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'API keys' }] },
   component: ApiKeysPage,
 });
 
 const webhooksRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/webhooks',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Webhooks' }] },
   component: WebhooksPage,
 });
 
 const securityRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/security',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Security' }] },
   component: SecurityPage,
 });
 
@@ -150,6 +159,11 @@ const router = createRouter({
       apiKeysRoute,
       webhooksRoute,
     ]),
+    // Dev-only UI gallery (/dev/ui): dead code in production builds, so Vite drops it (and the
+    // gallery chunks); the cast keeps the routes in the types for typed links.
+    ...(import.meta.env.DEV
+      ? devRoutes(rootRoute)
+      : ([] as unknown as ReturnType<typeof devRoutes<typeof rootRoute>>)),
   ]),
 });
 
@@ -160,6 +174,10 @@ router.subscribe('onResolved', () => page(router.state.matches.at(-1)?.fullPath 
 declare module '@tanstack/react-router' {
   interface Register {
     router: typeof router;
+  }
+  interface StaticDataRouteOption {
+    /** Breadcrumb trail shown in the app shell header; the last one is the current page. */
+    crumbs?: Crumb[];
   }
 }
 
