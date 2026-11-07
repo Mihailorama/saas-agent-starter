@@ -177,8 +177,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # The sign-in page asks the API for its config; Postgres and Redis are all the API needs.
-      - run: docker compose up -d --wait postgres redis
+      # The sign-in page asks the API for its config; the API needs Postgres, Redis and S3 to start.
+      - run: docker compose up -d --wait postgres redis s3
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:migrate
       - name: Start the API
