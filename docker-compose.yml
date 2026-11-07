@@ -2,6 +2,7 @@
 # Everything:                docker compose up -d --build
 # With logs/traces/metrics:  docker compose --profile observability up -d   (Grafana :3001)
 # Permissive-only twin:      add -f docker-compose.yml -f compose.permissive.yaml (ADR 0010)
+# With LLM-ops Full (Langfuse, ADR 0009): docker compose --profile llmops up -d
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
 
 # Every service: the json-file log driver stamps compose project + service into each line,
@@ -186,6 +187,11 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
       SENTRY_DSN: ${WORKER_SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
+      # LLM observability (ADR 0009): each call as a PostHog $ai_generation when set.
+      POSTHOG_PRIVACY_MODE: ${POSTHOG_PRIVACY_MODE:-true}
+      # With --profile llmops: spans to Langfuse (see .env.example, "LLM-ops Full").
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${WORKER_OTEL_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${WORKER_OTEL_TRACES_HEADERS:-}
       SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025?tls=none}
       MAIL_FROM: ${MAIL_FROM:-Workspace <no-reply@example.com>}
       AI_CONTOUR: ${AI_CONTOUR:-eu}
@@ -366,7 +372,120 @@ services:
       start_period: 60s
       retries: 30
 
+  # Full LLM-ops profile: Langfuse v4 (MIT core) on our Postgres server (own database), our
+  # Redis (own db index) and our S3 (own bucket), plus ClickHouse. Langfuse's optional AI
+  # gateway container is left out. Memory limits are the measured working set plus headroom
+  # (docs/STACK.md). Example credentials are for local dev only (CHANGEME in production).
+  langfuse-db:
+    profiles: [llmops]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        psql -h postgres -U postgres -tAc "select 1 from pg_database where datname = 'langfuse'"
+        | grep -q 1 || createdb -h postgres -U postgres langfuse
+
+  clickhouse:
+    profiles: [llmops]
+    image: clickhouse/clickhouse-server:26.3.62.3
+    user: "101:101"
+    mem_limit: 1536m
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: local-dev-clickhouse
+    volumes:
+      - clickhousedata:/var/lib/clickhouse
+      - ./infra/langfuse/clickhouse-low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+      - ./infra/langfuse/clickhouse-low-memory-users.xml:/etc/clickhouse-server/users.d/low-memory.xml:ro
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 3s
+      retries: 30
+
+  langfuse-worker:
+    profiles: [llmops]
+    image: langfuse/langfuse-worker:4.76.0
+    mem_limit: 1g
+    depends_on: &langfuse-deps
+      langfuse-db: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      s3: { condition: service_healthy }
+    environment: &langfuse-env
+      NODE_OPTIONS: --max-old-space-size=768
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3200}
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
+      SALT: local-dev-langfuse-salt
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: local-dev-clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      # Our Redis keeps the default maxmemory-policy noeviction, which Langfuse requires.
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+      # SeaweedFS creates the bucket on first write; on AWS/R2 create it beforehand.
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://s3:8333
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: local-dev-access-key
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: local-dev-secret-key
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://s3:8333
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: local-dev-access-key
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: local-dev-secret-key
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+  langfuse-web:
+    profiles: [llmops]
+    image: langfuse/langfuse:4.76.0
+    mem_limit: 1536m
+    depends_on: *langfuse-deps
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: local-dev-langfuse-nextauth-secret
+      # Headless init: one org, project, API key pair and admin user (no quotes in values).
+      LANGFUSE_INIT_ORG_ID: local-dev-org
+      LANGFUSE_INIT_ORG_NAME: Local dev
+      LANGFUSE_INIT_PROJECT_ID: local-dev-project
+      LANGFUSE_INIT_PROJECT_NAME: saas-agent-starter
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local-dev}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local-dev}
+      LANGFUSE_INIT_USER_EMAIL: admin@example.com
+      LANGFUSE_INIT_USER_NAME: Admin
+      LANGFUSE_INIT_USER_PASSWORD: local-dev-password
+    ports: ["127.0.0.1:${LANGFUSE_PORT:-3200}:3000"]
+    healthcheck:
+      # Next.js binds to the container hostname, not localhost.
+      test: ["CMD-SHELL", "wget -qO- http://$${HOSTNAME}:3000/api/public/health >/dev/null"]
+      interval: 5s
+      start_period: 60s
+      retries: 60
+
+  # Eval engine for `pnpm eval` (scripts/eval.mjs). A container, not an npm dependency: the
+  # promptfoo npm tree fails the code-dependency license gate (docs/adr/0009-llm-ops.md).
+  promptfoo:
+    profiles: [eval]
+    image: ghcr.io/promptfoo/promptfoo:0.125.1
+    entrypoint: ["promptfoo"]
+    working_dir: /work
+    volumes: [".:/work"]
+    environment:
+      HOME: /tmp
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_UPDATE: "1"
+
 volumes:
   pgdata:
   s3data:
   lokidata:
+  clickhousedata:

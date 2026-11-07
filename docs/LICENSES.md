@@ -7,27 +7,31 @@ unmodified, not distributed with the app**, so any license is acceptable, AGPL a
 source-available included. Every image must still be listed below; `pnpm check:licenses` fails
 on an image that is not. Their primary software licenses:
 
-| Image                                  | Used for                                           | License                  |
-| -------------------------------------- | -------------------------------------------------- | ------------------------ |
-| `postgres`                             | database (app + Temporal)                          | PostgreSQL               |
-| `redis`                                | rate-limit store                                   | RSALv2 / SSPLv1 / AGPLv3 |
-| `valkey/valkey`                        | rate-limit store (permissive twin)                 | BSD-3-Clause             |
-| `chrislusf/seaweedfs`                  | local S3-compatible storage (dev only)             | Apache-2.0               |
-| `temporalio/server`                    | workflow engine                                    | MIT                      |
-| `temporalio/admin-tools`               | Temporal schema setup, namespace                   | MIT                      |
-| `temporalio/ui`                        | Temporal Web UI                                    | MIT                      |
-| `otel/opentelemetry-collector-contrib` | telemetry pipeline, container logs (observability) | Apache-2.0               |
-| `jaegertracing/jaeger`                 | traces (observability profile)                     | Apache-2.0               |
-| `prom/prometheus`                      | metrics, alert rules (observability)               | Apache-2.0               |
-| `grafana/loki`                         | logs (observability profile)                       | AGPL-3.0                 |
-| `grafana/grafana`                      | dashboards, single pane (observability)            | AGPL-3.0                 |
-| `glitchtip/glitchtip`                  | error tracking, Sentry API (glitchtip profile)     | MIT                      |
-| `node`                                 | API runtime and web build                          | MIT                      |
-| `nginxinc/nginx-unprivileged`          | web static files + `/api` proxy                    | BSD-2-Clause             |
-| `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0        |
-| `python`                               | worker runtime                                     | Python-2.0 (PSF)         |
-| `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                      |
-| `axllent/mailpit`                      | catches outgoing mail in dev (UI/API :8025)        | MIT                      |
+| Image                                  | Used for                                           | License                     |
+| -------------------------------------- | -------------------------------------------------- | --------------------------- |
+| `postgres`                             | database (app + Temporal)                          | PostgreSQL                  |
+| `redis`                                | rate-limit store                                   | RSALv2 / SSPLv1 / AGPLv3    |
+| `valkey/valkey`                        | rate-limit store (permissive twin)                 | BSD-3-Clause                |
+| `chrislusf/seaweedfs`                  | local S3-compatible storage (dev only)             | Apache-2.0                  |
+| `temporalio/server`                    | workflow engine                                    | MIT                         |
+| `temporalio/admin-tools`               | Temporal schema setup, namespace                   | MIT                         |
+| `temporalio/ui`                        | Temporal Web UI                                    | MIT                         |
+| `otel/opentelemetry-collector-contrib` | telemetry pipeline, container logs (observability) | Apache-2.0                  |
+| `jaegertracing/jaeger`                 | traces (observability profile)                     | Apache-2.0                  |
+| `prom/prometheus`                      | metrics, alert rules (observability)               | Apache-2.0                  |
+| `grafana/loki`                         | logs (observability profile)                       | AGPL-3.0                    |
+| `grafana/grafana`                      | dashboards, single pane (observability)            | AGPL-3.0                    |
+| `glitchtip/glitchtip`                  | error tracking, Sentry API (glitchtip profile)     | MIT                         |
+| `node`                                 | API runtime and web build                          | MIT                         |
+| `nginxinc/nginx-unprivileged`          | web static files + `/api` proxy                    | BSD-2-Clause                |
+| `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0           |
+| `python`                               | worker runtime                                     | Python-2.0 (PSF)            |
+| `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                         |
+| `axllent/mailpit`                      | catches outgoing mail in dev (UI/API :8025)        | MIT                         |
+| `ghcr.io/promptfoo/promptfoo`          | eval engine for `pnpm eval` (eval profile)         | MIT                         |
+| `langfuse/langfuse`                    | Langfuse web (llmops profile)                      | MIT core + `ee/` commercial |
+| `langfuse/langfuse-worker`             | Langfuse worker (llmops profile)                   | MIT core + `ee/` commercial |
+| `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -68,6 +72,16 @@ Notes:
   `posthog-js` is `Apache-2.0 AND MIT` (both permissive; ship the notices), `@langfuse/browser`
   is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
+- `ghcr.io/promptfoo/promptfoo`: Promptfoo itself is MIT, but its npm dependency tree is not
+  (checked 2026-11-06 with `promptfoo@0.125.1`: `@img/sharp-libvips-*` LGPL-3.0-or-later,
+  `binaryextensions`/`istextorbinary`/... Artistic-2.0, `sylvester` unknown), so it would fail
+  the code-dependency gate. It runs as an unmodified dev-tool container instead
+  ([ADR 0009](adr/0009-llm-ops.md)).
+- `langfuse/*`: MIT for everything outside the `ee/` directories, which are under a commercial
+  license and only active with a license key. Everything this repo uses (OTLP ingestion,
+  scores, prompt management) is in the MIT core
+  ([LICENSE](https://github.com/langfuse/langfuse/blob/main/LICENSE),
+  [license key](https://langfuse.com/self-hosting/license-key)).
 - Feature-flag code dependencies ([docs/feature-flags.md](feature-flags.md), checked by the gate):
   `posthog-node` (MIT, API); `posthog-js` (above) in the web. The worker calls PostHog's `/flags`
   HTTP API with the existing `httpx2`: the `posthog` PyPI SDK (MIT) depends on `distro`, whose

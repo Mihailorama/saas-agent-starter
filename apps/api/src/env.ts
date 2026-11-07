@@ -32,6 +32,8 @@ const schema = z
     S3_PUBLIC_ENDPOINT: z.url().optional(),
     S3_REGION: z.string().default('us-east-1'),
     S3_BUCKET: z.string().default('attachments'),
+    /** Bucket the worker stores LLM request/response content in (worker AI_CONTENT_BUCKET). */
+    AI_CONTENT_BUCKET: z.string().default('ai-calls'),
     S3_ACCESS_KEY_ID: z.string().min(1),
     S3_SECRET_ACCESS_KEY: z.string().min(1),
     /** Set to true behind a reverse proxy so req.ip comes from X-Forwarded-For. */

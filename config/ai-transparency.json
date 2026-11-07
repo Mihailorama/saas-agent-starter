@@ -10,6 +10,13 @@
       "what": "When you add a description to a project, a language model writes a one-sentence summary of it.",
       "data": "The project name and description you entered. Nothing else about you or your organization is sent.",
       "oversight": "The summary is labeled \"AI-generated\" until a member of your organization confirms or corrects it. Corrections replace the summary; the original output stays in the audit log."
+    },
+    {
+      "purpose": "judge",
+      "title": "Quality checks of AI output",
+      "what": "We check the quality of AI output: before a change ships, against a fixed set of made-up examples, and, if enabled, by letting a second language model grade a small sample of recent outputs against fixed, versioned criteria in our quality tool. The grade is used for monitoring only and never changes what you see.",
+      "data": "The same input and output as the original AI use (for project summaries: the project name, description and the generated summary).",
+      "oversight": "Grades and your confirmations or corrections are reviewed by our team in the quality tool (PostHog or a self-hosted Langfuse); they never change a result on their own."
     }
   ],
   "contest": [

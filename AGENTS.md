@@ -8,7 +8,8 @@ Single source of rules for coding agents (Claude Code, Codex, others) and humans
 `pnpm check` is green. It runs, in order: Biome (format + lint), the analytics event check
 (`check:events`), the feature-flag check (`check:flags`), `scripts/*.test.mjs`, typecheck with tsrs,
 TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
-pyright (strict), pytest, the license gate for all three ecosystems, and the Playwright smoke.
+pyright (strict), pytest, the license gate for all three ecosystems, the key-free eval
+(`pnpm eval --fake-llm`, needs Docker) and the Playwright smoke.
 It needs the local infra running (see Setup).
 
 Typecheck: day to day it is tsrs (`pnpm typecheck:fast`, Rust port of the TypeScript checker,
@@ -41,6 +42,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
+  src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -54,6 +56,8 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
+  worker/prompts.py   versioned prompt loader (prompts/<purpose>/<name>.v<N>.md)
+  worker/posthog.py   each LLM call as a PostHog `$ai_generation` (when POSTHOG_* is set)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
@@ -61,15 +65,20 @@ config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
                     flags.json (feature flag catalog)
+prompts/            prompt templates, one immutable file per version; lock.json pins hashes
+evals/              Promptfoo golden sets per purpose (`pnpm eval`, scripts/eval.mjs)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
-                    rules (infra/otel), Grafana datasources + dashboards (infra/grafana)
+                    rules (infra/otel), Grafana datasources + dashboards (infra/grafana),
+                    ClickHouse tuning for Langfuse (infra/langfuse)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
-                    check-flags.mjs, flags.mjs (flags:sync), released.mjs (release comments)
+                    check-flags.mjs, flags.mjs (flags:sync), released.mjs (release comments),
+                    eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
+docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
@@ -150,18 +159,72 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 1. Registry: add the purpose to the allowed models in `config/ai-models.json` for every
    contour that should offer it (with `pricePer1kTokens`, or `null` if unknown). Add a `uses`
    entry with the same `purpose` to `config/ai-transparency.json`.
-2. Activity: in `services/worker-py/worker/activities.py`, call `self.ai.call_llm(...)` with
+2. Prompt: write `prompts/<purpose>/<name>.v1.md` and add its hash to `prompts/lock.json`
+   (the failing test prints the line). Activity: in `services/worker-py/worker/activities.py`,
+   `prompt = prompts.load("<purpose>/<name>", 1)` and call `self.ai.call_llm(...)` with
    the purpose, an explicit `model` and `provider` (from a per-purpose env setting such as
    `AI_PROJECT_SUMMARY_MODEL`; unset = feature off, never a fallback), the org and actor ids,
-   a prompt template id + version (bump the version whenever the prompt text changes) and
+   `prompt_template_id=prompt.id`, `prompt_template_version=prompt.version` and
    `max_tokens`. Read user content from the DB inside the activity; pass ids, not content,
    through workflow arguments.
 3. Oversight: if the output is stored and shown, store it with `ai_status='generated'` and
    `ai_call_id`, add confirm/correct endpoints like `projects.ts` and show `<AiBadge>` in the
    web next to it.
 4. Tests: a pytest with a fake provider (see `tests/test_ai.py`) that checks the stored result
-   and the `ai_calls` row; API tests for the review endpoints.
-5. Write the AI system card (template in `docs/ai-act.md`). `pnpm check`.
+   and the `ai_calls` row; API tests for the review endpoints. Expose the call's trace id
+   (`aiTraceId`, like `projects.ts`) so the AI-answer thumbs attach to the generation
+   (`aiFeedback()` in `apps/web/src/lib/analytics.ts`).
+5. Eval: `evals/<purpose>/promptfooconfig.json` + `dataset.jsonl` (copy `project.summary`) and
+   a judge prompt `prompts/judge/<purpose>.v1.md` (`{{input}}`, `{{output}}`, JSON answer with
+   `score` 0..1). `tests/test_prompts.py` fails if a prompted purpose has no eval. For online
+   quality, add an evaluator for the purpose in PostHog or Langfuse (ADR 0009, "Online
+   evaluators"); there is no in-house judge job.
+6. Write the AI system card (template in `docs/ai-act.md`). `pnpm check`.
+
+## Recipe: add a prompt version
+
+A prompt is code: reviewed, tested, evaluated. Never edit a released `.v<N>.md`.
+
+1. Copy `prompts/<purpose>/<name>.v<N>.md` to `.v<N+1>.md` and change it. Run `pnpm format`
+   (Biome also formats Markdown), then add its hash to `prompts/lock.json` (the failing
+   `tests/test_prompts.py` prints the line).
+2. Point the eval at it (`gate.prompt.version` in `evals/<purpose>/promptfooconfig.json`) and
+   run `pnpm eval:real` on your machine. It runs the model and the judge through your Claude
+   subscription (the logged-in `claude` CLI, model always explicit); there is no API key, in
+   CI or anywhere else. It must pass `gate.minScore`; put the result and the previous
+   version's score in the PR description. CI runs only the key-free `pnpm eval --fake-llm`.
+3. Switch the code to the new version (e.g. `SUMMARY_PROMPT` in `activities.py`). Every call
+   carries the version (`ai_calls`, `ai_prompt_version` in PostHog), so compare versions there
+   after deploy.
+4. With the Full profile, `pnpm langfuse:prompts` publishes it to Langfuse (label `v<N+1>`).
+
+## Recipe: add eval cases
+
+1. Synthetic: append a line to `evals/<purpose>/dataset.jsonl`:
+   `{"description": "...", "vars": {"input": "<exact user message>", "recorded_output": "<a good answer>"}}`.
+   No real customer data, names or secrets.
+2. From production: `pnpm eval:pull --org <orgId> --purpose <purpose> [--call <id>]...
+   [--days 7] [--limit 20]` reads logged calls (ai_calls + S3 content; every export is
+   audit-logged) and appends them to `evals/<purpose>/pulled.jsonl` (gitignored). Pick call ids
+   from the AI calls page or from low-scored traces in PostHog/Langfuse. Rewrite each case so
+   it contains no personal or customer data, then move it to `dataset.jsonl`.
+3. Case-specific checks go into the line's own `assert` list (Promptfoo syntax); shared ones
+   into `defaultTest.assert`. `pnpm eval` and `pnpm eval:real` must pass.
+
+## Where quality data lives (PostHog or Langfuse)
+
+No own analytics or score tables (owner rule). `ai_calls` is the EU AI Act audit record, not
+analytics. Quality data (generations, user feedback, LLM-as-a-judge scores) goes to:
+
+- **PostHog Cloud** (default): the worker sends every call as a `$ai_generation` when
+  `POSTHOG_KEY` and `POSTHOG_HOST` (EU or US) are set; the web uses `VITE_POSTHOG_*` (ADR
+  0012). The owner creates the accounts; never sign up for one yourself.
+- **Langfuse self-hosted** (`--profile llmops`) when a client or the RU contour forbids sending
+  data out. About 1.9 GiB RAM plus a ClickHouse (docs/STACK.md).
+
+Both can run at once. Online evaluators (LLM-as-a-judge, drift) live in the tool and are
+defined as code by `pnpm llmops:evaluators` (ADR 0009). Do not add score tables, judge
+workflows or a second feedback path; user feedback goes through `aiFeedback()` (ADR 0012).
 
 ## Conventions
 
@@ -191,10 +254,11 @@ Logging rules:
   reporting, error webhooks or "error" tables. Log the error too (with ids), but never put
   content in the exception message.
 
-Metric names agreed for the AI layer (dashboard `LLM`, alert `AiScoreDrop`), emitted by the
-worker over OTLP: `ai_calls_total` (counter; labels `purpose`, `model`, `provider`, `status`),
-`ai_call_latency_seconds` (histogram; `purpose`, `model`), `ai_cost_usd_total` (counter;
-`purpose`, `model`), `ai_score_avg` (gauge, 0..1; `purpose`). Keep these names and labels.
+Metric names agreed for the AI layer (dashboard `LLM`, alerts `AiErrorRate`, `AiCostSpike`),
+emitted by the worker over OTLP (`worker/ai.py`): `ai_calls_total` (counter; labels `purpose`,
+`model`, `provider`, `status`), `ai_call_latency_seconds` (histogram; `purpose`, `model`),
+`ai_cost_usd_total` (counter; `purpose`, `model`). Keep these names and labels. Quality scores
+are not Prometheus metrics: they live in PostHog or Langfuse (ADR 0009).
 
 Add a dashboard: build it in Grafana (anonymous admin in local dev), Export -> "Export as
 JSON" with "Export for sharing externally" off, set a stable `uid`, use datasource uid
@@ -218,6 +282,12 @@ the replacement map.
 - Never put prompt or completion content in logs, span attributes, exceptions, audit rows or
   Temporal workflow arguments. It lives only in the `ai_calls` S3 objects.
 - `ai_calls` is append-only: never grant UPDATE/DELETE on it or "fix" rows; record a new event.
+- Prompts live only in `prompts/` (never inline strings in code) and are loaded with an explicit
+  version. A prompt change is a new version file with a passing eval (recipe above).
+- No LLM API key in CI or in scripts. Real-model evals run locally through the Claude
+  subscription (`pnpm eval:real`); `pnpm check` and CI stay key-free (`pnpm eval --fake-llm`).
+- PostHog privacy mode stays on (`POSTHOG_PRIVACY_MODE=true`) unless the DPA and the users'
+  information allow sending prompt and output text to PostHog.
 
 ## Product analytics rules
 
