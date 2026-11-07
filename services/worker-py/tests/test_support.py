@@ -280,7 +280,7 @@ async def test_dry_runs(pool: asyncpg.Pool, s3: S3) -> None:
 
 async def test_plane_intake_create_and_close(pool: asyncpg.Pool, s3: S3) -> None:
     fake = Fake()
-    acts, _ = await make(pool, s3, fake, llm(BUG), tracker="plane", notify_on_close=True)
+    acts, _ = await make(pool, s3, fake, llm(BUG), tracker="plane", notify="close")
     assert await acts.triage(C) == "bug"
     [intake] = fake.posted("/projects/p1/intake-issues/")
     assert intake["issue"]["name"] == "Upload fails" and LINK in intake["issue"]["description_html"]
@@ -304,11 +304,22 @@ async def test_github_close_notes_every_linked_conversation(pool: asyncpg.Pool, 
         "/api/v1/accounts/1/conversations/42/messages",
         "/api/v1/accounts/1/conversations/43/messages",
     }
+    # Release comment: "live in" note; the customer message waits for it with notify="release".
+    acts.notify = "release"
+    before = len(fake.posted("/messages"))
+    await acts.issue_closed(SupportIssueClosed("github", "7"))  # close: notes only
+    await acts.issue_closed(SupportIssueClosed("github", "7", release="v1.2.0"))
+    new = fake.posted("/messages")[before:]
+    assert [n.get("private", False) for n in new] == [True, True, True, False, True, False]
+    assert "is live in v1.2.0" in new[2]["content"]
+
     fake.attrs["reason"] = "not_planned"
-    acts.notify_on_close = True
+    acts.notify = "close"
+    before = len(fake.posted("/messages"))
     await acts.issue_closed(SupportIssueClosed("github", "7"))
-    assert all(n["private"] for n in fake.posted("/messages"))  # not fixed: never "resolved"
-    assert "not planned" in fake.posted("/messages")[-1]["content"]
+    later = fake.posted("/messages")[before:]
+    assert [n.get("private") for n in later] == [True, True]  # not fixed: never "resolved"
+    assert "not planned" in later[-1]["content"]
 
 
 def test_parsing() -> None:

@@ -23,6 +23,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.environ.get("TEMPORAL_NAMESPACE", "default")
 TEMPORAL_TASK_QUEUE = os.environ.get("TEMPORAL_TASK_QUEUE", "projects")
+EMAIL_TASK_QUEUE = os.environ.get("EMAIL_TASK_QUEUE", "email")
 OTEL_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 # Error tracking (Sentry protocol: Sentry or GlitchTip). Empty DSN = off.
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
@@ -67,5 +68,19 @@ PLANE_API_TOKEN = os.environ.get("PLANE_API_TOKEN", "")
 AI_SUPPORT_TRIAGE_PROVIDER = os.environ.get("AI_SUPPORT_TRIAGE_PROVIDER", "")
 AI_SUPPORT_TRIAGE_MODEL = os.environ.get("AI_SUPPORT_TRIAGE_MODEL", "")
 SUPPORT_AI_ORG_ID = os.environ.get("SUPPORT_AI_ORG_ID", "")
-# Also tell the customer when their linked issue is resolved (off: private note only).
-SUPPORT_NOTIFY_ON_CLOSE = os.environ.get("SUPPORT_NOTIFY_ON_CLOSE", "false").lower() == "true"
+# Also tell the customer when their linked issue is resolved: "true" on close, "release" on the
+# "Released in vX.Y.Z" comment (docs/releases.md); anything else = private notes only.
+_notify = os.environ.get("SUPPORT_NOTIFY_ON_CLOSE", "false").lower()
+SUPPORT_NOTIFY = {"true": "close", "release": "release"}.get(_notify, "")
+# Transactional email (docs/email.md): smtps://user:pass@host:465, smtp://user:pass@host:587
+# (STARTTLS required) or smtp://host:1025?tls=none (local Mailpit). Empty = sending fails.
+SMTP_URL = os.environ.get("SMTP_URL", "")
+MAIL_FROM = os.environ.get("MAIL_FROM", "")
+
+# Feature flags (docs/feature-flags.md). PostHog decides when POSTHOG_KEY is set; FLAGS_ON /
+# FLAGS_OFF (comma-separated names) override it and the catalog default in config/flags.json.
+FLAGS_FILE = Path(os.environ.get("FLAGS_FILE", _ROOT / "config" / "flags.json"))
+FLAGS_ON = frozenset(f.strip() for f in os.environ.get("FLAGS_ON", "").split(",") if f.strip())
+FLAGS_OFF = frozenset(f.strip() for f in os.environ.get("FLAGS_OFF", "").split(",") if f.strip())
+POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
+POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")

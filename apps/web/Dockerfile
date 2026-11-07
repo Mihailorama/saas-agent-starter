@@ -15,6 +15,8 @@ ARG VITE_RELEASE=dev VITE_POSTHOG_KEY= VITE_POSTHOG_HOST= VITE_POSTHOG_AI_FEEDBA
     VITE_GA4_ID= VITE_YM_ID= VITE_YM_WEBVISOR= VITE_LANGFUSE_PUBLIC_KEY= VITE_LANGFUSE_HOST=
 # In-app help widget (Chatwoot); both empty = no Help entry, no request (docs/support.md).
 ARG VITE_CHATWOOT_BASE_URL= VITE_CHATWOOT_WEBSITE_TOKEN=
+# Feature flag overrides (docs/feature-flags.md), comma-separated names.
+ARG VITE_FLAGS_ON= VITE_FLAGS_OFF=
 RUN pnpm --filter web build
 
 # Static files + /api reverse proxy; runs as non-root on port 8080.

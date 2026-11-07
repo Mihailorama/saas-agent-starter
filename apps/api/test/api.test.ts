@@ -21,19 +21,59 @@ const origin = allowedOrigins[0]!;
 // Unique client IP per call so the auth rate limit only bites where we want it.
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 
-type User = { id: string; cookie: string };
+type User = { id: string; email: string; cookie: string };
+const password = 'correct-horse-battery';
+const cookieOf = (res: { cookies: { name: string; value: string }[] }) =>
+  res.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
 
-async function signUp(): Promise<User> {
+// Mails go out through the worker's SendEmailWorkflow into the compose Mailpit.
+const mailpit = process.env.MAILPIT_URL ?? 'http://localhost:8025';
+type Mail = { Subject: string; Text: string; HTML: string; link: string };
+
+/** The newest mail to `to` (optionally: whose subject matches), waiting for the worker. */
+async function mailTo(to: string, subject?: RegExp): Promise<Mail> {
+  for (let i = 0; i < 100; i++) {
+    const query = new URLSearchParams({ query: `to:${to}` });
+    const { messages } = await (await fetch(`${mailpit}/api/v1/search?${query}`)).json();
+    const hit = messages.find((m: { Subject: string }) => !subject || subject.test(m.Subject));
+    if (hit) {
+      const mail = await (await fetch(`${mailpit}/api/v1/message/${hit.ID}`)).json();
+      const link = mail.Text.match(/https?:\/\/[^\s\]]+/)?.[0];
+      expect(mail.HTML).toContain(link.replaceAll('&', '&amp;'));
+      return { ...mail, link };
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`no mail to ${to} in Mailpit: are Mailpit and the worker (pnpm worker) up?`);
+}
+
+/** Follows a mailed link through the API: path + query, same as the browser would. */
+const follow = (link: string, cookie?: string) => {
+  const url = new URL(link);
+  return app.inject({
+    method: 'GET',
+    url: url.pathname + url.search,
+    remoteAddress: ip(),
+    headers: cookie ? { cookie } : {},
+  });
+};
+
+/** Signs up, confirms the address from the mailed link and returns the signed-in user. */
+async function signUp(email = `${randomUUID()}@example.com`): Promise<User> {
   const res = await app.inject({
     method: 'POST',
     url: '/api/auth/sign-up/email',
     remoteAddress: ip(),
     headers: { origin },
-    payload: { email: `${randomUUID()}@example.com`, password: 'correct-horse-battery', name: 'T' },
+    payload: { email, password, name: 'T' },
   });
   expect(res.statusCode).toBe(200);
-  const cookie = res.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-  return { id: res.json().user.id, cookie };
+  expect(res.json().token).toBeNull(); // no session before the address is confirmed
+  const verified = await follow((await mailTo(email, /Confirm/)).link);
+  expect(verified.statusCode).toBe(302);
+  const cookie = cookieOf(verified);
+  expect(cookie).toContain('session_token');
+  return { id: res.json().user.id, email, cookie };
 }
 
 async function createOrg(user: User): Promise<string> {
@@ -103,6 +143,99 @@ describe('platform', () => {
       statuses.push(res.statusCode);
     }
     expect(statuses.at(-1)).toBe(429);
+  });
+});
+
+describe('transactional email', () => {
+  const signIn = (email: string, pass: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in/email',
+      remoteAddress: ip(),
+      headers: { origin },
+      payload: { email, password: pass },
+    });
+
+  it('verifies the address from the mailed link, in the requested language', async () => {
+    const email = `${randomUUID()}@example.com`;
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-up/email',
+      remoteAddress: ip(),
+      headers: { origin, 'accept-language': 'ru-RU,ru;q=0.9,en;q=0.8' },
+      payload: { email, password, name: 'Ада' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((await signIn(email, password)).statusCode).toBe(403); // not verified yet
+
+    const mail = await mailTo(email, /Подтвердите/);
+    expect(mail.Text).toContain('Ада, подтвердите адрес почты');
+    expect(mail.HTML).toContain('lang="ru"');
+    const verified = await follow(mail.link);
+    expect(verified.statusCode).toBe(302);
+    const session = await call(
+      { id: '', email, cookie: cookieOf(verified) },
+      'GET',
+      '/api/auth/get-session',
+    );
+    expect(session.json().user).toMatchObject({ email, emailVerified: true });
+    expect((await signIn(email, password)).statusCode).toBe(200);
+  });
+
+  it('resets a forgotten password through the mailed link', async () => {
+    const user = await signUp();
+    const requested = await call(null, 'POST', '/api/auth/request-password-reset', {
+      email: user.email,
+      redirectTo: '/reset-password',
+    });
+    expect(requested.statusCode).toBe(200);
+    // Unknown addresses get the same answer and no mail.
+    const unknown = await call(null, 'POST', '/api/auth/request-password-reset', {
+      email: `${randomUUID()}@example.com`,
+      redirectTo: '/reset-password',
+    });
+    expect(unknown.json()).toEqual(requested.json());
+
+    const mail = await mailTo(user.email, /Reset/);
+    expect(mail.Text).toContain('Reset your password');
+    // The link checks the token and lands on the web's reset page with it.
+    const landing = await follow(mail.link);
+    expect(landing.statusCode).toBe(302);
+    const token = new URL(landing.headers.location!, origin).searchParams.get('token');
+    expect(token).toBeTruthy();
+    const reset = await call(null, 'POST', '/api/auth/reset-password', {
+      newPassword: 'a-brand-new-passphrase',
+      token,
+    });
+    expect(reset.statusCode).toBe(200);
+    expect((await signIn(user.email, password)).statusCode).toBe(401);
+    expect((await signIn(user.email, 'a-brand-new-passphrase')).statusCode).toBe(200);
+    // Sessions from before the reset are revoked.
+    expect((await call(user, 'GET', '/api/auth/get-session')).json()).toBeNull();
+  });
+
+  it('mails an organization invitation that the invitee accepts', async () => {
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    const inviteeEmail = `${randomUUID()}@example.com`;
+    const invited = await call(owner, 'POST', '/api/auth/organization/invite-member', {
+      email: inviteeEmail,
+      role: 'member',
+      organizationId: org,
+    });
+    expect(invited.statusCode).toBe(200);
+
+    const mail = await mailTo(inviteeEmail, /invited you/);
+    expect(mail.Subject).toBe('T invited you to Org');
+    const invitationId = new URL(mail.link).pathname.split('/').at(-1);
+    expect(mail.link).toBe(`${env.BETTER_AUTH_URL}/accept-invitation/${invitationId}`);
+
+    const invitee = await signUp(inviteeEmail);
+    const accepted = await call(invitee, 'POST', '/api/auth/organization/accept-invitation', {
+      invitationId,
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json().member).toMatchObject({ organizationId: org, role: 'member' });
   });
 });
 
@@ -550,6 +683,23 @@ describe('service desk (Chatwoot)', () => {
     const handle = (await temporal()).workflow.getHandle(id);
     expect((await handle.describe()).type).toBe('SupportIssueClosedWorkflow');
     await handle.terminate('test cleanup');
+
+    // docs/releases.md: the "Released in vX.Y.Z" comment means the fix is live.
+    const released = (body: string) => ({ action: 'created', issue, comment: { body } });
+    const comment = 'Released in v1.2.0 (via #5). Release notes: https://example.com/r';
+    expect((await github(released('thanks!'), 'issue_comment')).json()).toEqual({
+      action: 'ignored',
+    });
+    expect((await github(released(comment), 'issue_comment')).json()).toEqual({
+      action: 'started',
+    });
+    const rid = supportClosedWorkflowId(
+      { tracker: 'github', issueId: String(issue.number) },
+      'release-v1.2.0',
+    );
+    const rel = (await temporal()).workflow.getHandle(rid);
+    expect(JSON.stringify(await rel.fetchHistory())).toContain('v1.2.0');
+    await rel.terminate('test cleanup');
   });
 
   it('starts the return path for Plane state changes in our project', async () => {

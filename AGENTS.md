@@ -6,7 +6,7 @@ Single source of rules for coding agents (Claude Code, Codex, others) and humans
 ## Definition of done
 
 `pnpm check` is green. It runs, in order: Biome (format + lint), the analytics event check
-(`check:events`, `scripts/*.test.mjs`), typecheck with tsrs,
+(`check:events`), the feature-flag check (`check:flags`), `scripts/*.test.mjs`, typecheck with tsrs,
 TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
 pyright (strict), pytest, the license gate for all three ecosystems, and the Playwright smoke.
 It needs the local infra running (see Setup).
@@ -20,11 +20,15 @@ tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do no
 ## Setup
 
 ```sh
-docker compose up -d --wait postgres redis s3 temporal-ui   # infra only
+docker compose up -d --wait postgres redis s3 temporal-ui mailpit   # infra only
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
-pnpm worker     # Python Temporal worker
+pnpm worker     # Python Temporal worker (also delivers mail; Mailpit UI :8025)
 ```
+
+`pnpm check` needs the worker running: the auth tests read the mails it sends from Mailpit.
+CI runs it with `TEMPORAL_TASK_QUEUE` pointed elsewhere, so only the `email` queue is served
+and the API tests' project workflows stay untouched.
 
 Tools: Node 22.18+ (runs `.ts` directly), pnpm, Docker, uv, Rust (rustup) and
 `cargo install --locked cargo-deny`. Config comes from env: real env > `.env` (gitignored,
@@ -39,8 +43,10 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
   src/temporal.ts     Temporal client + workflow contracts with the worker
+  src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
   src/telemetry.ts    OpenTelemetry (preloaded, env-toggled)
+  src/flags.ts        isEnabled(): feature flags (PostHog or catalog default)
   test/               integration tests against the real compose services
 apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwind
   src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail
@@ -51,15 +57,19 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
   worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
+  worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
+  worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page),
-                    events.json (analytics event catalog), journeys.json (journeys as code)
+                    events.json (analytics event catalog), journeys.json (journeys as code),
+                    flags.json (feature flag catalog)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
                     rules (infra/otel), Grafana datasources + dashboards (infra/grafana)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
-                    check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels)
+                    check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
+                    check-flags.mjs, flags.mjs (flags:sync), released.mjs (release comments)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
@@ -88,8 +98,12 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
+- Transactional mail: React Email's renderer in the API, delivery by a Temporal activity
+  with stdlib `smtplib` over one `SMTP_URL` (any provider), Mailpit in dev (ADR 0014).
 - PostHog Cloud for product analytics, replay, surveys, AI feedback; Umami (MIT) self-hosted
   where data must stay in place (ADR 0012).
+- PostHog feature flags for gradual rollouts (posthog-js/-node/Python), catalog in the repo, no
+  own flag store; release-please + Conventional PR titles for changelogs and `v*` tags (ADR 0020).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
 - Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items in GitHub Issues or
@@ -225,6 +239,32 @@ Details: docs/product-analytics.md, ADR 0012.
   (`.mcp.json.example`). After changing journeys, `pnpm journeys:sync --dry-run` shows what
   would change in the tools. Issues labelled `cjm-regression` or `from-users` come from real
   users: link them in the PR that fixes them.
+
+## Feature flag rules
+
+Details: docs/feature-flags.md, ADR 0020.
+
+- New user-visible behaviour ships behind a flag: add it to `config/flags.json` (description,
+  owner, `"default": false`, expiry date) and guard the new path with `isEnabled('<name>', ctx)`
+  (API, `apps/api/src/flags.ts`), `useFlag('<name>')` (web, `apps/web/src/lib/flags.ts`) or
+  `is_enabled("<name>", user_id=...)` (worker). Literal names only; `pnpm check:flags` enforces it.
+  Keep the old path working and test both (`FLAGS_ON=<name>`).
+- Rollout: `pnpm flags:sync` creates the flag at 0 %; then internal users or one organization,
+  then a percentage, then 100 % in PostHog, watching `pnpm journeys:report` and errors. Never
+  change rollout from code, and never call PostHog's flag API or store flag state yourself.
+- After full rollout, a follow-up PR deletes the old path, every check of the flag and its
+  catalog entry, and archives it in PostHog. Expired or unused flags show as `check:flags`
+  warnings: treat them as work.
+
+## PRs and releases
+
+Details: docs/releases.md.
+
+- PR title rule: the title must be a Conventional Commit (`feat: ...`, `fix(api): ...`,
+  `chore: ...`) because the squash-merge title is the commit release-please turns into the
+  changelog; `feat`/`fix` titles are user-facing release notes, so write them for users.
+- Put `Closes #<issue>` in the PR body: the release then comments "Released in vX.Y.Z" on it.
+- Never create tags or releases by hand; merging the release-please PR does it.
 
 ## Security rules
 

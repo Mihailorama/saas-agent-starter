@@ -31,7 +31,8 @@ still lack channels, an agent inbox and a widget.
 - **Return path**: signed GitHub (`X-Hub-Signature-256`) and Plane (`X-Plane-Signature`)
   webhooks start `SupportIssueClosedWorkflow`, which notes the outcome in every linked
   conversation; a customer message only with `SUPPORT_NOTIFY_ON_CLOSE=true` and only for items
-  closed as done.
+  closed as done. With the release flow (ADR 0020) the `Released in vX.Y.Z` issue comment adds a
+  "live in" note, and `SUPPORT_NOTIFY_ON_CLOSE=release` moves the customer message there.
 - **Widget identity**: `GET /api/support/identity` returns the user id and
   `HMAC-SHA256(CHATWOOT_HMAC_TOKEN, id)`; the inbox enforces identity validation. The widget is
   loaded with Chatwoot's own `sdk.js` (no npm dependency), only when the user opens Help.

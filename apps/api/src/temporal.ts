@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Client, Connection, WorkflowExecutionAlreadyStartedError } from '@temporalio/client';
 import { OpenTelemetryWorkflowClientInterceptor } from '@temporalio/interceptors-opentelemetry/lib/client';
 import { env } from './env.ts';
@@ -60,8 +61,38 @@ export const startSupportTriage = (c: SupportConversation) =>
   startOnce('SupportTriageWorkflow', supportTriageWorkflowId(c), c);
 
 /** A tracker item linked to conversations was closed; `closeId` makes each close event unique. */
-export type SupportIssueClosed = { tracker: 'github' | 'plane'; issueId: string };
+export type SupportIssueClosed = {
+  tracker: 'github' | 'plane';
+  issueId: string;
+  /** GitHub release tag from the `Released in vX.Y.Z` comment; empty for the close event. */
+  release?: string;
+};
 export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) =>
   `support-closed-${e.tracker}-${e.issueId}-${closeId}`;
 export const startSupportIssueClosed = (e: SupportIssueClosed, closeId: string) =>
   startOnce('SupportIssueClosedWorkflow', supportClosedWorkflowId(e, closeId), e);
+/** Contract with services/worker-py (worker/mail.py): one rendered email to one recipient. */
+export type SendEmail = {
+  kind: 'verify-email' | 'reset-password' | 'invitation';
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+};
+/** `key` identifies one send (token, invitation id + expiry); only its hash is in the id. */
+export const emailWorkflowId = (kind: SendEmail['kind'], key: string) =>
+  `email-${kind}-${createHash('sha256').update(key).digest('hex').slice(0, 32)}`;
+
+/** Delivery and SMTP retries happen in the worker; a duplicate start for the same key is a no-op. */
+export async function startSendEmail(email: SendEmail, key: string) {
+  try {
+    await (await temporal()).workflow.start('SendEmailWorkflow', {
+      taskQueue: env.EMAIL_TASK_QUEUE,
+      workflowId: emailWorkflowId(email.kind, key),
+      workflowIdReusePolicy: 'REJECT_DUPLICATE',
+      args: [email],
+    });
+  } catch (err) {
+    if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
+  }
+}

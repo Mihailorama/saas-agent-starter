@@ -22,6 +22,7 @@ import { aiCallRoutes } from './routes/ai-calls.ts';
 import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { supportHookRoutes, supportRoutes } from './routes/support.ts';
+import { redactUrl } from './sentry.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -40,8 +41,8 @@ export async function buildApp() {
       },
       redact: { paths: ['*.password', '*.token', '*.secret', '*.cookie', '*.authorization'] },
       serializers: {
-        // Never log query strings (auth flows put tokens there) or headers.
-        req: (req) => ({ method: req.method, url: req.url.split('?')[0], ip: req.ip }),
+        // Never log query strings or reset tokens (mailed auth links carry them) or headers.
+        req: (req) => ({ method: req.method, url: redactUrl(req.url), ip: req.ip }),
       },
     },
   }).withTypeProvider<ZodTypeProvider>();
@@ -102,7 +103,7 @@ export async function buildApp() {
     }
   });
 
-  // Better Auth owns /api/auth/*; sign-in/up get a stricter limit.
+  // Better Auth owns /api/auth/*; sign-in/up and the routes that send mail get a stricter limit.
   const authHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const headers = fromNodeHeaders(req.headers);
     headers.delete('content-length');
@@ -134,6 +135,8 @@ export async function buildApp() {
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
+  authRoute('/api/auth/request-password-reset', 10, ['POST']);
+  authRoute('/api/auth/send-verification-email', 10, ['POST']);
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });

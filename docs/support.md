@@ -93,7 +93,7 @@ incoming message of a conversation, whatever the inbox).
   forwarding address (needs inbound email configured on the server, `MAILER_INBOUND_EMAIL_DOMAIN`
   and a `RAILS_INBOUND_EMAIL_SERVICE`, see Chatwoot's docs), or connect the mailbox over IMAP/SMTP
   (Gmail / Microsoft 365 via OAuth, others with a password). Outgoing notifications use the
-  `CHATWOOT_SMTP_*` variables.
+  `CHATWOOT_SMTP_*` variables (locally they go to the stack's Mailpit, UI on :8025).
 - **Telegram**: create a bot with [@BotFather](https://t.me/BotFather), then Settings ->
   Inboxes -> Telegram and paste the bot token. Chatwoot registers the bot's webhook at
   `CHATWOOT_FRONTEND_URL`, so it must be reachable over public HTTPS.
@@ -194,8 +194,9 @@ items dropped; "+1" is a work item comment. Intake must be enabled for the proje
 ## Return path
 
 - GitHub: repository Settings -> Webhooks: payload URL `<api>/api/hooks/github`, content type
-  `application/json`, secret `GITHUB_WEBHOOK_SECRET`, event **Issues**. The API checks
-  `X-Hub-Signature-256` and reacts only to `closed` issues labelled `support`.
+  `application/json`, secret `GITHUB_WEBHOOK_SECRET`, events **Issues** and **Issue comments**.
+  The API checks `X-Hub-Signature-256` and reacts only to issues labelled `support`: `closed`, or
+  a new `Released in v...` comment (below).
 - Plane: Workspace settings -> Webhooks: URL `<api>/api/hooks/plane`, event **Work items ->
   Updated** (v2 webhook); optional filter `project_id = "<PLANE_PROJECT_ID>" and state_group in
   ["completed", "cancelled"]`. Secret (`plane_wh_...`, downloaded as CSV) -> `PLANE_WEBHOOK_SECRET`,
@@ -208,6 +209,13 @@ private note in each: "Linked issue ... was resolved" or "closed without a fix (
 With `SUPPORT_NOTIFY_ON_CLOSE=true` it also sends the customer a short "has been resolved"
 message, only for items closed as done (GitHub `completed`, Plane state group `completed`). The
 text is `RESOLVED_MESSAGE` in `worker/support.py` (English; change it for your audience).
+
+Releases (GitHub): "closed" only means merged. When the repo uses the release flow
+(docs/releases.md), `scripts/released.mjs` comments `Released in vX.Y.Z (via #PR) ...` on each
+closed issue. Subscribe the same GitHub webhook to **Issue comments** as well: a comment with
+that prefix on a `support` issue starts the same workflow (id per tag), which notes "Linked issue
+... is live in vX.Y.Z". With `SUPPORT_NOTIFY_ON_CLOSE=release` the customer message waits for
+that comment instead of the close.
 
 ## Data residency
 

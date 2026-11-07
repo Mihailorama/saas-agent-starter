@@ -6,15 +6,22 @@
 import { trace } from '@opentelemetry/api';
 import * as Sentry from '@sentry/node-core';
 
+/** URL without query string or path token (password reset links): what logs and traces keep. */
+export const redactUrl = (url: string) =>
+  url.split('?')[0]!.replace(/\/reset-password\/[^/]+/, '/reset-password/:token');
+
 /** Drops anything that can carry PII, secrets or AI content; keeps the stack and ids. */
 export function scrub(event: Sentry.ErrorEvent): Sentry.ErrorEvent {
   if (event.request) {
-    event.request = { method: event.request.method, url: event.request.url?.split('?')[0] };
+    event.request = {
+      method: event.request.method,
+      url: event.request.url && redactUrl(event.request.url),
+    };
   }
   delete event.user;
   delete event.extra;
   for (const b of event.breadcrumbs ?? []) {
-    if (typeof b.data?.url === 'string') b.data.url = b.data.url.split('?')[0];
+    if (typeof b.data?.url === 'string') b.data.url = redactUrl(b.data.url);
   }
   const ctx = trace.getActiveSpan()?.spanContext();
   if (ctx) {

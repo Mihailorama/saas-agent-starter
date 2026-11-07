@@ -46,6 +46,11 @@ export function consent(): 'granted' | 'denied' | undefined {
 const firstParty: Sink[] = [];
 const thirdParty: Sink[] = [];
 let posthog: typeof import('posthog-js').default | undefined;
+let posthogLoaded: (ph: typeof import('posthog-js').default) => void = () => {};
+/** Resolves once PostHog is initialised (after consent); feature flags read it (lib/flags.ts). */
+export const posthogReady = new Promise<typeof import('posthog-js').default>((resolve) => {
+  posthogLoaded = resolve;
+});
 
 function loadScript(src: string, attrs: Record<string, string> = {}, onload?: () => void) {
   const s = Object.assign(document.createElement('script'), { src, async: true, onload });
@@ -90,6 +95,7 @@ async function posthogSink(): Promise<Sink> {
   });
   ph.register({ release: config.release });
   posthog = ph;
+  posthogLoaded(ph);
   return (name, props) => ph.capture(name === 'page_view' ? '$pageview' : name, props);
 }
 

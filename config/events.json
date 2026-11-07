@@ -23,6 +23,21 @@
       "pii": false,
       "props": {}
     },
+    "password_reset_requested": {
+      "description": "A password reset link was requested from the sign-in page (mailed only if the account exists).",
+      "pii": false,
+      "props": {}
+    },
+    "password_reset_completed": {
+      "description": "A new password was set from the emailed reset link.",
+      "pii": false,
+      "props": {}
+    },
+    "invitation_accepted": {
+      "description": "An organization invitation was accepted from the emailed link.",
+      "pii": false,
+      "props": {}
+    },
     "org_created": {
       "description": "An organization was created from the onboarding card or the org switcher.",
       "pii": false,

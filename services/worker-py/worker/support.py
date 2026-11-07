@@ -4,7 +4,7 @@ Tickets live in Chatwoot, backlog items in the tracker (GitHub Issues or Plane I
 neither: the conversation <-> issue link is the conversation URL written into the issue (body or
 "+1" comment) plus the `tracker_issue_url` custom attribute on the conversation. The bot only
 writes private notes; it never answers a customer on its own (except the opt-in "resolved"
-message, SUPPORT_NOTIFY_ON_CLOSE).
+message, SUPPORT_NOTIFY_ON_CLOSE=true|release).
 """
 
 import json
@@ -54,6 +54,7 @@ class SupportIssueClosed:
 
     tracker: str  # github | plane
     issueId: str
+    release: str = ""  # tag from the "Released in vX.Y.Z" comment (GitHub), "" for a close
 
 
 @dataclass(frozen=True)
@@ -307,11 +308,11 @@ class SupportActivities:
         ai: Gateway | None,
         model: ModelChoice | None,
         ai_org_id: str,
-        notify_on_close: bool = False,
+        notify: str = "",
     ) -> None:
         self.chatwoot, self.tracker = chatwoot, tracker
         self.ai, self.model, self.ai_org_id = ai, model, ai_org_id
-        self.notify_on_close = notify_on_close
+        self.notify = notify  # "" | "close" | "release": when the customer hears it is resolved
 
     async def _llm(self, c: SupportConversation, prompt_ref: tuple[str, int], user: str) -> str:
         assert self.ai is not None and self.model is not None
@@ -441,10 +442,16 @@ class SupportActivities:
         if self.chatwoot is None:
             log.info("dry run: would notify %d conversations", len(conversations))
             return len(conversations)
-        outcome = "resolved" if closed.resolved else "closed without a fix (not planned)"
+        if e.release:
+            note = f"Linked issue {closed.url} is live in {e.release}."
+        elif closed.resolved:
+            note = f"Linked issue {closed.url} was resolved."
+        else:
+            note = f"Linked issue {closed.url} was closed without a fix (not planned)."
+        tell = closed.resolved and self.notify == ("release" if e.release else "close")
         for c in conversations:
-            await self.chatwoot.note(c, f"Linked issue {closed.url} was {outcome}.")
-            if self.notify_on_close and closed.resolved:
+            await self.chatwoot.note(c, note)
+            if tell:
                 await self.chatwoot.reply(c, RESOLVED_MESSAGE)
         activity.logger.info("issue %s closed: notified %d conversations", e, len(conversations))
         return len(conversations)

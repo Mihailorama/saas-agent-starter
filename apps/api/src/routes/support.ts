@@ -59,7 +59,10 @@ const GithubEvent = z.object({
       labels: z.array(z.object({ name: z.string() })).default([]),
     })
     .optional(),
+  comment: z.object({ body: z.string() }).optional(),
 });
+/** scripts/released.mjs comments `Released in vX.Y.Z (via #PR). ...` (docs/releases.md). */
+const RELEASED = /^Released in (v[\w.+-]{1,40}) /;
 const PlaneEvent = z.object({
   entity_type: z.string().optional(),
   event_id: z.string().optional(),
@@ -120,13 +123,23 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!githubSigned(raw(req), header(req.headers['x-hub-signature-256']))) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
-      const { action, issue } = req.body;
-      const linked = issue?.labels.some((l) => l.name === SUPPORT_LABEL);
-      if (header(req.headers['x-github-event']) !== 'issues' || action !== 'closed' || !linked) {
+      const { action, issue, comment } = req.body;
+      const event = header(req.headers['x-github-event']);
+      if (!issue?.labels.some((l) => l.name === SUPPORT_LABEL))
+        return { action: 'ignored' as const };
+      // "closed" means merged; the release comment means the fix is live in that version.
+      const release =
+        event === 'issue_comment' && action === 'created' && comment?.body.match(RELEASED)?.[1];
+      if (!release && !(event === 'issues' && action === 'closed')) {
         return { action: 'ignored' as const };
       }
-      const e = { tracker: 'github' as const, issueId: String(issue!.number) };
-      const started = await startSupportIssueClosed(e, String(Date.parse(issue!.closed_at ?? '')));
+      const e = {
+        tracker: 'github' as const,
+        issueId: String(issue.number),
+        release: release || '',
+      };
+      const closeId = release ? `release-${release}` : String(Date.parse(issue.closed_at ?? ''));
+      const started = await startSupportIssueClosed(e, closeId);
       req.log.info({ ...e, started }, 'github hook -> support issue closed');
       return { action: started ? ('started' as const) : ('duplicate' as const) };
     },
