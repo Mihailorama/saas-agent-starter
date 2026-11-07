@@ -20,6 +20,12 @@ x-app-env: &app-env
   S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT:-8333}
   S3_ACCESS_KEY_ID: local-dev-access-key
   S3_SECRET_ACCESS_KEY: local-dev-secret-key
+  # Feature flags for API + worker (docs/feature-flags.md); empty = catalog defaults.
+  FLAGS_ON: ${FLAGS_ON:-}
+  FLAGS_OFF: ${FLAGS_OFF:-}
+  POSTHOG_KEY: ${POSTHOG_KEY:-}
+  POSTHOG_HOST: ${POSTHOG_HOST:-}
+  POSTHOG_SECRET_KEY: ${POSTHOG_SECRET_KEY:-}
 
 services:
   postgres:
@@ -205,6 +211,8 @@ services:
         VITE_RELEASE: ${GIT_SHA:-dev}
         VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
         VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
+        VITE_FLAGS_ON: ${VITE_FLAGS_ON:-}
+        VITE_FLAGS_OFF: ${VITE_FLAGS_OFF:-}
         VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID: ${VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID:-}
         VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID: ${VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID:-}
         VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}

@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch: # release-please.yml dispatches it on new v* tags
 
 permissions:
   contents: read

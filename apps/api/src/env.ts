@@ -59,6 +59,15 @@ const schema = z
     /** PostHog app host for links in issues, e.g. https://eu.posthog.com */
     POSTHOG_APP_HOST: z.union([z.url(), z.literal('')]).optional(),
     POSTHOG_PROJECT_ID: z.string().optional(),
+    // Feature flags (docs/feature-flags.md). Without POSTHOG_KEY a flag is its catalog default;
+    // FLAGS_ON / FLAGS_OFF (comma-separated names) override everything, PostHog included.
+    FLAGS_ON: list,
+    FLAGS_OFF: list,
+    /** PostHog project key (phc_...) and ingestion host, e.g. https://eu.i.posthog.com */
+    POSTHOG_KEY: z.string().optional(),
+    POSTHOG_HOST: z.union([z.url(), z.literal('')]).optional(),
+    /** Optional project secret API key (feature_flag:read): local evaluation, no request per check. */
+    POSTHOG_SECRET_KEY: z.string().optional(),
     GITHUB_TOKEN: z.string().optional(),
     /** owner/name of the repository that receives the issues. */
     GITHUB_REPO: z.string().optional(),
