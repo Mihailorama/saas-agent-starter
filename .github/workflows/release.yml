@@ -1,0 +1,132 @@
+name: Release images
+
+# On a v* tag: build api, worker and web, push them to GHCR (the tag is immutable; deploys pin the
+# digest), and deploy that digest set only if you opted in (job `deploy`). docs/deploy.md.
+# Uses the built-in GITHUB_TOKEN only; this repository defines no secrets.
+# workflow_dispatch: tags created with GITHUB_TOKEN (release-please) do not fire `push: tags`, so
+# the release workflow dispatches this one on the tag ref. Dispatching on a branch does nothing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api: ${{ steps.push.outputs.api }}
+      worker: ${{ steps.push.outputs.worker }}
+      web: ${{ steps.push.outputs.web }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: push
+        name: Build and push to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Browser config is compiled into the web bundle; public values, so repository
+          # variables (unset = off). Per-environment values need a build per environment.
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          VITE_POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
+          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID: ${{ vars.VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID }}
+          VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID: ${{ vars.VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID }}
+          VITE_UMAMI_SCRIPT_URL: ${{ vars.VITE_UMAMI_SCRIPT_URL }}
+          VITE_UMAMI_WEBSITE_ID: ${{ vars.VITE_UMAMI_WEBSITE_ID }}
+          VITE_GA4_ID: ${{ vars.VITE_GA4_ID }}
+          VITE_YM_ID: ${{ vars.VITE_YM_ID }}
+          VITE_YM_WEBVISOR: ${{ vars.VITE_YM_WEBVISOR }}
+          VITE_LANGFUSE_PUBLIC_KEY: ${{ vars.VITE_LANGFUSE_PUBLIC_KEY }}
+          VITE_LANGFUSE_HOST: ${{ vars.VITE_LANGFUSE_HOST }}
+          VITE_FLAGS_ON: ${{ vars.VITE_FLAGS_ON }}
+          VITE_FLAGS_OFF: ${{ vars.VITE_FLAGS_OFF }}
+          VITE_CHATWOOT_BASE_URL: ${{ vars.VITE_CHATWOOT_BASE_URL }}
+          VITE_CHATWOOT_WEBSITE_TOKEN: ${{ vars.VITE_CHATWOOT_WEBSITE_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          version=$GITHUB_REF_NAME
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          web=(--build-arg "VITE_RELEASE=$version" --build-arg "VITE_SENTRY_RELEASE=$version")
+          for v in VITE_SENTRY_DSN VITE_POSTHOG_KEY VITE_POSTHOG_HOST VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID \
+            VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID VITE_UMAMI_SCRIPT_URL VITE_UMAMI_WEBSITE_ID VITE_GA4_ID \
+            VITE_YM_ID VITE_YM_WEBVISOR VITE_LANGFUSE_PUBLIC_KEY VITE_LANGFUSE_HOST VITE_FLAGS_ON \
+            VITE_FLAGS_OFF VITE_CHATWOOT_BASE_URL VITE_CHATWOOT_WEBSITE_TOKEN; do
+            web+=(--build-arg "$v=${!v}")
+          done
+          echo "### Images $version" >> "$GITHUB_STEP_SUMMARY"
+          for app in api worker web; do
+            case $app in
+              api) file=apps/api/Dockerfile extra=() ;;
+              worker) file=services/worker-py/Dockerfile extra=() ;;
+              web) file=apps/web/Dockerfile extra=("${web[@]}") ;;
+            esac
+            ref="$repo/$app:$version"
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              echo "::error::$ref already exists. Tags are immutable: release a new version."
+              exit 1
+            fi
+            docker buildx build --push -f "$file" -t "$ref" --build-arg "GIT_SHA=$version" \
+              --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --label "org.opencontainers.image.version=$version" "${extra[@]}" .
+            digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)
+            echo "$app=$repo/$app@$digest" >> "$GITHUB_OUTPUT"
+            echo "- \`$repo/$app@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  # Inert until you opt in: set the repository variable DEPLOY_ENVIRONMENT (e.g. `production`)
+  # to the name of a GitHub environment with required reviewers and the secrets DEPLOY_SSH_KEY,
+  # DEPLOY_KNOWN_HOSTS and SOPS_AGE_KEY. It deploys deploy/env/<name>.enc.env.
+  deploy:
+    needs: images
+    if: vars.DEPLOY_ENVIRONMENT != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ vars.DEPLOY_ENVIRONMENT }}
+    concurrency:
+      group: deploy-${{ vars.DEPLOY_ENVIRONMENT }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install sops (pinned, checksum from the release's checksums file)
+        run: |
+          set -euo pipefail
+          bin=$RUNNER_TEMP/bin && mkdir -p "$bin"
+          curl -fsSLo "$bin/sops" https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  $bin/sops" | sha256sum -c
+          chmod +x "$bin/sops" && echo "$bin" >> "$GITHUB_PATH"
+      - name: SSH identity
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          AGE: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY" ] || [ -z "$KNOWN_HOSTS" ] || [ -z "$AGE" ]; then
+            echo "::error::environment secrets DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS and SOPS_AGE_KEY are required"
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          (umask 077 && printf '%s\n' "$KEY" > ~/.ssh/id_ed25519 && printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts)
+      - name: Deploy
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+          TARGET: ${{ vars.DEPLOY_ENVIRONMENT }}
+          IMAGE_API: ${{ needs.images.outputs.api }}
+          IMAGE_WORKER: ${{ needs.images.outputs.worker }}
+          IMAGE_WEB: ${{ needs.images.outputs.web }}
+          # managed database without the backup overlay (docs/deploy.md section 6)
+          SKIP_BACKUP: ${{ vars.DEPLOY_SKIP_BACKUP == 'true' && '--skip-backup' || '' }}
+        run: node scripts/deploy.mjs "$TARGET" --version "$GITHUB_REF_NAME" $SKIP_BACKUP

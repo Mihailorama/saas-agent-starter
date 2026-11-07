@@ -5,4 +5,5 @@
 FROM postgres:17-alpine
 RUN apk add --no-cache pgbackrest rclone supercronic curl jq openssl \
   && install -d -o postgres -g postgres /var/lib/restore-check
-COPY bin/ /backup/bin/
+# --chmod: the deploy ships these files without their executable bit (scripts/deploy.mjs)
+COPY --chmod=755 bin/ /backup/bin/

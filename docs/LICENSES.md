@@ -24,6 +24,7 @@ on an image that is not. Their primary software licenses:
 | `glitchtip/glitchtip`                  | error tracking, Sentry API (glitchtip profile)     | MIT                         |
 | `node`                                 | API runtime and web build                          | MIT                         |
 | `nginxinc/nginx-unprivileged`          | web static files + `/api` proxy                    | BSD-2-Clause                |
+| `caddy`                                | TLS + ingress in `compose.prod.yaml` (ADR 0016)    | Apache-2.0                  |
 | `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0           |
 | `python`                               | worker runtime                                     | Python-2.0 (PSF)            |
 | `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                         |
@@ -72,6 +73,12 @@ Notes:
   stand-in for off-site backup storage. Every backup container is permissive, so the permissive
   twin needs no replacement (ADR 0015).
 - Tooling, not part of the stack: `anchore/syft` (Apache-2.0) generates the SBOMs (`pnpm run sbom`).
+- Deploy tooling on the operator machine or CI runner, not part of the stack or the images:
+  [SOPS](https://github.com/getsops/sops) (MPL-2.0, run unmodified as a CLI) and
+  [age](https://github.com/FiloSottile/age) (BSD-3-Clause) for the encrypted env files
+  (docs/deploy.md).
+- `caddy` is Apache-2.0 ([LICENSE](https://github.com/caddyserver/caddy/blob/master/LICENSE)),
+  already permissive: the production stack needs no twin for it.
 
 - `ghcr.io/umami-software/umami` (Umami 3, [MIT](https://github.com/umami-software/umami/blob/master/LICENSE)):
   self-hosted product analytics, see [docs/product-analytics.md](product-analytics.md). For an

@@ -108,9 +108,12 @@ const dockerfiles = ['apps/api', 'apps/web', 'services/worker-py', 'infra/backup
 );
 const images = new Set(
   [
-    ...['docker-compose.yml', 'compose.permissive.yaml', 'compose.backup.yaml'].flatMap((f) => [
-      ...readFileSync(f, 'utf8').matchAll(/^\s*image:\s*(\S+)/gm),
-    ]),
+    ...[
+      'docker-compose.yml',
+      'compose.permissive.yaml',
+      'compose.prod.yaml',
+      'compose.backup.yaml',
+    ].flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/^\s*image:\s*([^\s$]\S*)/gm)]),
     ...dockerfiles.flatMap((f) => [...readFileSync(f, 'utf8').matchAll(/^FROM\s+(\S+)/gm)]),
   ].map((m) => m[1].split(':')[0]),
 );

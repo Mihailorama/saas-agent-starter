@@ -25,7 +25,8 @@ restore check within a minute, then the schedule below. Watch it with
    `BACKUP_S3_URI_STYLE` (`host` for AWS, `path` for most others),
    `BACKUP_S3_CA_FILE=/etc/ssl/certs/ca-certificates.crt`, and credentials
    `BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY` limited to that bucket. Then stop
-   the local stand-in: `docker compose up -d --scale backup-s3=0`.
+   the local stand-in: `BACKUP_S3_LOCAL=0`. With `pnpm run deploy` (compose.prod.yaml) the env
+   file carries all of this; see docs/deploy.md section 6.
 2. `BACKUP_ENCRYPTION_PASSPHRASE`: long and random, set **before the first start** (it cannot be
    changed for an existing repository) and stored outside this server, e.g. in your password
    manager. Without it the backups cannot be decrypted.

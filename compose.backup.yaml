@@ -5,7 +5,8 @@
 # full/diff backups, copies the app buckets, runs the restore check and pushes metrics to the
 # Pushgateway (scraped by Prometheus, observability profile; alerts in infra/otel/alerts.yml).
 # `backup-s3` is a local stand-in for off-site storage: in production point BACKUP_S3_* at a
-# bucket on another machine or provider and stop it (`--scale backup-s3=0`).
+# bucket on another machine or provider and set BACKUP_S3_LOCAL=0. Production (compose.prod.yaml,
+# profile db): COMPOSE_FILE=compose.yaml:compose.backup.yaml in the env file (docs/deploy.md).
 
 x-logging: &logging
   driver: json-file
@@ -68,6 +69,7 @@ services:
     <<: *image
     logging: *logging
     mem_limit: 256m # measured 9 MiB idle, 44 MiB peak (backup, restore check with its own Postgres)
+    restart: unless-stopped
     user: postgres
     entrypoint: ["/backup/bin/entrypoint.sh"]
     environment:
@@ -103,6 +105,7 @@ services:
     image: prom/pushgateway:v1.11.5
     logging: *logging
     mem_limit: 64m
+    restart: unless-stopped
     command: ["--persistence.file=/pushgateway/metrics", "--persistence.interval=1m"]
     volumes: [pushgateway:/pushgateway]
     ports: ["127.0.0.1:${PUSHGATEWAY_PORT:-9091}:9091"]
@@ -113,6 +116,8 @@ services:
     image: chrislusf/seaweedfs:4.52
     logging: *logging
     mem_limit: 512m # local stand-in only; SeaweedFS fills its limit with cache under load
+    restart: unless-stopped
+    scale: ${BACKUP_S3_LOCAL:-1} # 0 when the repository is off-site
     command: >-
       server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -master.telemetry=false
       -s3.port.https=8443 -s3.cert.file=/backup-tls/cert.pem -s3.key.file=/backup-tls/key.pem
