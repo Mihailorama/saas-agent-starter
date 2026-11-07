@@ -9,14 +9,14 @@ our own. Decision record: [ADR 0020](adr/0020-feature-flags-and-releases.md).
 
 ## What is in the repo
 
-| Piece        | Where                                | What it does                                                                   |
-| ------------ | ------------------------------------ | ------------------------------------------------------------------------------ |
-| Flag catalog | `config/flags.json`                  | Name, description, owner, default, expiry date of every flag                   |
-| API          | `apps/api/src/flags.ts`              | `await isEnabled('name', { userId, orgId, plan })` via `posthog-node`          |
-| Web          | `apps/web/src/lib/flags.ts`          | `useFlag('name')` in components, `isEnabled('name', ctx)` elsewhere            |
-| Worker       | `services/worker-py/worker/flags.py` | `await is_enabled("name", user_id=..., org_id=...)` via PostHog's `/flags` API |
-| CI rail      | `pnpm check:flags` (in `pnpm check`) | Unknown or non-literal names fail; expired or unused flags warn                |
-| Sync         | `pnpm flags:sync [--dry-run]`        | Creates missing catalog flags in PostHog                                       |
+| Piece        | Where                                | What it does                                                              |
+| ------------ | ------------------------------------ | ------------------------------------------------------------------------- |
+| Flag catalog | `config/flags.json`                  | Name, description, owner, default, expiry date of every flag              |
+| API          | `apps/api/src/flags.ts`              | `await isEnabled('name', { userId, orgId, plan })` via `posthog-node`     |
+| Web          | `apps/web/src/lib/flags.ts`          | `useFlag('name')` in components, `isEnabled('name', ctx)` elsewhere       |
+| Worker       | `services/worker-py/worker/flags.py` | `await is_enabled("name", user_id=..., org_id=...)` via the `posthog` SDK |
+| CI rail      | `pnpm check:flags` (in `pnpm check`) | Unknown or non-literal names fail; expired or unused flags warn           |
+| Sync         | `pnpm flags:sync [--dry-run]`        | Creates missing catalog flags in PostHog                                  |
 
 ## Catalog
 
@@ -66,28 +66,29 @@ rollouts, the replacement is a self-hosted flag service (see ADR 0020), not code
 - API and worker: `POSTHOG_KEY` (project key `phc_...`, public) and `POSTHOG_HOST`
   (`https://eu.i.posthog.com` or `https://us.i.posthog.com`; empty = PostHog's US default), the
   same project and region as the web's `VITE_POSTHOG_KEY` / `VITE_POSTHOG_HOST`.
-- Optional, API only: `POSTHOG_SECRET_KEY`, a project secret API key with the `feature_flag:read`
-  scope ("Local feature flag evaluation" preset in PostHog's project settings). Server-side only.
+- Optional, API and worker: `POSTHOG_SECRET_KEY`, a project secret API key with the
+  `feature_flag:read` scope ("Local feature flag evaluation" preset in PostHog's project
+  settings). Server-side only.
 
 ### Remote or local evaluation
 
 - Default, remote: needs only the public project key. Each check is one `/flags` request
   (`flagKeys` limits it to the one flag), so it adds a network round trip to the request and is
   billed as one flag request (PostHog: first 1M flag requests per month free).
-- Local (API), with `POSTHOG_SECRET_KEY`: `posthog-node` polls the flag definitions every 30 s
-  and evaluates in process, no request per check. Costs one more secret per deployment; a poll is
+- Local, with `POSTHOG_SECRET_KEY`: `posthog-node` (API) and the `posthog` Python SDK (worker)
+  poll the flag definitions every 30 s and evaluate in process, no request per check. Costs one
+  more secret per deployment; a poll is
   billed as 10 flag requests when the definitions changed and is free when they did not (ETag,
   `304`), per [PostHog's billing docs](https://posthog.com/docs/billing/estimating-usage-costs)
   (checked 2026-11-07). Flags that need person properties PostHog stores but we do not pass
   still fall back to a remote request.
 
-The worker always evaluates remotely: it posts to PostHog's public
-[`/flags?v=2`](https://posthog.com/docs/api/flags) endpoint with the project key through
-`httpx2`, because the `posthog` PyPI SDK depends on `distro`, whose license metadata
-("Apache License, Version 2.0") the license gate does not map to `Apache-2.0` yet. Switching the
-worker to the SDK (and local evaluation) needs that alias approved in
-`scripts/license-check.mjs` (ADR 0005: no gate changes without a human). The worker also sends no
-`$feature_flag_called` exposure events, so experiments count exposures from the web and API only.
+The worker uses the official `posthog` Python SDK (`worker/flags.py`) the same way: remote with
+the project key, local with `POSTHOG_SECRET_KEY`. The SDK is synchronous, so each check runs in a
+thread (`asyncio.to_thread`) and never blocks the worker's event loop. Like the API and the web,
+every answered check sends a `$feature_flag_called` exposure event (queued, flushed on shutdown),
+so experiments count exposures from the worker too. A check PostHog does not answer (unknown
+flag, network error, quota) falls back to the catalog default, as before.
 
 We default to remote because it needs no extra secret; set the secret key when flag checks sit
 on hot paths or the request volume makes per-check billing larger than the polling cost.

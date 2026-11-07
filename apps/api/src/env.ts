@@ -92,6 +92,11 @@ const schema = z
     POSTHOG_HOST: z.union([z.url(), z.literal('')]).optional(),
     /** Optional project secret API key (feature_flag:read): local evaluation, no request per check. */
     POSTHOG_SECRET_KEY: z.string().optional(),
+    /**
+     * Presidio PII sidecar (compose profile `pii`), e.g. http://pii:8000. Set: survey answers are
+     * redacted there and the hook fails closed (503) when it is down. Empty: emails masked only.
+     */
+    PII_REDACT_URL: z.union([z.url(), z.literal('')]).optional(),
     GITHUB_TOKEN: z.string().optional(),
     /** owner/name of the repository that receives the issues. */
     GITHUB_REPO: z.string().optional(),

@@ -76,7 +76,8 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
                       secret decryption, auto-disable, retention (daily Temporal Schedule)
   worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
   worker/crm.py       CRM sync (Twenty REST behind the `Crm` protocol), one workflow per source event
-  worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
+  worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts (posthog SDK)
+  worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
   worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
@@ -431,8 +432,8 @@ Details: docs/releases.md.
   `deny.toml`): permissive licenses plus MPL-2.0 (file-level copyleft, no obligations on our
   code while unmodified). GPL/LGPL/AGPL/EUPL/SSPL/BUSL and other copyleft or source-available
   licenses stay banned for code dependencies (infrastructure containers are separate, see
-  docs/LICENSES.md). Never add an exception to make the gate pass; ask a human
-  (docs/adr/0005-license-policy.md).
+  docs/LICENSES.md). Never add an exception, a license or an `ALIASES` entry to make the gate
+  pass; ask a human (docs/adr/0005-license-policy.md).
 - We never modify dependency files: no `pnpm patch`/`patch-package`, no edits in
   `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
   go upstream (issue or PR); until a release lands, work around it in our own code.
