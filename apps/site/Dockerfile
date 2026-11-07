@@ -7,7 +7,7 @@ COPY apps/site/package.json apps/site/
 # The site reuses the web app's tokens (index.css) and analytics.ts, so it needs their deps too.
 RUN pnpm install --frozen-lockfile --filter site... --filter web...
 COPY apps/web/src/index.css apps/web/src/
-COPY apps/web/src/lib/analytics.ts apps/web/src/lib/
+COPY apps/web/src/lib/analytics.ts apps/web/src/lib/booking.ts apps/web/src/lib/
 COPY apps/site apps/site
 COPY config config
 ENV ASTRO_TELEMETRY_DISABLED=1
