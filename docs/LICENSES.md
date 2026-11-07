@@ -35,6 +35,8 @@ on an image that is not. Their primary software licenses:
 | `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
 | `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
 | `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
+| `ghcr.io/gitroomhq/postiz-app`         | social post scheduling (`marketing` profile)       | AGPL-3.0                    |
+| `towfiqi/serpbear`                     | keyword rank tracking (`marketing` profile)        | MIT                         |
 | `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
@@ -137,6 +139,28 @@ Notes:
   never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
   dependencies). Details in [docs/billing.md](billing.md).
 
+- Marketing layer ([docs/marketing.md](marketing.md), [ADR 0021](adr/0021-marketing-layer.md)),
+  `marketing` profile, all run unmodified:
+  - `ghcr.io/gitroomhq/postiz-app` (Postiz,
+    [AGPL-3.0](https://github.com/gitroomhq/postiz-app/blob/main/LICENSE)): social post
+    scheduling. Not distributed with the app; the permissive twin disables it. Its `postiz-db`
+    and `postiz-namespace` one-shots reuse the `postgres` and `temporalio/admin-tools` images.
+  - `towfiqi/serpbear` (SerpBear, [MIT](https://github.com/towfiqi/serpbear/blob/main/LICENSE)):
+    keyword rank tracking, SQLite in a volume.
+  - The site image (`apps/site/Dockerfile`) is built from `node` and `nginxinc/nginx-unprivileged`,
+    like the web app. Site code dependencies (checked by the gate): `astro`, `@astrojs/mdx`,
+    `@astrojs/rss`, `@astrojs/sitemap` (MIT), Tailwind (MIT) as in the web. Astro's optional
+    `sharp` is not installed (`ignoredOptionalDependencies` in `pnpm-workspace.yaml`): its
+    `@img/sharp-libvips-*` binaries are LGPL-3.0-or-later; the site uses Astro's passthrough
+    image service instead.
+  - CI tooling, not a dependency: Lighthouse CI (`@lhci/cli` 0.16.0,
+    [Apache-2.0](https://github.com/GoogleChrome/lighthouse-ci/blob/main/LICENSE)) runs through
+    `pnpm dlx` in `.github/workflows/site.yml`. It is not in `package.json` because `lighthouse`
+    depends on `@sentry/node` 11, which pulls the FSL-licensed `sentry` CLI (see the Sentry note
+    above) that the code gate rejects; nothing of it ships with the app.
+  - External services, not shipped software: Google Search Console, Bing Webmaster Tools /
+    IndexNow, the social networks Postiz posts to, the SERP scraper SerpBear is configured with.
+
 ## Permissive twin (replacement map)
 
 Some enterprise clients ban AGPL (or any non-permissive license) in on-premises deliveries,
@@ -155,6 +179,7 @@ docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observ
 | Dashboards/alerts UI | Grafana (AGPL-3.0)                         | Prometheus UI (graphs, `/alerts`) + Jaeger UI (traces), both Apache-2.0                   | Provisioned dashboards, one pane across logs/metrics/traces, Grafana alerting UI. Alert rules still evaluate in Prometheus (`infra/otel/alerts.yml`); add Alertmanager (Apache-2.0) for notifications. |
 | Error tracking       | GlitchTip (MIT), already permissive        | (Sentry SaaS / self-hosted is FSL: a bigger, not a more permissive, option)               | n/a                                                                                                                                                                                                    |
 | Object storage       | SeaweedFS (Apache-2.0), already permissive | n/a                                                                                       | n/a                                                                                                                                                                                                    |
+| Social posting       | Postiz (AGPL-3.0, `marketing` profile)     | none in compose: post natively, or run Mixpost Lite (MIT, Laravel + MySQL) separately     | One calendar for every network, scheduling, team approval. SerpBear (MIT) and the site are unaffected.                                                                                                 |
 
 SBOMs and notices for a delivery: `pnpm run sbom` writes one CycloneDX SBOM per image (both
 twins, all profiles) and `THIRD_PARTY_NOTICES.md` to `dist/sbom/` (also a CI artifact on

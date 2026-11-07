@@ -151,6 +151,16 @@ the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in Po
 (`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
 (about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
 
+## Marketing: site, SEO, social posting
+
+`apps/site` is an Astro static site and Markdown/MDX blog with the SEO basics built in (canonical,
+hreflang, Open Graph, schema.org JSON-LD, sitemap, robots.txt, RSS, `llms.txt`), the web app's
+design tokens and analytics, and Lighthouse budgets in CI: `pnpm --filter site dev`.
+`docker compose --profile marketing up -d` adds Postiz (social posting) and SerpBear (rank
+tracking); `pnpm seo:report` (Search Console), `pnpm seo:indexnow` (Bing/IndexNow after a deploy)
+and `pnpm geo:check` (is the product named in AI answers?). Details:
+[docs/marketing.md](docs/marketing.md).
+
 ## Feature flags and releases
 
 New behaviour ships behind PostHog feature flags declared in `config/flags.json`
