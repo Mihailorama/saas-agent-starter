@@ -46,6 +46,14 @@ test('sign up, create an organization and a project', async ({ page }) => {
   );
   await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible();
 
+  // Data-subject rights (docs/privacy.md): the owner sees both cards and can request an export.
+  await page.goto('/settings/privacy');
+  await expect(page.getByText('Your data', { exact: true })).toBeVisible();
+  await expect(page.getByText('Organization data', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Download my data' }).click();
+  await expect(page.getByText('Export started', { exact: false })).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Requests' }).first()).toContainText('Export');
+
   // No third-party sink configured in tests: nothing to consent to, no foreign hosts.
   await expect(page.locator('#cc-main')).toHaveCount(0);
   // No Chatwoot configured: no Help entry and no widget request (docs/support.md).

@@ -2,7 +2,7 @@
 
 Status: accepted (owner request, 2026-11-07)
 
-Numbering: 0022 is taken by the open data-subject-rights work, so this is 0023.
+Numbering: 0022 is data-subject rights, so this is 0023.
 
 ## Context
 

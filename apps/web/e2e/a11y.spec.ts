@@ -79,6 +79,7 @@ test('signed-in pages', async ({ page }) => {
     ['/settings/webhooks', 'Webhooks'],
     ['/settings/security', 'Security'],
     ['/settings/billing', 'Billing'],
+    ['/settings/privacy', 'Privacy'],
   ] as const) {
     await page.goto(path);
     await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();

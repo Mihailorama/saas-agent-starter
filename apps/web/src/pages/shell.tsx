@@ -18,6 +18,7 @@ import {
   KeyRound,
   LifeBuoy,
   Lightbulb,
+  Lock,
   LogOut,
   MessageCircle,
   Plus,
@@ -171,6 +172,9 @@ function UserMenu() {
       <DropdownMenuContent className="w-60" align="start" side="top">
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/security' })}>
           <ShieldCheck className="size-4" /> Security
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate({ to: '/settings/privacy' })}>
+          <Lock className="size-4" /> Privacy
         </DropdownMenuItem>
         {privacyChoicesLabel && (
           <DropdownMenuItem onSelect={showPrivacyChoices}>
