@@ -15,6 +15,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { Redis } from 'ioredis';
+import { z } from 'zod';
 import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
@@ -194,7 +195,11 @@ export async function buildApp() {
       handler: authHandler,
     });
   // Public: tells the sign-in page whether to offer "Sign in with SSO".
-  app.get('/api/auth-config', { schema: { hide: true } }, async () => ({ sso: ssoEnabled }));
+  app.get(
+    '/api/auth-config',
+    { schema: { response: { 200: z.object({ sso: z.boolean() }) } } },
+    async () => ({ sso: ssoEnabled }),
+  );
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
   // API keys are managed through /api/api-keys (scopes, audit log), not the plugin's endpoints.
   app.all('/api/auth/api-key/*', { schema: { hide: true } }, async (_req, reply) =>

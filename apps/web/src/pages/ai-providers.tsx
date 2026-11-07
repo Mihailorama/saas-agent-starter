@@ -24,21 +24,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { track } from '@/lib/analytics';
-import { api } from '@/lib/api';
+import { type Body, client, type Ok, ok } from '@/lib/api';
 import { useFlag } from '@/lib/flags';
 
 /** The organization's own AI providers (docs/llm-providers.md "BYO"). Org admins, plan feature. */
-type Provider = {
-  id: string;
-  name: string;
-  provider: string;
-  kind: string;
-  baseUrl: string | null;
-  apiKeyHint: string | null;
-  models: Record<string, string>;
-  enabled: boolean;
-};
-type Options = { providers: { id: string; kind: string }[]; purposes: string[] };
+type Provider = Ok<'/api/ai-providers/', 'get'>[number];
 const selectClass =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs';
 
@@ -52,12 +42,13 @@ function NewProviderDialog({
   const queryClient = useQueryClient();
   const options = useQuery({
     queryKey: ['ai-provider-options'],
-    queryFn: () => api<Options>('/api/ai-providers/options'),
+    queryFn: () => ok(client.GET('/api/ai-providers/options')),
   });
   const [provider, setProvider] = useState('');
   const kind = options.data?.providers.find((p) => p.id === provider)?.kind;
   const create = useMutation({
-    mutationFn: (json: object) => api<Provider>('/api/ai-providers', { method: 'POST', json }),
+    mutationFn: (json: Body<'/api/ai-providers/', 'post'>) =>
+      ok(client.POST('/api/ai-providers/', { body: json })) as Promise<Provider>,
     onSuccess: (p) => {
       track('ai_provider_created', { kind: p.kind, purposes: Object.keys(p.models).length });
       queryClient.invalidateQueries({ queryKey: ['ai-providers'] });
@@ -172,14 +163,14 @@ export function AiProvidersPage() {
   const [open, setOpen] = useState(false);
   const list = useQuery({
     queryKey: ['ai-providers'],
-    queryFn: () => api<Provider[]>('/api/ai-providers'),
+    queryFn: () => ok(client.GET('/api/ai-providers/')),
     enabled,
   });
   const change = useMutation({
     mutationFn: ({ id, ...json }: { id: string; enabled?: boolean; remove?: boolean }) =>
       json.remove
-        ? api(`/api/ai-providers/${id}`, { method: 'DELETE' })
-        : api(`/api/ai-providers/${id}`, { method: 'PATCH', json }),
+        ? ok(client.DELETE('/api/ai-providers/{id}', { params: { path: { id } } }))
+        : ok(client.PATCH('/api/ai-providers/{id}', { params: { path: { id } }, body: json })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['ai-providers'] }),
     onError: (err) => toast.error(err.message),
   });

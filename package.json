@@ -20,7 +20,7 @@
     "typecheck:fast": "pnpm -r typecheck:fast",
     "test": "pnpm -r test",
     "e2e": "pnpm --filter web e2e",
-    "check:ts": "biome ci . && pnpm check:events && pnpm check:flags && pnpm check:migrations && pnpm check:ai-prices && node --test 'scripts/*.test.mjs' && pnpm typecheck:fast && pnpm test",
+    "check:ts": "biome ci . && pnpm check:api-types && pnpm check:events && pnpm check:flags && pnpm check:migrations && pnpm check:ai-prices && node --test 'scripts/*.test.mjs' && pnpm typecheck:fast && pnpm test",
     "check:rust": "cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test",
     "check:py": "cd services/worker-py && uv sync --locked && uv run ruff format --check && uv run ruff check && pyright && uv run pytest -q",
     "check:licenses": "node scripts/license-check.mjs",
@@ -42,7 +42,9 @@
     "flags:sync": "node scripts/flags.mjs sync",
     "seo:report": "node scripts/seo-report.mjs",
     "seo:indexnow": "node scripts/indexnow.mjs",
-    "geo:check": "node scripts/geo-check.mjs"
+    "geo:check": "node scripts/geo-check.mjs",
+    "api:types": "node --env-file=.env.example --env-file-if-exists=.env packages/api-types/generate.mjs",
+    "check:api-types": "pnpm api:types --check"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",

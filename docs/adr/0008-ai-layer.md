@@ -31,8 +31,8 @@ fact is impossible if calls are scattered across the code base.
 - **Content outside the database and telemetry.** Request and response JSON go to the
   `AI_CONTENT_BUCKET` S3 bucket (`<org>/<yyyy>/<mm>/<dd>/<call id>/{request,response}.json`);
   the row holds the keys and `content_expires_at` (`AI_CONTENT_RETENTION_DAYS`). Logs and
-  spans carry ids and counts only. The worker talks to S3 with an ~80-line SigV4 client (`worker/s3.py`) because
-  boto3's dependency tree fails the license gate (ADR 0005).
+  spans carry ids and counts only. The worker talks to S3 with the official MinIO Python SDK
+  (`minio`, Apache-2.0, `worker/s3.py`); boto3's dependency tree fails the license gate (ADR 0005).
 - **OpenTelemetry.** One `CLIENT` span per call named `chat {model}` with the GenAI semantic
   conventions for client inference spans: `gen_ai.operation.name`, `gen_ai.provider.name` (and
   the deprecated `gen_ai.system` for older backends), `gen_ai.request.model`,

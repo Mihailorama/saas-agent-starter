@@ -214,3 +214,13 @@
   on desktop; `/ai-transparency` scores 1.0. Fix: profile the sign-in boot (Sentry, analytics,
   cookie banner, Better Auth client) and defer what is not needed before first input, then raise
   the performance assertion to `error` at 0.9.
+- **Plane Python SDK search has no `project_id`/`limit` params** (`plane-sdk` 0.3.2,
+  `WorkItems.search`; `RetrieveQueryParams` ignores extra fields). `worker/tracker.py` passes them
+  through a small `RetrieveQueryParams` subclass and also filters hits by project. Ask upstream
+  for the params and drop `_SearchParams` once a release has them (AGENTS.md: no patches).
+- **Tracker has no end-to-end run against a real Plane** (2026-11-07). The adapters are tested
+  against fakes built from Plane's docs and Community Edition source (Intake create + label PATCH,
+  search skipping triage items, v1/v2 webhooks). Before relying on it, run the live smoke run
+  (docs/support.md "Live smoke run": `python -m worker.tracker smoke`) against the `STARTERDEMO`
+  test project (Cloud and self-hosted CE) and check labels, Intake placement, the release
+  comment's author check (`users/me`) and the return-path notes. Needs a Plane token.

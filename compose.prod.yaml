@@ -78,8 +78,6 @@ services:
       - POSTHOG_WEBHOOK_SECRET
       - POSTHOG_APP_HOST
       - POSTHOG_PROJECT_ID
-      - GITHUB_TOKEN
-      - GITHUB_REPO
       # profile pii: PII_REDACT_URL=http://pii:8000 (docs/support.md "Personal data")
       - PII_REDACT_URL
       - EMAIL_TASK_QUEUE
@@ -178,7 +176,7 @@ services:
       - CHATWOOT_URL
       - CHATWOOT_PUBLIC_URL
       - CHATWOOT_API_TOKEN
-      - SUPPORT_TRACKER
+      - TRACKER
       - GITHUB_TOKEN
       - GITHUB_REPO
       - PLANE_API_URL

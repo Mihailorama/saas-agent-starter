@@ -31,15 +31,10 @@ from worker.posthog import PostHogAi
 from worker.privacy import PrivacyActivities, configured_tools
 from worker.providers import load_providers, providers_from_config
 from worker.s3 import S3
-from worker.support import (
-    Chatwoot,
-    DryRunTracker,
-    GitHubIssues,
-    PlaneIntake,
-    SupportActivities,
-    Tracker,
-)
+from worker.support import Chatwoot, SupportActivities
 from worker.text import backend
+from worker.tracker import TrackerActivities
+from worker.tracker import connect as tracker_connect
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
@@ -50,6 +45,7 @@ from worker.workflows import (
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
+    TrackerItemWorkflow,
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
     ensure_maintenance_schedule,
@@ -57,27 +53,6 @@ from worker.workflows import (
 )
 
 log = logging.getLogger("worker")
-
-
-def support_tracker(http: httpx2.AsyncClient) -> Tracker:
-    """SUPPORT_TRACKER selects the adapter; missing credentials = dry run (docs/support.md)."""
-    s = settings
-    if s.SUPPORT_TRACKER == "plane":
-        if s.PLANE_API_URL and s.PLANE_WORKSPACE and s.PLANE_PROJECT_ID and s.PLANE_API_TOKEN:
-            return PlaneIntake(
-                api_url=s.PLANE_API_URL,
-                app_url=s.PLANE_APP_URL,
-                workspace=s.PLANE_WORKSPACE,
-                project_id=s.PLANE_PROJECT_ID,
-                token=s.PLANE_API_TOKEN,
-                http=http,
-            )
-    elif s.SUPPORT_TRACKER == "github":
-        if s.GITHUB_TOKEN and s.GITHUB_REPO:
-            return GitHubIssues(s.GITHUB_REPO, s.GITHUB_TOKEN, http)
-    else:
-        raise ValueError(f"SUPPORT_TRACKER must be github or plane, not {s.SUPPORT_TRACKER!r}")
-    return DryRunTracker()
 
 
 def setup_tracing() -> Runtime | None:
@@ -203,7 +178,8 @@ async def main() -> None:
         if settings.AI_SUPPORT_TRIAGE_PROVIDER and settings.AI_SUPPORT_TRIAGE_MODEL
         else None
     )
-    tracker = support_tracker(http)
+    tracker = await tracker_connect(http)  # refuses a completed/cancelled target state
+    tracker_items = TrackerActivities(tracker, files)
     support = SupportActivities(
         chatwoot=chatwoot,
         tracker=tracker,
@@ -226,6 +202,7 @@ async def main() -> None:
             BillingEventWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
+            TrackerItemWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,
             DataExportWorkflow,
@@ -238,6 +215,7 @@ async def main() -> None:
             billing.apply_billing_event,
             support.triage,
             support.issue_closed,
+            tracker_items.file_item,
             webhooks.deliver_webhook,
             webhooks.prune_webhooks,
             webhooks.reencrypt_webhook_secrets,
@@ -249,6 +227,7 @@ async def main() -> None:
             privacy.purge_ai_content,
             privacy.purge_exports,
             privacy.purge_deleted_orgs,
+            privacy.purge_tracker_inbox,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],

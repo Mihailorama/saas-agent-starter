@@ -21,17 +21,19 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { aiFeedback, track } from '@/lib/analytics';
-import { type Attachment, api, formatBytes, formatDate, type Project } from '@/lib/api';
+import { type Attachment, client, formatBytes, formatDate, ok, type Project } from '@/lib/api';
 
 async function upload(projectId: string, file: File) {
-  const { uploadUrl } = await api<{ uploadUrl: string }>(`/api/projects/${projectId}/attachments`, {
-    method: 'POST',
-    json: {
-      filename: file.name,
-      contentType: file.type || 'application/octet-stream',
-      size: file.size,
-    },
-  });
+  const { uploadUrl } = await ok(
+    client.POST('/api/projects/{id}/attachments', {
+      params: { path: { id: projectId } },
+      body: {
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        size: file.size,
+      },
+    }),
+  );
   // Straight to object storage with a short-lived presigned URL; the API never proxies bytes.
   const res = await fetch(uploadUrl, {
     method: 'PUT',
@@ -67,9 +69,15 @@ function AiSummaryCard({ project }: { project: Project }) {
   }
   const review = useMutation({
     mutationFn: (summary?: string) =>
-      api<Project>(
-        `/api/projects/${project.id}/ai-summary/${summary === undefined ? 'confirm' : 'correct'}`,
-        { method: 'POST', json: summary === undefined ? {} : { summary } },
+      ok(
+        summary === undefined
+          ? client.POST('/api/projects/{id}/ai-summary/confirm', {
+              params: { path: { id: project.id } },
+            })
+          : client.POST('/api/projects/{id}/ai-summary/correct', {
+              params: { path: { id: project.id } },
+              body: { summary },
+            }),
       ),
     onSuccess: (updated) => {
       track('ai_summary_reviewed', { purpose: PURPOSE, action: updated.aiStatus ?? '' });
@@ -176,7 +184,7 @@ export function ProjectPage() {
   const input = useRef<HTMLInputElement>(null);
   const project = useQuery({
     queryKey: ['projects', projectId],
-    queryFn: () => api<Project>(`/api/projects/${projectId}`),
+    queryFn: () => ok(client.GET('/api/projects/{id}', { params: { path: { id: projectId } } })),
     // The AI summary arrives asynchronously from the worker; poll briefly for it.
     refetchInterval: (q) => {
       const p = q.state.data;
@@ -186,7 +194,8 @@ export function ProjectPage() {
   });
   const files = useQuery({
     queryKey: ['projects', projectId, 'attachments'],
-    queryFn: () => api<Attachment[]>(`/api/projects/${projectId}/attachments`),
+    queryFn: () =>
+      ok(client.GET('/api/projects/{id}/attachments', { params: { path: { id: projectId } } })),
   });
   const add = useMutation({
     mutationFn: (file: File) => upload(projectId, file),
@@ -199,8 +208,10 @@ export function ProjectPage() {
 
   async function download(a: Attachment) {
     try {
-      const { url } = await api<{ url: string }>(
-        `/api/projects/${projectId}/attachments/${a.id}/download`,
+      const { url } = await ok(
+        client.GET('/api/projects/{id}/attachments/{attachmentId}/download', {
+          params: { path: { id: projectId, attachmentId: a.id } },
+        }),
       );
       window.location.assign(url);
     } catch (err) {

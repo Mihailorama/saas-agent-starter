@@ -33,9 +33,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { track } from '@/lib/analytics';
-import { api, formatDate, type Project } from '@/lib/api';
+import { client, formatDate, ok, type Project } from '@/lib/api';
 
-const projectsQuery = { queryKey: ['projects'], queryFn: () => api<Project[]>('/api/projects') };
+const projectsQuery = { queryKey: ['projects'], queryFn: () => ok(client.GET('/api/projects/')) };
 
 // Same limits as the API schema (apps/api/src/routes/projects.ts); the API stays the authority.
 const projectSchema = z.object({
@@ -57,7 +57,7 @@ function NewProjectDialog({
     defaultValues: { name: '', description: '' },
   });
   const create = useMutation({
-    mutationFn: (json: ProjectInput) => api<Project>('/api/projects', { method: 'POST', json }),
+    mutationFn: (json: ProjectInput) => ok(client.POST('/api/projects/', { body: json })),
     onSuccess: (project) => {
       track('project_created', { has_description: Boolean(project.description) });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -139,7 +139,8 @@ export function ProjectsPage() {
   const [deleting, setDeleting] = useState<Project>();
 
   const remove = useMutation({
-    mutationFn: (p: Project) => api(`/api/projects/${p.id}`, { method: 'DELETE' }),
+    mutationFn: (p: Project) =>
+      ok(client.DELETE('/api/projects/{id}', { params: { path: { id: p.id } } })),
     onSuccess: (_, p) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast.success(`Deleted ${p.name}`);

@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
-import { api, type Billing, formatDate } from '@/lib/api';
+import { client, formatDate, ok } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const money = (amount: number | string, currency: string) =>
@@ -72,7 +72,10 @@ function Meter({
 /** Org settings: plan, usage vs. limits, LLM spend, upgrade/cancel. Prices come from the API. */
 export function BillingPage() {
   const queryClient = useQueryClient();
-  const billing = useQuery({ queryKey: ['billing'], queryFn: () => api<Billing>('/api/billing') });
+  const billing = useQuery({
+    queryKey: ['billing'],
+    queryFn: () => ok(client.GET('/api/billing/')),
+  });
   const [confirmCancel, setConfirmCancel] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['billing'] });
 
@@ -83,19 +86,18 @@ export function BillingPage() {
 
   const go = (url: string) => window.location.assign(url);
   const checkout = useMutation({
-    mutationFn: (planId: string) =>
-      api<{ url: string }>('/api/billing/checkout', { method: 'POST', json: { planId } }),
+    mutationFn: (planId: string) => ok(client.POST('/api/billing/checkout', { body: { planId } })),
     onMutate: (planId) => track('billing_checkout_started', { plan: planId }),
     onSuccess: ({ url }) => go(url),
     onError: (err) => toast.error(err.message),
   });
   const portal = useMutation({
-    mutationFn: () => api<{ url: string }>('/api/billing/portal', { method: 'POST' }),
+    mutationFn: () => ok(client.POST('/api/billing/portal')),
     onSuccess: ({ url }) => go(url),
     onError: (err) => toast.error(err.message),
   });
   const cancel = useMutation({
-    mutationFn: () => api('/api/billing/cancel', { method: 'POST' }),
+    mutationFn: () => ok(client.POST('/api/billing/cancel')),
     onSuccess: () => {
       track('billing_canceled');
       setConfirmCancel(false);
@@ -106,7 +108,7 @@ export function BillingPage() {
   });
   const raise = useMutation({
     mutationFn: (json: { currency: string; amount: number }) =>
-      api('/api/billing/llm-limit', { method: 'PATCH', json }),
+      ok(client.PATCH('/api/billing/llm-limit', { body: json })),
     onSuccess: () => {
       toast.success('LLM spend limit updated');
       refresh();

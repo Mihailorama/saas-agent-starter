@@ -32,7 +32,8 @@ from temporalio.exceptions import ApplicationError
 
 from worker import settings
 from worker.mail import SendEmail
-from worker.s3 import S3
+from worker.s3 import S3, NotFound
+from worker.tracker import INBOX
 
 log = logging.getLogger(__name__)
 
@@ -648,9 +649,8 @@ class PrivacyActivities:
                 name = re.sub(r"[^\w. -]", "_", str(a["filename"])).lstrip(".")
                 files[f"files/attachments/{a['id']}-{name}"] = await self.files.get(key)
                 stored += 1
-            except httpx2.HTTPStatusError as err:
-                if err.response.status_code != 404:  # never uploaded (abandoned upload)
-                    raise
+            except NotFound:  # never uploaded (abandoned upload)
+                pass
         for c in db["ai_calls"]:
             for key in (c["request_key"], c["response_key"]):
                 if not key:
@@ -658,9 +658,8 @@ class PrivacyActivities:
                 try:
                     files[f"files/ai-content/{key}"] = await self.ai_content.get(key)
                     stored += 1
-                except httpx2.HTTPStatusError as err:
-                    if err.response.status_code != 404:  # content past its retention
-                        raise
+                except NotFound:  # content past its retention
+                    pass
         sources["storage"] = outcome("done", "", objects=stored)
 
         for tool in self.tools.for_subject(s.type):
@@ -963,6 +962,15 @@ class PrivacyActivities:
                 "update privacy_requests set result_key = null where id = $1", r["id"]
             )
         return len(due)
+
+    @activity.defn(name="privacy_purge_tracker_inbox")
+    async def purge_tracker_inbox(self) -> int:
+        """Deletes tracker items (redacted alert/feedback text) older than a day that no
+        TrackerItemWorkflow removed: a duplicate webhook, or a workflow that gave up."""
+        old = await self.files.list_keys(INBOX, before=datetime.now(UTC) - timedelta(days=1))
+        for key in old:
+            await self.files.delete(key)
+        return len(old)
 
     @activity.defn(name="privacy_purge_deleted_orgs")
     async def purge_deleted_orgs(self) -> int:

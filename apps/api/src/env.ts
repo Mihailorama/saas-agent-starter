@@ -78,7 +78,7 @@ const schema = z
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),
     // Alert-to-issue loop (docs/product-analytics.md). Empty secret = webhook disabled (401);
-    // no GitHub token/repo = dry run.
+    // the worker files the item (worker/tracker.py), a dry run without tracker credentials.
     POSTHOG_WEBHOOK_SECRET: z.string().optional(),
     /** PostHog app host for links in issues, e.g. https://eu.posthog.com */
     POSTHOG_APP_HOST: z.union([z.url(), z.literal('')]).optional(),
@@ -97,9 +97,6 @@ const schema = z
      * redacted there and the hook fails closed (503) when it is down. Empty: emails masked only.
      */
     PII_REDACT_URL: z.union([z.url(), z.literal('')]).optional(),
-    GITHUB_TOKEN: z.string().optional(),
-    /** owner/name of the repository that receives the issues. */
-    GITHUB_REPO: z.string().optional(),
     // Billing (docs/billing.md). Contour of new subscriptions; config/plans.json `contours`.
     BILLING_CONTOUR: z.string().default('en'),
     /** Contour of config/ai-models.json: which cost currencies the billing page shows. */
