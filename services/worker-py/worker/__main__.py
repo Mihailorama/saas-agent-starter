@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 from datetime import timedelta
+from ipaddress import ip_network
 
 import asyncpg
 from opentelemetry import trace
@@ -21,7 +22,8 @@ from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.s3 import S3
 from worker.text import backend
-from worker.workflows import ProjectCreatedWorkflow
+from worker.webhooks import WebhookActivities
+from worker.workflows import ProjectCreatedWorkflow, WebhookEventWorkflow
 
 log = logging.getLogger("worker")
 
@@ -74,6 +76,11 @@ async def main() -> None:
         else None
     )
     activities = Activities(pool, ai, summary_model)
+    webhooks = WebhookActivities(
+        pool,
+        allowed_networks=[ip_network(c) for c in settings.WEBHOOK_ALLOWED_CIDRS],
+        max_payload_bytes=settings.WEBHOOK_MAX_PAYLOAD_BYTES,
+    )
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -81,8 +88,12 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_TASK_QUEUE,
-        workflows=[ProjectCreatedWorkflow],
-        activities=[activities.fingerprint_project, activities.summarize_project],
+        workflows=[ProjectCreatedWorkflow, WebhookEventWorkflow],
+        activities=[
+            activities.fingerprint_project,
+            activities.summarize_project,
+            webhooks.deliver_webhook,
+        ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],
     )
@@ -95,6 +106,7 @@ async def main() -> None:
         )
         await stop.wait()
         log.info("shutting down")
+    await webhooks.close()
     await s3.close()
     await pool.close()
 

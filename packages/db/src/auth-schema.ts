@@ -1,7 +1,7 @@
 // Better Auth tables (core + organization plugin). Regenerate after changing
 // auth plugins: `pnpm dlx @better-auth/cli generate` and reconcile here.
 // Not tenant-scoped by RLS: Better Auth reads them across orgs by user id.
-import { boolean, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at').notNull().defaultNow();
 const updatedAt = () =>
@@ -96,3 +96,36 @@ export const invitation = pgTable('invitation', {
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' }),
 });
+
+// @better-auth/api-key, organization-owned keys (`references: 'organization'`): referenceId is
+// the organization id. Only the SHA-256 of the key is stored; `start` is its visible prefix.
+export const apikey = pgTable(
+  'apikey',
+  {
+    id: text('id').primaryKey(),
+    configId: text('config_id').notNull().default('default'),
+    name: text('name'),
+    start: text('start'),
+    referenceId: text('reference_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    prefix: text('prefix'),
+    key: text('key').notNull().unique(),
+    refillInterval: integer('refill_interval'),
+    refillAmount: integer('refill_amount'),
+    lastRefillAt: timestamp('last_refill_at'),
+    enabled: boolean('enabled').notNull().default(true),
+    rateLimitEnabled: boolean('rate_limit_enabled').notNull().default(true),
+    rateLimitTimeWindow: integer('rate_limit_time_window'),
+    rateLimitMax: integer('rate_limit_max'),
+    requestCount: integer('request_count').notNull().default(0),
+    remaining: integer('remaining'),
+    lastRequest: timestamp('last_request'),
+    expiresAt: timestamp('expires_at'),
+    createdAt: timestamp('created_at').notNull(),
+    updatedAt: timestamp('updated_at').notNull(),
+    permissions: text('permissions'),
+    metadata: text('metadata'),
+  },
+  (t) => [index().on(t.referenceId)],
+);

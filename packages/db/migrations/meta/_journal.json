@@ -15,6 +15,13 @@
       "when": 1793896942648,
       "tag": "0001_safe_jack_murdock",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794048514966,
+      "tag": "0002_gigantic_millenium_guard",
+      "breakpoints": true
     }
   ]
 }

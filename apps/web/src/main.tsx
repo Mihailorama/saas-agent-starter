@@ -17,10 +17,12 @@ import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
+import { ApiKeysPage } from '@/pages/api-keys';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { Shell } from '@/pages/shell';
 import { SignInPage } from '@/pages/sign-in';
+import { WebhooksPage } from '@/pages/webhooks';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 
@@ -75,11 +77,23 @@ const aiCallsRoute = createRoute({
   component: AiCallsPage,
 });
 
+const apiKeysRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/api-keys',
+  component: ApiKeysPage,
+});
+
+const webhooksRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/webhooks',
+  component: WebhooksPage,
+});
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
     aiTransparencyRoute,
-    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute]),
+    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute, apiKeysRoute, webhooksRoute]),
   ]),
 });
 

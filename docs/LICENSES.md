@@ -68,6 +68,11 @@ Notes:
   is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
 
+- Public API and webhooks (ADR 0018) add no container. Code dependencies, checked by the gate:
+  `@better-auth/api-key` (MIT) and, for tests only, the Standard Webhooks reference library
+  `standardwebhooks` (PyPI, MIT, no dependencies). Self-hosted Svix (`svix/svix-server`, MIT) was
+  evaluated and not added: its open-source edition has no customer app portal.
+
 ## Permissive twin (replacement map)
 
 Some enterprise clients ban AGPL (or any non-permissive license) in on-premises deliveries,

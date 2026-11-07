@@ -40,6 +40,10 @@ const schema = z
     OTEL_EXPORTER_OTLP_ENDPOINT: z.union([z.url(), z.literal('')]).optional(),
     /** Error tracking (Sentry protocol: Sentry or GlitchTip); empty = off. Read in sentry.ts. */
     SENTRY_DSN: z.union([z.url(), z.literal('')]).optional(),
+    /** Public API: requests per minute per API key (Redis, shared across replicas). */
+    API_KEY_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(600),
+    /** Outbound webhooks: largest JSON body publishEvent() accepts (the worker checks it too). */
+    WEBHOOK_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().default(65_536),
     OIDC_ISSUER: z.url().optional(),
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),

@@ -5,6 +5,7 @@ import {
   Check,
   ChevronsUpDown,
   FolderKanban,
+  KeyRound,
   Layers,
   LogOut,
   Moon,
@@ -12,6 +13,7 @@ import {
   ScrollText,
   Sparkles,
   Sun,
+  Webhook,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -189,7 +191,9 @@ export function Shell() {
   useEffect(() => {
     if (userId) identify(userId);
   }, [userId]);
-  const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
+  const onProjects = useLocation({
+    select: (l) => l.pathname === '/' || l.pathname.startsWith('/projects'),
+  });
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
 
@@ -229,13 +233,32 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, !onAiCalls && navActive)}>
+          <Link to="/" className={cn(navLink, onProjects && navActive)}>
             <FolderKanban className="size-4" /> Projects
           </Link>
           {isAdmin && (
             <Link to="/ai-calls" className={navLink} activeProps={{ className: navActive }}>
               <ScrollText className="size-4" /> AI calls
             </Link>
+          )}
+          {isAdmin && (
+            <>
+              <p className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground">Settings</p>
+              <Link
+                to="/settings/api-keys"
+                className={navLink}
+                activeProps={{ className: navActive }}
+              >
+                <KeyRound className="size-4" /> API keys
+              </Link>
+              <Link
+                to="/settings/webhooks"
+                className={navLink}
+                activeProps={{ className: navActive }}
+              >
+                <Webhook className="size-4" /> Webhooks
+              </Link>
+            </>
           )}
         </nav>
         <Link

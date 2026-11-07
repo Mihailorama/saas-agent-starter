@@ -2,6 +2,7 @@ import { schema } from '@app/db';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { genericOAuth, organization } from 'better-auth/plugins';
+import { apiKeys, orgAccess } from './access.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 
@@ -33,7 +34,7 @@ export const auth = betterAuth({
   trustedOrigins: allowedOrigins,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   emailAndPassword: { enabled: true, minPasswordLength: 12 },
-  plugins: [organization(), ...oidc],
+  plugins: [organization(orgAccess), apiKeys, ...oidc],
   // Rate limiting is done by @fastify/rate-limit backed by Redis (shared across replicas).
   rateLimit: { enabled: false },
   advanced: {

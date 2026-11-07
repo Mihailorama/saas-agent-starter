@@ -35,7 +35,10 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 ```
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
-  src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
+  src/tenant.ts       requireRole() / access(scope) + withTenant(): RBAC, API key scopes, RLS
+                      transaction, audit log, webhook events started after commit
+  src/access.ts       org roles (Better Auth AC) + organization API key plugin config
+  src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -49,9 +52,11 @@ packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
+  worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page),
-                    events.json (analytics event catalog), journeys.json (journeys as code)
+                    events.json (analytics event catalog), journeys.json (journeys as code),
+                    webhook-events.json (outbound webhook event catalog)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
                     rules (infra/otel), Grafana datasources + dashboards (infra/grafana)
@@ -87,6 +92,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
 - PostHog Cloud for product analytics, replay, surveys, AI feedback; Umami (MIT) self-hosted
   where data must stay in place (ADR 0012).
+- Public API: organization API keys via `@better-auth/api-key` (same auth library), webhooks as
+  a Temporal workflow per event signed per Standard Webhooks; self-hosted Svix lacks the
+  customer portal (ADR 0018, docs/public-api.md).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
 
@@ -116,6 +124,16 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 6. `pnpm check`.
 
 A Claude Code command with the same steps: `/add-resource <name>`.
+
+## Recipe: expose a route to API keys / add a webhook event
+
+- Route: use `...access('<resource>:<action>')` (tenant.ts) instead of `{ preHandler:
+  requireRole(...) }`; add a new scope to `SCOPES` with the role it equals and to the table in
+  docs/public-api.md. Test it with a key (`apps/api/test/public-api.test.ts`).
+- Event: add the type to `config/webhook-events.json`, then call
+  `await publishEvent(req, tx, '<type>', dto)` inside the `withTenant` transaction of the change.
+  Never start deliveries yourself. Payload changes follow the versioning rule in
+  docs/public-api.md.
 
 ## Recipe: add a background workflow
 

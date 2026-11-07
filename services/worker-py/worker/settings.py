@@ -47,3 +47,11 @@ AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
 # Provider credentials: ANTHROPIC_API_KEY and OPENAI_API_KEY are read by the SDKs.
 # OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+
+# Outbound webhooks (worker/webhooks.py). Non-global addresses (private, loopback, link-local...)
+# are refused; list CIDRs here to allow some anyway (e.g. an on-prem receiver). Dev/tests only
+# for 127.0.0.0/8.
+WEBHOOK_ALLOWED_CIDRS = [
+    c.strip() for c in os.environ.get("WEBHOOK_ALLOWED_CIDRS", "").split(",") if c.strip()
+]
+WEBHOOK_MAX_PAYLOAD_BYTES = int(os.environ.get("WEBHOOK_MAX_PAYLOAD_BYTES", "65536"))
