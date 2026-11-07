@@ -1,0 +1,34 @@
+name: Released
+
+# Comments "Released in vX.Y.Z" on the issues closed by the PRs in a release and labels them
+# `released` (docs/releases.md). Triggered when a person (or a workflow-triggering token)
+# publishes a release, and called by release-please.yml, whose GITHUB_TOKEN releases start
+# no workflows on their own.
+on:
+  release:
+    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  comment:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags and history: the range is previous v* tag..this tag
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: node scripts/released.mjs "$TAG"
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GITHUB_TOKEN: ${{ github.token }}

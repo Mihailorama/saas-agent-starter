@@ -53,3 +53,11 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
 # (STARTTLS required) or smtp://host:1025?tls=none (local Mailpit). Empty = sending fails.
 SMTP_URL = os.environ.get("SMTP_URL", "")
 MAIL_FROM = os.environ.get("MAIL_FROM", "")
+
+# Feature flags (docs/feature-flags.md). PostHog decides when POSTHOG_KEY is set; FLAGS_ON /
+# FLAGS_OFF (comma-separated names) override it and the catalog default in config/flags.json.
+FLAGS_FILE = Path(os.environ.get("FLAGS_FILE", _ROOT / "config" / "flags.json"))
+FLAGS_ON = frozenset(f.strip() for f in os.environ.get("FLAGS_ON", "").split(",") if f.strip())
+FLAGS_OFF = frozenset(f.strip() for f in os.environ.get("FLAGS_OFF", "").split(",") if f.strip())
+POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
+POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")

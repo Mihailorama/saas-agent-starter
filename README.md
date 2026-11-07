@@ -115,6 +115,14 @@ same Postgres. Optional, consent-gated: GA4, Yandex Metrika. AI-answer thumbs go
 observability and/or Langfuse. Events are catalogued in `config/events.json` and checked in CI.
 Details: [docs/product-analytics.md](docs/product-analytics.md).
 
+## Feature flags and releases
+
+New behaviour ships behind PostHog feature flags declared in `config/flags.json`
+(`pnpm check:flags`, `pnpm flags:sync`); without PostHog a flag is its catalog default or
+`FLAGS_ON`/`FLAGS_OFF`. PR titles are Conventional Commits; release-please keeps a release PR
+with `CHANGELOG.md`, and each release comments "Released in vX.Y.Z" on the issues it closed.
+Details: [docs/feature-flags.md](docs/feature-flags.md), [docs/releases.md](docs/releases.md).
+
 ## SSO
 
 - **OIDC** (any provider: Authentik, Okta, Entra ID, Google Workspace, Keycloak...): set
