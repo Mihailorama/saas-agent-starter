@@ -30,16 +30,38 @@ export type ProjectCreated = {
 };
 export const projectWorkflowId = (projectId: string) => `project-created-${projectId}`;
 
-/** Idempotent: the workflow id is derived from the project id, duplicates are rejected. */
-export async function startProjectCreated(event: ProjectCreated) {
+/** Starts a workflow at most once per id. Returns false if that id already ran (or runs). */
+async function startOnce(type: string, workflowId: string, arg: object): Promise<boolean> {
   try {
-    await (await temporal()).workflow.start('ProjectCreatedWorkflow', {
+    await (await temporal()).workflow.start(type, {
       taskQueue: env.TEMPORAL_TASK_QUEUE,
-      workflowId: projectWorkflowId(event.projectId),
+      workflowId,
       workflowIdReusePolicy: 'REJECT_DUPLICATE',
-      args: [event],
+      args: [arg],
     });
+    return true;
   } catch (err) {
-    if (!(err instanceof WorkflowExecutionAlreadyStartedError)) throw err;
+    if (err instanceof WorkflowExecutionAlreadyStartedError) return false;
+    throw err;
   }
 }
+
+/** Idempotent: the workflow id is derived from the project id, duplicates are rejected. */
+export async function startProjectCreated(event: ProjectCreated) {
+  await startOnce('ProjectCreatedWorkflow', projectWorkflowId(event.projectId), event);
+}
+
+/** Service desk (docs/support.md). Ids only: the worker reads message content from Chatwoot. */
+export type SupportConversation = { accountId: number; conversationId: number };
+export const supportTriageWorkflowId = (c: SupportConversation) =>
+  `support-triage-${c.accountId}-${c.conversationId}`;
+/** One triage per conversation: the first incoming message starts it, later ones are no-ops. */
+export const startSupportTriage = (c: SupportConversation) =>
+  startOnce('SupportTriageWorkflow', supportTriageWorkflowId(c), c);
+
+/** A tracker item linked to conversations was closed; `closeId` makes each close event unique. */
+export type SupportIssueClosed = { tracker: 'github' | 'plane'; issueId: string };
+export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) =>
+  `support-closed-${e.tracker}-${e.issueId}-${closeId}`;
+export const startSupportIssueClosed = (e: SupportIssueClosed, closeId: string) =>
+  startOnce('SupportIssueClosedWorkflow', supportClosedWorkflowId(e, closeId), e);

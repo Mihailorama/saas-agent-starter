@@ -21,6 +21,7 @@ import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
 import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
+import { supportHookRoutes, supportRoutes } from './routes/support.ts';
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -137,6 +138,8 @@ export async function buildApp() {
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
   await app.register(hookRoutes, { prefix: '/api/hooks' });
+  await app.register(supportHookRoutes, { prefix: '/api/hooks' });
+  await app.register(supportRoutes, { prefix: '/api/support' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
 
   return app;

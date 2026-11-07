@@ -191,13 +191,23 @@ async function syncPosthog(dryRun) {
       body: alert(j, ins.id),
     });
   }
-  const problem = await upsert(api, {
-    list: `/surveys/?search=${q(names.problemSurvey)}`,
-    create: '/surveys/',
-    name: names.problemSurvey,
-    body: problemSurvey(),
-    createOnly: true, // question ids must stay stable; later edits happen in the PostHog UI
-  });
+  // With the Chatwoot widget configured, bug reports and ideas go through its Help menu
+  // (docs/support.md): one entry point, so the PostHog feedback tab is not created.
+  const supportWidget = Boolean(e.VITE_CHATWOOT_BASE_URL && e.VITE_CHATWOOT_WEBSITE_TOKEN);
+  const problem = supportWidget
+    ? undefined
+    : await upsert(api, {
+        list: `/surveys/?search=${q(names.problemSurvey)}`,
+        create: '/surveys/',
+        name: names.problemSurvey,
+        body: problemSurvey(),
+        createOnly: true, // question ids must stay stable; later edits happen in the PostHog UI
+      });
+  if (supportWidget) {
+    console.log(
+      `  skipped "${names.problemSurvey}": the Chatwoot Help menu takes reports; stop that survey in PostHog if it exists`,
+    );
+  }
   const ai = await upsert(api, {
     list: `/surveys/?search=${q(names.aiSurvey)}`,
     create: '/surveys/',
@@ -217,10 +227,12 @@ async function syncPosthog(dryRun) {
       source: 'internal-events',
       events: [{ id: '$insight_alert_firing', type: 'events' }],
     });
-    await hook(names.surveyHook, {
-      events: [{ id: 'survey sent', type: 'events' }],
-      properties: [{ key: '$survey_id', value: problem.id, operator: 'exact', type: 'event' }],
-    });
+    if (problem) {
+      await hook(names.surveyHook, {
+        events: [{ id: 'survey sent', type: 'events' }],
+        properties: [{ key: '$survey_id', value: problem.id, operator: 'exact', type: 'event' }],
+      });
+    }
   } else {
     console.log('  skipped webhook destinations: set PUBLIC_API_URL and POSTHOG_WEBHOOK_SECRET');
   }

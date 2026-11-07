@@ -36,7 +36,8 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
-  src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
+  src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
+                      hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/s3.ts           S3 client, presigned upload/download URLs
   src/telemetry.ts    OpenTelemetry (preloaded, env-toggled)
@@ -49,6 +50,7 @@ packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
+  worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code)
@@ -60,6 +62,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
+docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
@@ -89,6 +92,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   where data must stay in place (ADR 0012).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
+- Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items in GitHub Issues or
+  Plane Intake; triage is a Temporal workflow in the worker, no own ticket table (ADR 0013).
 
 ## Where code goes (TS vs Python vs Rust)
 

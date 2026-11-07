@@ -4,7 +4,9 @@
     "page_view": {
       "description": "SPA route change. `route` is the route pattern (e.g. /projects/$projectId), never the concrete URL.",
       "pii": false,
-      "props": { "route": "string" }
+      "props": {
+        "route": "string"
+      }
     },
     "signup_started": {
       "description": "The sign-up form was opened on the sign-in page.",
@@ -29,37 +31,66 @@
     "project_created": {
       "description": "A project was created.",
       "pii": false,
-      "props": { "has_description": "boolean" }
+      "props": {
+        "has_description": "boolean"
+      }
     },
     "ai_summary_shown": {
       "description": "An AI summary was displayed to a member for review.",
       "pii": false,
-      "props": { "purpose": "string" }
+      "props": {
+        "purpose": "string"
+      }
     },
     "ai_summary_reviewed": {
       "description": "A member confirmed or corrected an AI summary.",
       "pii": false,
-      "props": { "purpose": "string", "action": "string" }
+      "props": {
+        "purpose": "string",
+        "action": "string"
+      }
     },
     "ai_feedback": {
       "description": "Thumbs up/down on an AI result. Also sent as a Langfuse score and a PostHog AI-observability survey response when configured.",
       "pii": false,
-      "props": { "purpose": "string", "rating": "number", "trace_id": "string" }
+      "props": {
+        "purpose": "string",
+        "rating": "number",
+        "trace_id": "string"
+      }
     },
     "api_error": {
       "description": "An API call the user triggered failed. `path` has ids replaced by :id; `trace_id` links to the OpenTelemetry trace and the Sentry/GlitchTip event.",
       "pii": false,
-      "props": { "method": "string", "path": "string", "status": "number", "trace_id": "string" }
+      "props": {
+        "method": "string",
+        "path": "string",
+        "status": "number",
+        "trace_id": "string"
+      }
     },
     "form_error": {
       "description": "Browser form validation blocked a submit (required, too short...). Field names only, never values.",
       "pii": false,
-      "props": { "form": "string", "field": "string", "reason": "string" }
+      "props": {
+        "form": "string",
+        "field": "string",
+        "reason": "string"
+      }
     },
     "consent_set": {
       "description": "The user answered the analytics consent banner.",
       "pii": false,
-      "props": { "analytics": "boolean" }
+      "props": {
+        "analytics": "boolean"
+      }
+    },
+    "support_opened": {
+      "description": "The Help menu opened the support widget (docs/support.md). `kind` is what the user picked: question, bug or feature_request.",
+      "pii": false,
+      "props": {
+        "kind": "string"
+      }
     }
   }
 }

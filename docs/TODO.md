@@ -48,7 +48,9 @@
   `apps/api/src/routes/hooks.ts`, extended to accept Grafana's alert payload and open the same
   `cjm-regression` issue. Until then run `pnpm journeys:report --json` on a schedule
   (docs/product-analytics.md).
-- **Feedback channel on the Umami-only tier.** PostHog Surveys provide "report a problem /
+- **Feedback channel on the Umami-only tier.** Covered when the service desk is configured: the
+  Chatwoot Help menu takes reports on every tier (docs/support.md). Without Chatwoot it remains:
+  PostHog Surveys provide "report a problem /
   suggest an improvement"; Umami has no surveys and GlitchTip only implements Sentry's
   crash-report dialog (reports attached to an error; its Sentry User Feedback widget support
   was broken, glitchtip-backend issues #403/#468). Re-check GlitchTip's user feedback support
@@ -64,3 +66,18 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Social mentions into the service desk (later, only if volume appears).** X and LinkedIn
+  mentions of the product do not reach Chatwoot. When there is enough volume to matter: a
+  scheduled Apify actor (one per network) that posts new mentions into a Chatwoot **API inbox**
+  (`POST /public/api/v1/inboxes/{identifier}/contacts/.../conversations/.../messages`), so they
+  get the same triage as every other channel (docs/support.md). Do not build it before then.
+- **Support triage start is not transactional.** `POST /api/hooks/chatwoot` starts
+  `SupportTriageWorkflow` directly; if Temporal is down at that moment the triage is lost, and
+  Chatwoot does not retry account webhooks (`apps/api/src/routes/support.ts`). Same fix as the
+  project workflow outbox above, or a periodic sweep for conversations without
+  `support_category`.
+- **Eval for `support.triage` once PR #24 (llm-ops) lands.** Its `tests/test_prompts.py`
+  requires `evals/<purpose>/promptfooconfig.json` for every prompted purpose; add
+  `evals/support.triage/` (a few conversations per category, the duplicate prompt too) and merge
+  `prompts/lock.json` entries (both branches add that file). `tests/test_support.py` pins the
+  hashes until then.

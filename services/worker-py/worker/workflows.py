@@ -5,6 +5,7 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from worker.activities import Activities, ProjectCreated
+    from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
 
 
 @workflow.defn(name="ProjectCreatedWorkflow")
@@ -27,3 +28,31 @@ class ProjectCreatedWorkflow:
             retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=3),
         )
         return fingerprint
+
+
+@workflow.defn(name="SupportTriageWorkflow")
+class SupportTriageWorkflow:
+    """Started by POST /api/hooks/chatwoot, id `support-triage-<account>-<conversation>`."""
+
+    @workflow.run
+    async def run(self, c: SupportConversation) -> str:
+        return await workflow.execute_activity_method(
+            SupportActivities.triage,
+            c,
+            start_to_close_timeout=timedelta(minutes=3),  # up to two LLM calls
+            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=10), maximum_attempts=3),
+        )
+
+
+@workflow.defn(name="SupportIssueClosedWorkflow")
+class SupportIssueClosedWorkflow:
+    """Started by POST /api/hooks/{github,plane}, one id per close event."""
+
+    @workflow.run
+    async def run(self, e: SupportIssueClosed) -> int:
+        return await workflow.execute_activity_method(
+            SupportActivities.issue_closed,
+            e,
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5),
+        )

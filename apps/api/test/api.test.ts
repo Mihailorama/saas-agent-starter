@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { aiCalls, auditLog, projects, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,8 @@ import {
   closeTemporal,
   projectWorkflowId,
   startProjectCreated,
+  supportClosedWorkflowId,
+  supportTriageWorkflowId,
   temporal,
 } from '../src/temporal.ts';
 
@@ -433,6 +435,164 @@ describe('PostHog webhook -> GitHub issue', () => {
     } finally {
       fetchMock.mockRestore();
       Object.assign(env, { GITHUB_TOKEN: undefined, GITHUB_REPO: undefined });
+    }
+  });
+});
+
+describe('service desk (Chatwoot)', () => {
+  const hex = (key: string, data: string) => createHmac('sha256', key).update(data).digest('hex');
+  const secrets = {
+    CHATWOOT_WEBHOOK_SECRET: 'test-chatwoot-secret',
+    CHATWOOT_HMAC_TOKEN: 'test-hmac-token',
+    GITHUB_WEBHOOK_SECRET: 'test-github-secret',
+    PLANE_WEBHOOK_SECRET: 'plane_wh_test',
+    PLANE_PROJECT_ID: 'p1',
+  };
+  beforeAll(() => Object.assign(env, secrets));
+  afterAll(() =>
+    Object.assign(env, Object.fromEntries(Object.keys(secrets).map((k) => [k, undefined]))),
+  );
+  const post = (url: string, body: string, headers: Record<string, string>) =>
+    app.inject({
+      method: 'POST',
+      url,
+      remoteAddress: ip(),
+      headers: { 'content-type': 'application/json', ...headers },
+      payload: body,
+    });
+  const chatwoot = (event: object, opts: { secret?: string; ts?: number } = {}) => {
+    const body = JSON.stringify(event);
+    const ts = String(opts.ts ?? Math.floor(Date.now() / 1000));
+    const sig = `sha256=${hex(opts.secret ?? secrets.CHATWOOT_WEBHOOK_SECRET, `${ts}.${body}`)}`;
+    return post('/api/hooks/chatwoot', body, {
+      'x-chatwoot-signature': sig,
+      'x-chatwoot-timestamp': ts,
+    });
+  };
+  const message = (conversationId: number, extra: object = {}) => ({
+    event: 'message_created',
+    message_type: 'incoming',
+    private: false,
+    content: 'customer text',
+    account: { id: 1 },
+    conversation: { id: conversationId },
+    ...extra,
+  });
+
+  it('checks the Chatwoot signature, its timestamp and the secret being set', async () => {
+    const id = Math.floor(Math.random() * 1e9);
+    expect((await chatwoot(message(id), { secret: 'wrong' })).statusCode).toBe(401);
+    const old = Math.floor(Date.now() / 1000) - 600;
+    expect((await chatwoot(message(id), { ts: old })).statusCode).toBe(401); // replay
+    const unsigned = await post('/api/hooks/chatwoot', JSON.stringify(message(id)), {});
+    expect(unsigned.statusCode).toBe(401);
+    // Signature over other bytes than the ones sent: rejected.
+    const body = JSON.stringify(message(id));
+    const ts = String(Math.floor(Date.now() / 1000));
+    const forged = await post('/api/hooks/chatwoot', body.replace('1}', '2}'), {
+      'x-chatwoot-signature': `sha256=${hex(secrets.CHATWOOT_WEBHOOK_SECRET, `${ts}.${body}`)}`,
+      'x-chatwoot-timestamp': ts,
+    });
+    expect(forged.statusCode).toBe(401);
+    env.CHATWOOT_WEBHOOK_SECRET = undefined;
+    try {
+      expect((await chatwoot(message(id))).statusCode).toBe(401); // no secret = disabled
+    } finally {
+      env.CHATWOOT_WEBHOOK_SECRET = secrets.CHATWOOT_WEBHOOK_SECRET;
+    }
+  });
+
+  it('starts one triage workflow per conversation, only for customer messages', async () => {
+    const c = { accountId: 1, conversationId: Math.floor(Math.random() * 1e9) };
+    expect((await chatwoot(message(c.conversationId, { private: true }))).json()).toEqual({
+      action: 'ignored',
+    });
+    const agent = message(c.conversationId, { message_type: 'outgoing' });
+    expect((await chatwoot(agent)).json()).toEqual({ action: 'ignored' });
+    expect((await chatwoot({ event: 'conversation_created' })).json()).toEqual({
+      action: 'ignored',
+    });
+
+    expect((await chatwoot(message(c.conversationId))).json()).toEqual({ action: 'started' });
+    expect((await chatwoot(message(c.conversationId))).json()).toEqual({ action: 'duplicate' });
+    const handle = (await temporal()).workflow.getHandle(supportTriageWorkflowId(c));
+    const run = await handle.describe();
+    expect(run.type).toBe('SupportTriageWorkflow');
+    // Ids only in Temporal's history: the worker reads the text from Chatwoot.
+    expect(JSON.stringify(await handle.fetchHistory())).not.toContain('customer text');
+    await handle.terminate('test cleanup');
+  });
+
+  it('starts the return path for closed GitHub issues with the support label', async () => {
+    const issue = {
+      number: Math.floor(Math.random() * 1e9),
+      closed_at: '2026-11-07T10:00:00Z',
+      labels: [{ name: 'support' }],
+    };
+    const github = (payload: object, event = 'issues', secret = secrets.GITHUB_WEBHOOK_SECRET) => {
+      const body = JSON.stringify(payload);
+      return post('/api/hooks/github', body, {
+        'x-github-event': event,
+        'x-hub-signature-256': `sha256=${hex(secret, body)}`,
+      });
+    };
+    expect((await github({ action: 'closed', issue }, 'issues', 'wrong')).statusCode).toBe(401);
+    const unlabelled = { action: 'closed', issue: { ...issue, labels: [] } };
+    expect((await github(unlabelled)).json()).toEqual({ action: 'ignored' });
+    expect((await github({ action: 'opened', issue })).json()).toEqual({ action: 'ignored' });
+    expect((await github({ zen: 'hi' }, 'ping')).json()).toEqual({ action: 'ignored' });
+    expect((await github({ action: 'closed', issue })).json()).toEqual({ action: 'started' });
+    expect((await github({ action: 'closed', issue })).json()).toEqual({ action: 'duplicate' });
+    const id = supportClosedWorkflowId(
+      { tracker: 'github', issueId: String(issue.number) },
+      String(Date.parse(issue.closed_at)),
+    );
+    const handle = (await temporal()).workflow.getHandle(id);
+    expect((await handle.describe()).type).toBe('SupportIssueClosedWorkflow');
+    await handle.terminate('test cleanup');
+  });
+
+  it('starts the return path for Plane state changes in our project', async () => {
+    const plane = (payload: object, secret = secrets.PLANE_WEBHOOK_SECRET) => {
+      const body = JSON.stringify(payload);
+      return post('/api/hooks/plane', body, { 'x-plane-signature': hex(secret, body) });
+    };
+    const event = {
+      event: 'workitem.updated',
+      event_id: randomUUID(),
+      entity_type: 'issue',
+      data: { id: randomUUID(), project_id: 'p1' },
+      previous_attributes: { state_id: 'old-state' },
+    };
+    expect((await plane(event, 'wrong')).statusCode).toBe(401);
+    const other = { ...event, data: { ...event.data, project_id: 'p2' } };
+    expect((await plane(other)).json()).toEqual({ action: 'ignored' });
+    const renamed = { ...event, previous_attributes: { name: 'x' } };
+    expect((await plane(renamed)).json()).toEqual({ action: 'ignored' });
+    expect((await plane(event)).json()).toEqual({ action: 'started' });
+    const id = supportClosedWorkflowId(
+      { tracker: 'plane', issueId: event.data.id },
+      event.event_id,
+    );
+    await (await temporal()).workflow.getHandle(id).terminate('test cleanup');
+  });
+
+  it('signs the widget identity of the signed-in user only', async () => {
+    expect((await call(null, 'GET', '/api/support/identity')).statusCode).toBe(401);
+    const user = await signUp();
+    const orgId = await createOrg(user);
+    const res = await call(user, 'GET', '/api/support/identity');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      identifier: user.id,
+      identifierHash: hex(secrets.CHATWOOT_HMAC_TOKEN, user.id),
+      orgId,
+    });
+    env.CHATWOOT_HMAC_TOKEN = undefined;
+    try {
+      expect((await call(user, 'GET', '/api/support/identity')).statusCode).toBe(404);
+    } finally {
+      env.CHATWOOT_HMAC_TOKEN = secrets.CHATWOOT_HMAC_TOKEN;
     }
   });
 });

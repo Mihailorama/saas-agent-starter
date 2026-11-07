@@ -177,6 +177,10 @@ a GitHub App, not from alerts or surveys, so the receiver above is the smallest 
 User feedback text goes to GitHub (a US processor): keep `GITHUB_TOKEN` empty where that is
 not allowed and read the responses in PostHog instead.
 
+With the service desk configured ([docs/support.md](support.md)), "report a problem / suggest an
+improvement" moves into the Chatwoot widget's Help menu (one entry point for users, works on every
+tier including Umami-only) and `journeys:sync` skips the feedback survey. Without it:
+
 Feedback on the Umami-only tier: Umami has no surveys. GlitchTip implements Sentry's
 crash-report dialog (user reports attached to an error), not a standalone "suggest an
 improvement" widget, so that tier has no feedback channel yet (docs/TODO.md).

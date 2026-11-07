@@ -32,6 +32,8 @@ test('sign up, create an organization and a project', async ({ page }) => {
 
   // No third-party sink configured in tests: nothing to consent to, no foreign hosts.
   await expect(page.getByRole('region', { name: 'Analytics consent' })).toHaveCount(0);
+  // No Chatwoot configured: no Help entry and no widget request (docs/support.md).
+  await expect(page.getByRole('button', { name: 'Help' })).toHaveCount(0);
   expect([...hosts]).toEqual(['localhost']);
 });
 

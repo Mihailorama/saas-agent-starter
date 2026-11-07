@@ -38,6 +38,7 @@ S3_SECRET_ACCESS_KEY = os.environ.get("S3_SECRET_ACCESS_KEY", "")
 # AI layer (docs/adr/0008-ai-layer.md). Empty AI_CONTOUR disables all LLM calls.
 AI_CONTOUR = os.environ.get("AI_CONTOUR", "")
 AI_MODELS_FILE = Path(os.environ.get("AI_MODELS_FILE", _ROOT / "config" / "ai-models.json"))
+PROMPTS_DIR = Path(os.environ.get("PROMPTS_DIR", _ROOT / "prompts"))
 AI_CONTENT_BUCKET = os.environ.get("AI_CONTENT_BUCKET", "ai-calls")
 # Recorded per call as content_expires_at; enforce it with a lifecycle rule on the bucket.
 AI_CONTENT_RETENTION_DAYS = int(os.environ.get("AI_CONTENT_RETENTION_DAYS", "180"))
@@ -47,3 +48,24 @@ AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
 # Provider credentials: ANTHROPIC_API_KEY and OPENAI_API_KEY are read by the SDKs.
 # OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+
+# Service desk (docs/support.md). Chatwoot holds the tickets, the tracker holds the backlog items;
+# every token empty = that side only logs what it would do (dry run).
+CHATWOOT_URL = os.environ.get("CHATWOOT_URL", "")  # how the worker reaches Chatwoot
+CHATWOOT_PUBLIC_URL = os.environ.get("CHATWOOT_PUBLIC_URL", "") or CHATWOOT_URL  # links for humans
+CHATWOOT_API_TOKEN = os.environ.get("CHATWOOT_API_TOKEN", "")  # agent bot or agent access token
+SUPPORT_TRACKER = os.environ.get("SUPPORT_TRACKER", "github")  # github | plane
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
+PLANE_API_URL = os.environ.get("PLANE_API_URL", "")  # e.g. https://api.plane.so
+PLANE_APP_URL = os.environ.get("PLANE_APP_URL", "") or PLANE_API_URL  # links for humans
+PLANE_WORKSPACE = os.environ.get("PLANE_WORKSPACE", "")
+PLANE_PROJECT_ID = os.environ.get("PLANE_PROJECT_ID", "")
+PLANE_API_TOKEN = os.environ.get("PLANE_API_TOKEN", "")
+# Model for triage. No default on purpose: unset = triage off. Its AI calls are audited under
+# SUPPORT_AI_ORG_ID, the operator's own organization (support data is not a tenant's data).
+AI_SUPPORT_TRIAGE_PROVIDER = os.environ.get("AI_SUPPORT_TRIAGE_PROVIDER", "")
+AI_SUPPORT_TRIAGE_MODEL = os.environ.get("AI_SUPPORT_TRIAGE_MODEL", "")
+SUPPORT_AI_ORG_ID = os.environ.get("SUPPORT_AI_ORG_ID", "")
+# Also tell the customer when their linked issue is resolved (off: private note only).
+SUPPORT_NOTIFY_ON_CLOSE = os.environ.get("SUPPORT_NOTIFY_ON_CLOSE", "false").lower() == "true"

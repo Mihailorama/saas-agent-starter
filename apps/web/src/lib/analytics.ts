@@ -181,6 +181,10 @@ export function page(route: string) {
   track('page_view', { route });
 }
 
+/** Link to this session's PostHog replay ('' when PostHog is not loaded), for support requests. */
+export const sessionReplayUrl = () =>
+  posthog?.get_session_replay_url({ withTimestamp: true }) ?? '';
+
 /** Ties later events to the signed-in user (internal id only) in PostHog. */
 export function identify(userId: string | undefined) {
   if (userId) posthog?.identify(userId);
