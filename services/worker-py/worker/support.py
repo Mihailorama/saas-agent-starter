@@ -7,6 +7,7 @@ writes private notes; it never answers a customer on its own (except the opt-in 
 message, SUPPORT_NOTIFY_ON_CLOSE=true|release).
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -17,7 +18,7 @@ from urllib.parse import quote
 import httpx2
 from temporalio import activity
 
-from worker import prompts
+from worker import pii, prompts
 from worker.activities import ModelChoice
 from worker.ai import Gateway, Message
 
@@ -37,7 +38,6 @@ CONTEXT_KEYS = ("request_kind", "org_id", "page", "replay_url", "trace_id")
 RESOLVED_MESSAGE = (
     "Good news: the problem you reported has been resolved. Thank you for letting us know!"
 )
-EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+")
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,8 @@ def triage_input(kind_hint: str, transcript: str) -> str:
 
 
 def scrub(value: object, limit: int = 300) -> str:
-    return EMAIL.sub("[email]", str(value))[:limit]
+    """PII redacted with Presidio (worker/pii.py), then cut. CPU-bound: call it off the loop."""
+    return pii.redact(str(value))[:limit]
 
 
 def parse_triage(text: str) -> Triage | None:
@@ -358,9 +359,9 @@ class SupportActivities:
         context = {**obj(sender.get("custom_attributes")), **attrs}  # conversation wins
 
         transcript = "\n\n".join(await cw.customer_messages(c))[:20_000]
-        hint = scrub(context.get("request_kind") or "none", 40)
+        hint = await asyncio.to_thread(scrub, context.get("request_kind") or "none", 40)
         text = await self._llm(c, TRIAGE_PROMPT, triage_input(hint, transcript))
-        t = parse_triage(text)
+        t = await asyncio.to_thread(parse_triage, text)
         if t is None:
             await cw.note(c, "AI triage could not classify this conversation. Please triage it.")
             await cw.set_attributes(c, {"support_category": "unclassified"})
@@ -416,7 +417,9 @@ class SupportActivities:
                     dup.ref, f"+1 user: {t.summary}\n\nSupport conversation: {link}"
                 )
                 return dup, True
-        details = [f"- {k}: {scrub(context[k])}" for k in CONTEXT_KEYS if context.get(k)]
+        details = await asyncio.to_thread(
+            lambda: [f"- {k}: {scrub(context[k])}" for k in CONTEXT_KEYS if context.get(k)]
+        )
         body = "\n".join(
             [
                 t.summary,

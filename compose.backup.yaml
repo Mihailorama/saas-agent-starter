@@ -13,8 +13,8 @@ x-logging: &logging
   options: { labels: "com.docker.compose.project,com.docker.compose.service", max-size: 10m }
 
 x-image: &image
-  image: saas-agent-starter-pgbackup:local # postgres + pgBackRest, rclone, supercronic
-  build: infra/backup
+  image: saas-agent-starter-pgbackup:local # the stack's postgres + pgBackRest, rclone, supercronic
+  build: { context: infra/backup, target: backup }
 
 # pgBackRest reads all of its settings from PGBACKREST_* variables. The repository is encrypted
 # client-side; keep BACKUP_ENCRYPTION_PASSPHRASE outside this server: without it no restore.
@@ -81,10 +81,10 @@ services:
       BACKUP_DIFF_CRON: ${BACKUP_DIFF_CRON:-0 2 * * 1-6}
       BACKUP_OBJECTS_CRON: ${BACKUP_OBJECTS_CRON:-15 * * * *}
       RESTORE_CHECK_CRON: ${RESTORE_CHECK_CRON:-0 4 * * 0}
-      RESTORE_CHECK_TABLES: ${RESTORE_CHECK_TABLES:-app.public.organization app.public.user app.public.projects app.public.audit_log}
+      RESTORE_CHECK_TABLES: ${RESTORE_CHECK_TABLES:-app.public.organization app.public.user app.public.projects app.public.audit_log chatwoot.public.conversations chatwoot.public.messages}
       RESTORE_CHECK_TOLERANCE: ${RESTORE_CHECK_TOLERANCE:-0.05}
       BACKUP_PUSHGATEWAY_URL: ${BACKUP_PUSHGATEWAY_URL-http://pushgateway:9091}
-      BACKUP_APP_BUCKETS: ${BACKUP_APP_BUCKETS:-attachments ai-calls langfuse}
+      BACKUP_APP_BUCKETS: ${BACKUP_APP_BUCKETS:-attachments ai-calls langfuse chatwoot}
       BACKUP_APP_S3_ENDPOINT: ${BACKUP_APP_S3_ENDPOINT:-http://s3:8333}
       BACKUP_APP_S3_REGION: ${BACKUP_APP_S3_REGION:-us-east-1}
       BACKUP_APP_S3_ACCESS_KEY_ID: ${BACKUP_APP_S3_ACCESS_KEY_ID:-local-dev-access-key}

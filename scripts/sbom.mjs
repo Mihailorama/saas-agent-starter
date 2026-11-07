@@ -19,7 +19,7 @@ const backups = ['docker-compose.yml', 'compose.backup.yaml']; // backup overlay
 sh('node', ['scripts/license-check.mjs', '--notices', `${out}/THIRD_PARTY_NOTICES.md`], {
   stdio: 'inherit',
 });
-compose(twins[0], 'build', 'api', 'web', 'worker', 'site');
+compose(twins[0], 'build', 'api', 'web', 'worker', 'site', 'postgres');
 compose(backups, 'build', 'postgres');
 const images = new Set();
 for (const files of [...twins, backups]) {

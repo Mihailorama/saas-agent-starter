@@ -217,8 +217,10 @@ PostHog alert or survey response -> webhook -> `POST /api/hooks/posthog` (header
 
 - `$insight_alert_firing` -> label `cjm-regression`, title `[cjm] <alert name>`, body with
   the breach text and the insight link; a repeat of the same alert comments on the open issue.
-- `survey sent` from the feedback survey -> label `from-users`, the answers (emails masked),
-  page, release and the session replay link.
+- `survey sent` from the feedback survey -> label `from-users`, the answers (personal data
+  redacted by the Presidio sidecar when `PII_REDACT_URL` is set, and nothing filed while it is
+  down; emails masked otherwise, docs/support.md "Personal data"), page, release and the session
+  replay link.
 - Thumbs on AI answers (`$ai_trace_id`) and any other event are ignored.
 - Without `GITHUB_TOKEN`/`GITHUB_REPO` the endpoint answers with the planned issue (dry run).
 

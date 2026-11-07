@@ -155,9 +155,9 @@ Details: [docs/product-analytics.md](docs/product-analytics.md).
 ## Service desk
 
 Off until you set env. `docker compose --profile support up -d` runs Chatwoot (MIT core, `-ce`
-image) with its own pgvector Postgres. Set the website inbox token and HMAC token for the Help
-menu, the webhook secret for triage, and a model for `support.triage`; tickets stay in Chatwoot,
-backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
+image) on the stack's Postgres (own database) and S3 (own bucket), so backups cover it. Set the
+website inbox token and HMAC token for the Help menu, the webhook secret for triage, and a model
+for `support.triage`; tickets stay in Chatwoot, backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
 Details: [docs/support.md](docs/support.md).
 
 ## LLM-ops
