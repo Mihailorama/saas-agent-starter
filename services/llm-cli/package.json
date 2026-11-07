@@ -1,0 +1,15 @@
+{
+  "name": "@app/llm-cli",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI-compatible shim that runs vendor CLI subscriptions (docs/llm-providers.md)",
+  "scripts": {
+    "start": "node src/main.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc",
+    "typecheck:fast": "tsrs --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0"
+  }
+}

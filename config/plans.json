@@ -1,5 +1,5 @@
 {
-  "$comment": "Plans, limits and prices (docs/billing.md). Read by the API (entitlements, checkout, billing page) and the worker (LLM spend limit). Bump `version` when you change a plan; existing subscriptions keep their plan id. `contours` pick the payment provider and the currencies offered. Prices are per currency; `providerPriceId` is the provider's price object (Stripe price id, created in the Stripe dashboard) or null for a provider that takes the amount with each payment. `amount` is a decimal string in major units. `llmSpendMonthly` caps what an organization's AI calls may cost per billing period, per cost currency of config/ai-models.json; `llmSpendMax` is how far an admin may raise it (needs the `llmLimitRaise` feature). A `past_due` subscription keeps its plan for `pastDueGraceDays` after the paid period ends, then falls back to `defaultPlan`. The example price ids are placeholders: replace them with your own.",
+  "$comment": "Plans, limits and prices (docs/billing.md). Read by the API (entitlements, checkout, billing page) and the worker (LLM spend limit). Bump `version` when you change a plan; existing subscriptions keep their plan id. `contours` pick the payment provider and the currencies offered. Prices are per currency; `providerPriceId` is the provider's price object (Stripe price id, created in the Stripe dashboard) or null for a provider that takes the amount with each payment. `amount` is a decimal string in major units. `llmSpendMonthly` caps what an organization's AI calls may cost per billing period, per cost currency of config/ai-models.json; `llmSpendMax` is how far an admin may raise it (needs the `llmLimitRaise` feature). `llmUsageMonthly` caps the calls and/or tokens of unmetered models (CLI subscriptions, self-hosted), which have no cost to cap. Feature `byoLlm`: organization admins may add their own AI provider (docs/llm-providers.md). A `past_due` subscription keeps its plan for `pastDueGraceDays` after the paid period ends, then falls back to `defaultPlan`. The example price ids are placeholders: replace them with your own.",
   "version": 1,
   "defaultPlan": "free",
   "pastDueGraceDays": 7,
@@ -18,6 +18,10 @@
         "llmSpendMonthly": {
           "USD": 1,
           "EUR": 1
+        },
+        "llmUsageMonthly": {
+          "calls": 200,
+          "tokens": 400000
         }
       },
       "llmSpendMax": {
@@ -25,7 +29,8 @@
         "EUR": 1
       },
       "features": {
-        "llmLimitRaise": false
+        "llmLimitRaise": false,
+        "byoLlm": false
       },
       "prices": {}
     },
@@ -37,6 +42,10 @@
         "llmSpendMonthly": {
           "USD": 20,
           "EUR": 20
+        },
+        "llmUsageMonthly": {
+          "calls": 5000,
+          "tokens": 20000000
         }
       },
       "llmSpendMax": {
@@ -44,7 +53,8 @@
         "EUR": 200
       },
       "features": {
-        "llmLimitRaise": true
+        "llmLimitRaise": true,
+        "byoLlm": true
       },
       "prices": {
         "USD": {

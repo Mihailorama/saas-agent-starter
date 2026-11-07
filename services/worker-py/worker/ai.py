@@ -1,40 +1,44 @@
 """AI gateway: every LLM call goes through `Gateway.call_llm` (see docs/adr/0008-ai-layer.md).
 
-Per call it checks the model registry (config/ai-models.json) for the current contour, stores
-the request and response content as S3 objects, emits one OpenTelemetry span with GenAI
-semantic-convention attributes (never prompt content), and appends one `ai_calls` row.
+Per call it checks the model registry (config/ai-models.json) for the current contour, routes
+to the organization's own provider if it brought one (BYO), applies the plan's money limit
+(priced models) or calls/tokens limit (unmetered models), stores the request and response
+content as S3 objects, emits one OpenTelemetry span with GenAI semantic-convention attributes
+(never prompt content), and appends one `ai_calls` row. Providers: worker/providers.py.
 """
 
 import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from functools import cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import asyncpg
-from anthropic import AsyncAnthropic, omit
-from anthropic.types import AssistantMessageParam, MessageParam, TextBlock, UserMessageParam
-from openai import AsyncOpenAI
-from openai.types.chat import (
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionMessageParam,
-    ChatCompletionSystemMessageParam,
-    ChatCompletionUserMessageParam,
-)
 from opentelemetry import metrics, trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
-from worker import settings
-from worker.billing import Plans, check_llm_budget
+from worker.billing import Plans, byo_allowed, check_llm_budget, check_llm_usage
+from worker.flags import is_enabled
 from worker.posthog import PostHogAi
+from worker.providers import (
+    BlockedEndpoint,
+    Network,
+    ProviderConfig,
+    byo_provider,
+    is_rate_limited,
+    price_from_litellm,
+)
+from worker.providers import Completion as Completion
+from worker.providers import Message as Message
+from worker.providers import Provider as Provider
 from worker.s3 import S3
+from worker.webhooks import decrypt_secret
 
 log = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.ai")
@@ -49,30 +53,9 @@ cost_counter = meter.create_counter("ai_cost_usd", description="LLM cost in USD"
 
 
 @dataclass(frozen=True)
-class Message:
-    role: Literal["system", "user", "assistant"]
-    content: str
-
-
-@dataclass(frozen=True)
-class Completion:
-    """What a provider returns. `model` is the exact id the provider reported, if any."""
-
-    text: str
-    model: str | None
-    input_tokens: int | None
-    output_tokens: int | None
-    response_id: str | None = None
-
-
-@dataclass(frozen=True)
 class LlmResult:
     call_id: uuid.UUID
     text: str
-
-
-# (model, messages, max_tokens) -> Completion
-Provider = Callable[[str, Sequence[Message], int], Awaitable[Completion]]
 
 
 @dataclass(frozen=True)
@@ -83,12 +66,20 @@ class Price:
 
 
 @dataclass(frozen=True)
+class Fallback:
+    provider: str
+    model: str
+
+
+@dataclass(frozen=True)
 class AllowedModel:
     purposes: frozenset[str]
+    # Explicit override; None = LiteLLM's cost map (Gateway.price_of).
     price: Price | None
-    # Explicit opt-out from cost tracking and LLM spend limits; an unpriced model without it
-    # is refused (fail closed, docs/billing.md).
+    # Explicit opt-out from cost tracking and the money limit; counted against the plan's
+    # calls/tokens limit instead. An unpriced model without it is refused (fail closed).
     unmetered: bool = False
+    fallback: Fallback | None = None
 
 
 Registry = dict[tuple[str, str], AllowedModel]  # (provider, model) -> rules
@@ -101,22 +92,47 @@ def load_registry(path: Path, contour: str) -> Registry:
         raise ValueError(f"contour {contour!r} is not in {path} (have: {sorted(contours)})")
     registry: Registry = {}
     for entry in contours[contour]:
-        p: dict[str, Any] | None = entry["pricePer1kTokens"]
+        p: dict[str, Any] | None = entry.get("pricePer1kTokens")
         price = (
             Price(Decimal(str(p["input"])), Decimal(str(p["output"])), str(p["currency"]))
             if p
             else None
         )
+        fb: dict[str, Any] | None = entry.get("fallback")
         purposes: list[str] = entry["purposes"]
         registry[(str(entry["provider"]), str(entry["model"]))] = AllowedModel(
-            frozenset(purposes), price, entry.get("unmetered") is True
+            frozenset(purposes),
+            price,
+            entry.get("unmetered") is True,
+            Fallback(str(fb["provider"]), str(fb["model"])) if fb else None,
         )
     return registry
+
+
+@dataclass(frozen=True)
+class Byo:
+    """Organization-owned providers (ai_providers): key ring and the custom-URL allow-list."""
+
+    keys: Mapping[str, bytes]
+    allowed_networks: Sequence[Network] = field(default_factory=list[Network])
+
+
+@dataclass(frozen=True)
+class _Route:
+    provider: str  # as recorded in ai_calls: registry name, or byo:<name> for an org's own
+    model: str
+    call: Provider
+    price: Price | None
 
 
 class ModelNotAllowed(ApplicationError):
     def __init__(self, message: str) -> None:
         super().__init__(message, type="ModelNotAllowed", non_retryable=True)
+
+
+class ProviderBlocked(ApplicationError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, type="ProviderBlocked", non_retryable=True)
 
 
 class Gateway:
@@ -127,15 +143,22 @@ class Gateway:
         s3: S3,
         contour: str,
         registry: Registry,
-        providers: dict[str, Provider],
+        providers: Mapping[str, Provider],
         retention_days: int,
+        provider_configs: Mapping[str, ProviderConfig] | None = None,
         posthog: PostHogAi | None = None,
         plans: Plans | None = None,
+        byo: Byo | None = None,
     ) -> None:
         self.pool, self.s3, self.contour = pool, s3, contour
-        self.posthog, self.plans = posthog, plans
+        self.posthog, self.plans, self.byo = posthog, plans, byo
         self.registry, self.providers = registry, providers
+        self.configs = provider_configs or {}
         self.retention = timedelta(days=retention_days)
+        # Usage (calls/tokens) limits count the calls of these models (provider/model).
+        self.unmetered = sorted(f"{p}/{m}" for (p, m), a in registry.items() if a.unmetered)
+        # Providers this contour lists; an org may bring its own key only for one of these.
+        self.contour_providers = frozenset(p for p, _ in registry)
 
     async def call_llm(
         self,
@@ -152,29 +175,140 @@ class Gateway:
     ) -> LlmResult:
         """One LLM call, logged. The span joins the current OTel trace (Temporal propagates it).
 
-        Raises ModelNotAllowed (non-retryable) if (provider, model, purpose) is not registered
-        for this contour, SpendLimitExceeded (non-retryable) if the org's LLM spend in this
-        billing period reached its plan limit; provider errors are logged as status=error and
-        re-raised. A model without a price is refused unless it is marked `unmetered`; unmetered
-        calls are not counted against the limit.
+        If the org brought its own provider for `purpose` (flag `byo-llm-providers` on, its plan
+        allows it, the provider listed for this contour), that one is called instead, without
+        plan limits (the org pays its provider). Otherwise raises
+        ModelNotAllowed (non-retryable) if (provider, model, purpose) is not registered for
+        this contour or has no price and is not `unmetered`, SpendLimitExceeded /
+        UsageLimitExceeded (non-retryable) at the plan's limit. A rate-limited call (429) is
+        retried once per configured `fallback`; every attempt gets its own ai_calls row.
+        Provider errors are logged as status=error and re-raised.
         """
+        args = (purpose, messages, org_id, actor_id, prompt_template_id, prompt_template_version)
+        byo = self.byo is not None and await is_enabled(
+            "byo-llm-providers", user_id=actor_id or org_id, org_id=org_id
+        )
+        own = await self._byo_route(org_id, purpose) if byo else None
+        if own is not None:
+            return await self._call(own, *args, max_tokens)
+        tried: set[tuple[str, str]] = set()
+        while True:
+            allowed, route = self._route(purpose, provider, model)
+            if self.plans is not None:
+                if route.price is not None:
+                    await check_llm_budget(self.pool, self.plans, org_id, route.price.currency)
+                else:
+                    await check_llm_usage(self.pool, self.plans, org_id, self.unmetered)
+            try:
+                return await self._call(route, *args, max_tokens)
+            except Exception as err:
+                tried.add((provider, model))
+                fb = allowed.fallback
+                if (
+                    not is_rate_limited(err)
+                    or fb is None
+                    or (fb.provider, fb.model) in tried
+                    or not self._configured(fb.provider)
+                ):
+                    raise
+                log.warning(
+                    "%s/%s rate-limited, falling back to %s/%s",
+                    provider,
+                    model,
+                    *asdict(fb).values(),
+                )
+                provider, model = fb.provider, fb.model
+
+    def _route(self, purpose: str, provider: str, model: str) -> tuple[AllowedModel, _Route]:
         allowed = self.registry.get((provider, model))
         call = self.providers.get(provider)
         if allowed is None or purpose not in allowed.purposes or call is None:
             raise ModelNotAllowed(
                 f"{provider}/{model} is not allowed for {purpose!r} in contour {self.contour!r}"
             )
+        if not self._configured(provider):
+            # No base URL/key: LiteLLM would fall back to the environment or a vendor default.
+            raise ModelNotAllowed(
+                f"provider {provider!r} is not configured (docs/llm-providers.md)"
+            )
         price = self.price_of(provider, model)
         if price is None and not allowed.unmetered:
             # No price, no cost, no spend limit: refuse rather than let calls through unbilled.
             raise ModelNotAllowed(
-                f"{provider}/{model} has no price in the model registry; set pricePer1kTokens"
-                ' or mark it "unmetered": true'
+                f"{provider}/{model} has no price (registry or LiteLLM's cost map); set"
+                ' pricePer1kTokens or mark it "unmetered": true'
             )
+        return allowed, _Route(provider, model, call, None if allowed.unmetered else price)
 
-        if self.plans is not None and price is not None:
-            await check_llm_budget(self.pool, self.plans, org_id, price.currency)
+    def _configured(self, provider: str) -> bool:
+        cfg = self.configs.get(provider)
+        return cfg.configured if cfg else provider in self.providers
 
+    def price_of(self, provider: str, model: str) -> Price | None:
+        """The one place model prices are looked up (cost, spend limit, fail-closed check).
+
+        An explicit `pricePer1kTokens` in config/ai-models.json wins; otherwise LiteLLM's model
+        cost map for vendor APIs and aggregators (USD); otherwise None.
+        """
+        allowed = self.registry.get((provider, model))
+        if allowed is None:
+            return None
+        if allowed.price is not None:
+            return allowed.price
+        cfg = self.configs.get(provider)
+        found = price_from_litellm(cfg, model) if cfg else None
+        return Price(found[0], found[1], "USD") if found else None
+
+    async def _byo_route(self, org_id: str, purpose: str) -> _Route | None:
+        """The org's own enabled provider for this purpose, if its plan includes BYO."""
+        assert self.byo is not None
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+            row = await conn.fetchrow(
+                "select id::text as id, provider, base_url, api_key, models ->> $1 as model"
+                " from ai_providers where enabled and models ? $1 order by created_at limit 1",
+                purpose,
+            )
+            if row is None:
+                return None
+            if self.plans is not None and not await byo_allowed(conn, self.plans):
+                return None  # e.g. downgraded: the operator's models serve the org again
+        template = self.configs.get(row["provider"])
+        try:
+            if template is None:
+                raise BlockedEndpoint(f"unknown provider {row['provider']!r}")
+            if row["provider"] not in self.contour_providers:
+                # The contour decides where data may go, for the org's own keys too.
+                raise BlockedEndpoint(f"provider {row['provider']!r} is not in this contour")
+            key = row["api_key"] and decrypt_secret(
+                row["api_key"], f"{org_id}/{row['id']}", self.byo.keys
+            )
+            call = await byo_provider(
+                template,
+                base_url=row["base_url"],
+                api_key=key or None,
+                allowed=self.byo.allowed_networks,
+            )
+        except Exception as err:
+            # The org chose its own provider: never send its data elsewhere instead.
+            log.warning("org %s: own provider %s unusable: %s", org_id, row["id"], err)
+            raise ProviderBlocked(
+                "the organization's own AI provider cannot be used; check it in settings"
+            ) from None
+        return _Route(f"byo:{row['provider']}", row["model"], call, None)
+
+    async def _call(
+        self,
+        route: _Route,
+        purpose: str,
+        messages: Sequence[Message],
+        org_id: str,
+        actor_id: str | None,
+        prompt_template_id: str,
+        prompt_template_version: str,
+        max_tokens: int,
+    ) -> LlmResult:
+        provider, model, price = route.provider, route.model, route.price
         call_id = uuid.uuid4()
         now = datetime.now(UTC)
         prefix = f"{org_id}/{now:%Y/%m/%d}/{call_id}"
@@ -231,7 +365,7 @@ class Gateway:
                 row["trace_id"], row["span_id"] = f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
             started = time.perf_counter()
             try:
-                completion = await call(model, messages, max_tokens)
+                completion = await route.call(model, messages, max_tokens)
             except Exception as err:
                 # Class name only: provider error messages can echo request content.
                 span.set_attribute("error.type", type(err).__qualname__)
@@ -286,17 +420,10 @@ class Gateway:
             await self.posthog.capture_generation(row, messages, completion.text)
         return LlmResult(call_id, completion.text)
 
-    def price_of(self, provider: str, model: str) -> Price | None:
-        """The one place model prices are looked up (cost, spend limit, fail-closed check).
-
-        Today: config/ai-models.json for this contour. Swap the source here (e.g. a pricing
-        table from an LLM proxy) without touching the callers.
-        """
-        allowed = self.registry.get((provider, model))
-        return allowed.price if allowed else None
-
     async def _insert(self, row: dict[str, Any]) -> None:
-        model = {"purpose": row["purpose"], "model": row["request_model"]}
+        # An org's own provider can name any model: one label value for all of them.
+        byo = str(row["provider"]).startswith("byo:")
+        model = {"purpose": row["purpose"], "model": "byo" if byo else row["request_model"]}
         calls_counter.add(1, {**model, "provider": row["provider"], "status": row["status"]})
         latency_histogram.record(row["latency_ms"] / 1000, model)
         if row.get("cost") is not None and row.get("cost_currency") == "USD":
@@ -325,62 +452,3 @@ def _meta(c: Completion) -> dict[str, Any]:
         "id": c.response_id,
         "usage": {"input_tokens": c.input_tokens, "output_tokens": c.output_tokens},
     }
-
-
-# Providers. Clients are created on first use; keys come from ANTHROPIC_API_KEY/OPENAI_API_KEY.
-
-
-@cache
-def _anthropic() -> AsyncAnthropic:
-    return AsyncAnthropic()
-
-
-@cache
-def _openai() -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=settings.OPENAI_BASE_URL or None)
-
-
-async def anthropic_chat(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
-    system = "\n\n".join(m.content for m in messages if m.role == "system")
-    params: list[MessageParam] = [
-        UserMessageParam(role="user", content=m.content)
-        if m.role == "user"
-        else AssistantMessageParam(role="assistant", content=m.content)
-        for m in messages
-        if m.role != "system"
-    ]
-    res = await _anthropic().messages.create(
-        model=model, max_tokens=max_tokens, system=system or omit, messages=params
-    )
-    text = "".join(b.text for b in res.content if isinstance(b, TextBlock))
-    return Completion(text, res.model, res.usage.input_tokens, res.usage.output_tokens, res.id)
-
-
-def _openai_message(m: Message) -> ChatCompletionMessageParam:
-    if m.role == "system":
-        return ChatCompletionSystemMessageParam(role="system", content=m.content)
-    if m.role == "user":
-        return ChatCompletionUserMessageParam(role="user", content=m.content)
-    return ChatCompletionAssistantMessageParam(role="assistant", content=m.content)
-
-
-async def openai_compatible_chat(
-    model: str, messages: Sequence[Message], max_tokens: int
-) -> Completion:
-    res = await _openai().chat.completions.create(
-        model=model, max_tokens=max_tokens, messages=[_openai_message(m) for m in messages]
-    )
-    usage = res.usage
-    return Completion(
-        res.choices[0].message.content or "" if res.choices else "",
-        res.model,
-        usage.prompt_tokens if usage else None,
-        usage.completion_tokens if usage else None,
-        res.id,
-    )
-
-
-PROVIDERS: dict[str, Provider] = {
-    "anthropic": anthropic_chat,
-    "openai_compatible": openai_compatible_chat,
-}
