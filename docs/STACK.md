@@ -13,6 +13,7 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | -------------- | ------------- | ----------------: | ----------: | ---------: |
 | postgres       | default       |               147 |         512 |       6.4% |
 | redis          | default       |                 6 |          64 |       2.9% |
+| mailpit        | default       |                26 |          64 |       4.4% |
 | s3 (SeaweedFS) | default       |                52 |         256 |       5.1% |
 | temporal       | default       |               120 |         512 |       5.3% |
 | temporal-ui    | default       |                 8 |         128 |       0.0% |
