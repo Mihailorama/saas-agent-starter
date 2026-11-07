@@ -1,7 +1,7 @@
 // Better Auth tables (core + organization plugin). Regenerate after changing
 // auth plugins: `pnpm dlx @better-auth/cli generate` and reconcile here.
 // Not tenant-scoped by RLS: Better Auth reads them across orgs by user id.
-import { boolean, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at').notNull().defaultNow();
 const updatedAt = () =>
@@ -16,6 +16,8 @@ export const user = pgTable('user', {
   email: text('email').notNull().unique(),
   emailVerified: boolean('email_verified').notNull().default(false),
   image: text('image'),
+  /** twoFactor plugin: true once TOTP enrolment is verified. */
+  twoFactorEnabled: boolean('two_factor_enabled').default(false),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -68,6 +70,8 @@ export const organization = pgTable('organization', {
   logo: text('logo'),
   createdAt: timestamp('created_at').notNull(),
   metadata: text('metadata'),
+  /** Org policy, set by admins (routes/security.ts): members need 2FA to reach tenant data. */
+  requireTwoFactor: boolean('require_two_factor').notNull().default(false),
 });
 
 export const member = pgTable('member', {
@@ -96,3 +100,41 @@ export const invitation = pgTable('invitation', {
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' }),
 });
+
+// twoFactor plugin (better-auth/plugins): TOTP secret and backup codes, both encrypted.
+export const twoFactor = pgTable(
+  'two_factor',
+  {
+    id: text('id').primaryKey(),
+    secret: text('secret').notNull(),
+    backupCodes: text('backup_codes').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    verified: boolean('verified').default(true),
+    failedVerificationCount: integer('failed_verification_count').default(0),
+    lockedUntil: timestamp('locked_until'),
+  },
+  (t) => [index().on(t.secret), index().on(t.userId)],
+);
+
+// Passkey plugin (@better-auth/passkey): WebAuthn credentials (public keys only).
+export const passkey = pgTable(
+  'passkey',
+  {
+    id: text('id').primaryKey(),
+    name: text('name'),
+    publicKey: text('public_key').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    credentialID: text('credential_id').notNull(),
+    counter: integer('counter').notNull(),
+    deviceType: text('device_type').notNull(),
+    backedUp: boolean('backed_up').notNull(),
+    transports: text('transports'),
+    createdAt: timestamp('created_at'),
+    aaguid: text('aaguid'),
+  },
+  (t) => [index().on(t.userId), index().on(t.credentialID)],
+);

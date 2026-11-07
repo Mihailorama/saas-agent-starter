@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from '@tanstack/react-router';
-import { Layers } from 'lucide-react';
+import { useNavigate, useSearch } from '@tanstack/react-router';
+import { KeyRound, Layers } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -9,10 +9,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { track } from '@/lib/analytics';
 import { api } from '@/lib/api';
-import { authClient } from '@/lib/auth';
+import { authClient, safeRedirect } from '@/lib/auth';
 
 export function SignInPage() {
   const navigate = useNavigate();
+  // Set by the security page when a change needs a recent sign-in.
+  const { redirect } = useSearch({ from: '/sign-in' });
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [pending, setPending] = useState(false);
   const { data: config } = useQuery({
@@ -30,21 +32,34 @@ export function SignInPage() {
     }
   }
 
+  async function onPasskey() {
+    setPending(true);
+    const { error } = await authClient.signIn.passkey();
+    setPending(false);
+    if (error) return toast.error(error.message ?? 'Passkey sign-in failed');
+    track('passkey_signin_completed');
+    navigate({ href: safeRedirect(redirect) });
+  }
+
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const email = String(form.get('email'));
     const password = String(form.get('password'));
     setPending(true);
-    const { error } =
+    const { data, error } =
       mode === 'sign-in'
         ? await authClient.signIn.email({ email, password })
         : await authClient.signUp.email({ email, password, name: String(form.get('name')) });
     setPending(false);
     if (error) return toast.error(error.message ?? 'Something went wrong');
+    // Account with 2FA: the password was right, the second step is next (no session yet).
+    if (data && 'twoFactorRedirect' in data && data.twoFactorRedirect) {
+      return navigate({ to: '/two-factor', search: { redirect } });
+    }
     if (mode === 'sign-in') track('signin_completed');
     else track('signup_completed');
-    navigate({ to: '/' });
+    navigate({ href: safeRedirect(redirect) });
   }
 
   const signUp = mode === 'sign-up';
@@ -97,6 +112,17 @@ export function SignInPage() {
                 {signUp ? 'Create account' : 'Sign in'}
               </Button>
             </form>
+            {!signUp && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 w-full"
+                disabled={pending}
+                onClick={onPasskey}
+              >
+                <KeyRound className="size-4" aria-hidden /> Sign in with a passkey
+              </Button>
+            )}
             {config?.sso && !signUp && (
               <Button
                 type="button"

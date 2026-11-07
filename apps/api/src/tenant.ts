@@ -1,4 +1,4 @@
-import { auditLog, member, type Tx, withOrg } from '@app/db';
+import { auditLog, member, organization, type Tx, withOrg } from '@app/db';
 import { fromNodeHeaders } from 'better-auth/node';
 import { and, eq } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -7,7 +7,7 @@ import { db } from './db.ts';
 
 export type Role = 'member' | 'admin' | 'owner';
 const RANK: Record<string, number> = { member: 1, admin: 2, owner: 3 };
-export type Tenant = { userId: string; orgId: string; rank: number };
+export type Tenant = { userId: string; orgId: string; rank: number; twoFactor: boolean };
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -20,7 +20,8 @@ export const httpError = (statusCode: number, message: string) =>
 
 /**
  * preHandler for every tenant route: needs a session with an active organization
- * in which the user has at least role `min` (owner > admin > member).
+ * in which the user has at least role `min` (owner > admin > member), and 2FA if the
+ * org requires it (ADR 0017).
  */
 export const requireRole = (min: Role) => async (req: FastifyRequest, reply: FastifyReply) => {
   const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
@@ -28,15 +29,20 @@ export const requireRole = (min: Role) => async (req: FastifyRequest, reply: Fas
   const orgId = session.session.activeOrganizationId;
   if (!orgId) return reply.code(403).send({ error: 'no active organization' });
   const [m] = await db
-    .select({ role: member.role })
+    .select({ role: member.role, requireTwoFactor: organization.requireTwoFactor })
     .from(member)
+    .innerJoin(organization, eq(organization.id, member.organizationId))
     .where(and(eq(member.organizationId, orgId), eq(member.userId, session.user.id)));
   // Better Auth stores multiple roles comma-separated; the highest one counts.
   const rank = Math.max(0, ...(m?.role.split(',') ?? []).map((r) => RANK[r.trim()] ?? 0));
   if (rank < (RANK[min] ?? Number.POSITIVE_INFINITY)) {
     return reply.code(403).send({ error: 'forbidden' });
   }
-  req.tenant = { userId: session.user.id, orgId, rank };
+  const twoFactor = session.user.twoFactorEnabled === true;
+  if (m?.requireTwoFactor && !twoFactor) {
+    return reply.code(403).send({ error: 'two-factor authentication required' });
+  }
+  req.tenant = { userId: session.user.id, orgId, rank, twoFactor };
 };
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);

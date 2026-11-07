@@ -19,8 +19,10 @@ import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
+import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
 import { SignInPage } from '@/pages/sign-in';
+import { TwoFactorPage } from '@/pages/two-factor';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 
@@ -34,10 +36,22 @@ const rootRoute = createRootRoute({
   ),
 });
 
+const redirectSearch = (s: Record<string, unknown>): { redirect?: string } =>
+  typeof s.redirect === 'string' ? { redirect: s.redirect } : {};
+
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sign-in',
   component: SignInPage,
+  validateSearch: redirectSearch,
+});
+
+// Second sign-in step (2FA); reachable only with the challenge cookie from /sign-in.
+const twoFactorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/two-factor',
+  component: TwoFactorPage,
+  validateSearch: redirectSearch,
 });
 
 // Public: affected people must be able to read it without an account.
@@ -75,11 +89,18 @@ const aiCallsRoute = createRoute({
   component: AiCallsPage,
 });
 
+const securityRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/security',
+  component: SecurityPage,
+});
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
+    twoFactorRoute,
     aiTransparencyRoute,
-    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute]),
+    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute, securityRoute]),
   ]),
 });
 

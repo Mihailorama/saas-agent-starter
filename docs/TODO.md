@@ -1,5 +1,17 @@
 # Known limitations / backlog
 
+- **Org 2FA policy does not gate Better Auth's organization endpoints.** `requireRole`
+  (`apps/api/src/tenant.ts`) blocks tenant routes for members without 2FA, but
+  `/api/auth/organization/*` (invite, change role, remove member) is served by Better Auth
+  directly. Fix: a `before` hook in `apps/api/src/mfa.ts` that applies the same check to the
+  mutating organization paths of the active org (ADR 0017).
+- **TOTP codes can be replayed inside their window.** Better Auth 1.7.17 accepts a TOTP code that
+  was already used (the enrolment code also passes the next sign-in; ADR 0017). Fix: upstream
+  issue for "remember the last accepted time step", or a `before` hook in `apps/api/src/mfa.ts`
+  that stores the last accepted step per user and rejects codes at or below it.
+- **2FA/passkey audit rows are not atomic with the change** (`apps/api/src/mfa.ts`): written
+  after Better Auth commits, so a crash in between loses the row. Fix if it matters: Better Auth
+  database hooks inside its transaction once they cover plugin models.
 - **Transactional outbox for workflow starts.** `POST /api/projects` starts the Temporal
   workflow after commit; if Temporal is unreachable at that moment the start is logged and lost
   (`apps/api/src/routes/projects.ts`). Fix: write an outbox row in the same transaction and have a
