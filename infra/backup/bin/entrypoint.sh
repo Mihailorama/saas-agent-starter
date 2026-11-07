@@ -14,6 +14,7 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' ${PGBACKREST_REPO1_STORAGE_CA_FIL
 log "create bucket $PGBACKREST_REPO1_S3_BUCKET: HTTP $code (409/403 are fine if it already exists)"
 
 pgbackrest stanza-create
+touch "$PGBACKREST_PG1_PATH/.pgbackrest-ready" # starts WAL archiving (compose.backup.yaml)
 if [ "$(pgbackrest info --output=json | jq '.[0].backup | length')" = 0 ]; then
   log "empty repository: first full backup and restore check"
   /backup/bin/backup.sh full

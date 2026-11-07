@@ -43,7 +43,10 @@ x-pgbackrest: &pgbackrest
 
 services:
   # Same server, now with continuous WAL archiving. archive_timeout bounds the data loss window
-  # (RPO) on a quiet server; a busy one fills 16 MB segments sooner.
+  # (RPO) on a quiet server; a busy one fills 16 MB segments sooner. Archiving waits for the
+  # sidecar's marker (written after stanza-create): until then the command fails at once and
+  # Postgres keeps the WAL, instead of archive-push timing out against a repository that is not
+  # there yet (first start, initdb's temporary server).
   postgres:
     <<: *image
     command:
@@ -51,7 +54,7 @@ services:
       - -c
       - archive_mode=on
       - -c
-      - archive_command=pgbackrest archive-push %p
+      - archive_command=test -f .pgbackrest-ready && pgbackrest archive-push %p
       - -c
       - archive_timeout=${BACKUP_ARCHIVE_TIMEOUT:-60}
     environment:

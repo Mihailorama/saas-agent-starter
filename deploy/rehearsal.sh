@@ -21,6 +21,8 @@ done
 work=$(mktemp -d)
 server=$work/server
 cleanup() {
+  local rc=$?
+  [ "$rc" = 0 ] || [ ! -f "$server/.env" ] || (cd "$server" && docker compose logs --tail 40) || true
   [ "${KEEP:-}" = 1 ] && { echo "kept: $server (docker compose down -v there)"; return; }
   if [ -f "$server/.env" ]; then (cd "$server" && docker compose down -v --remove-orphans -t 5) || true; fi
   for v in v1 v2 v3; do docker image rm -f "$REPO"/{api,worker,web}:$v >/dev/null 2>&1 || true; done
