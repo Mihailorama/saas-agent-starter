@@ -9,30 +9,30 @@ sign-up / create-project flows: the whole default stack (built `api`, `worker`, 
 listed. "Limit" is the `mem_limit` in `docker-compose.yml`, set to roughly 1.5-4x the
 observed use; raise it when a service is OOM-killed (`docker compose ps` shows exit code 137).
 
-| Service           | Profile       | Memory used (MiB) | Limit (MiB) | CPU (idle) |
-| ----------------- | ------------- | ----------------: | ----------: | ---------: |
-| postgres          | default       |               147 |         512 |       6.4% |
-| redis             | default       |                 6 |          64 |       2.9% |
-| mailpit           | default       |                26 |          64 |       4.4% |
-| s3 (SeaweedFS)    | default       |                52 |         256 |       5.1% |
-| temporal          | default       |               120 |         512 |       5.3% |
-| temporal-ui       | default       |                 8 |         128 |       0.0% |
-| api               | default       |               142 |         384 |       0.0% |
-| worker            | default       |               129 |         384 |       0.1% |
-| web (nginx)       | default       |                 8 |          64 |       0.0% |
-| otel-collector    | observability |               111 |         384 |       6.1% |
-| jaeger            | observability |                30 |         512 |       0.2% |
-| prometheus        | observability |               108 |         512 |       1.0% |
-| loki              | observability |               116 |         512 |       1.7% |
-| grafana           | observability |               305 |         512 |       2.5% |
-| glitchtip         | glitchtip     |               182 |         512 |       2.6% |
-| chatwoot          | support       |               411 |        1024 |       1.4% |
-| chatwoot-sidekiq  | support       |               445 |        1024 |       0.3% |
-| chatwoot-postgres | support       |                70 |         512 |       5.5% |
-| --------------    | ------------- | ----------------: | ----------: | ---------: |
-| site (nginx)      | marketing     |                 7 |          64 |       0.0% |
-| postiz            | marketing     |             1,264 |        2048 |       ~20% |
-| serpbear          | marketing     |                71 |         512 |       0.0% |
+| Service          | Profile       | Memory used (MiB) | Limit (MiB) | CPU (idle) |
+| ---------------- | ------------- | ----------------: | ----------: | ---------: |
+| postgres         | default       |               147 |         512 |       6.4% |
+| redis            | default       |                 6 |          64 |       2.9% |
+| mailpit          | default       |                26 |          64 |       4.4% |
+| s3 (SeaweedFS)   | default       |                52 |         256 |       5.1% |
+| temporal         | default       |               120 |         512 |       5.3% |
+| temporal-ui      | default       |                 8 |         128 |       0.0% |
+| api              | default       |               142 |         384 |       0.0% |
+| worker           | default       |               129 |         512 |       0.1% |
+| web (nginx)      | default       |                 8 |          64 |       0.0% |
+| otel-collector   | observability |               111 |         384 |       6.1% |
+| jaeger           | observability |                30 |         512 |       0.2% |
+| prometheus       | observability |               108 |         512 |       1.0% |
+| loki             | observability |               116 |         512 |       1.7% |
+| grafana          | observability |               305 |         512 |       2.5% |
+| glitchtip        | glitchtip     |               182 |         512 |       2.6% |
+| pii (Presidio)   | pii           |           136-189 |         384 |       0.0% |
+| chatwoot         | support       |               411 |        1024 |       1.4% |
+| chatwoot-sidekiq | support       |               445 |        1024 |       0.3% |
+| --------------   | ------------- | ----------------: | ----------: | ---------: |
+| site (nginx)     | marketing     |                 7 |          64 |       0.0% |
+| postiz           | marketing     |             1,264 |        2048 |       ~20% |
+| serpbear         | marketing     |                71 |         512 |       0.0% |
 
 Since ADR 0024 the worker imports LiteLLM: measured 2026-11-07, the worker process' RSS after
 importing the gateway is ~194 MiB (~81 MiB without LiteLLM), so its limit is now 512 MiB. The
@@ -41,8 +41,8 @@ process per running request (Claude Code and Gemini CLI are Node programs); its 
 fits a few concurrent runs, raise it with the subscriptions' `concurrency`. The `local-llm`
 profiles are sized by the model (docs/llm-providers.md "VRAM sizing").
 
-Totals (used / limit): default stack ~612 / 2304 MiB, observability ~670 / 2432 MiB,
-GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.1 GiB. Jaeger keeps traces in memory, so its
+Totals (used / limit): default stack ~612 / 2432 MiB, observability ~670 / 2432 MiB,
+GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.2 GiB. Jaeger keeps traces in memory, so its
 use grows with traffic until the limit; Prometheus and Loki grow with retention (volumes, not
 RAM, for Loki). The permissive twin drops Loki and Grafana (~420 MiB used); Valkey uses about
 what Redis does.
@@ -54,12 +54,30 @@ restart with no traffic (1,381 MiB after a smoke test: register, one draft); its
 Postiz's Temporal workers raise `temporal` to ~228 MiB and Postgres grows ~25 MiB; Redis is
 unchanged. Marketing profile ~1.3 / 2.6 GiB (used / limit) on top of the shared services.
 The `support` rows (Chatwoot CE, measured 2026-11-07 after start-up, separately from the snapshot
-above) peak at ~442 / 572 / 110 MiB under a small load: plan ~1.2 GiB for the profile
-(docs/support.md).
+above) peak at ~442 / 572 MiB under a small load: plan ~1.1 GiB for the profile
+(docs/support.md). Since Chatwoot's database moved onto the stack's Postgres (2026-11-07, same
+host, idle ~3 minutes after start, postgres + redis + s3 + chatwoot + chatwoot-sidekiq): the two
+Postgres containers used 25 + 90 = 115 MiB, the one shared server now uses 71 MiB, so the
+profile needs ~44 MiB less RAM and 512 MiB less `mem_limit` budget.
 
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then
 `docker stats --no-stream $(docker compose --profile observability --profile glitchtip ps -q)`.
+
+## PII redaction (Presidio)
+
+Measured 2026-11-07 on the same host (docs/support.md "Personal data"), `en_core_web_sm` only:
+
+- Worker with support triage configured: it loads Presidio at start, ~270 MiB RSS against
+  ~169 MiB without triage (host process, `ps`), so about **+100 MiB**; `mem_limit` raised from
+  384 to 512 MiB. Without triage nothing is loaded.
+- `pii` sidecar (`--profile pii`, worker image, `python -m worker.pii`): healthy 15 s after start,
+  136 MiB idle, 143 MiB after ten ~2.6 KB requests, up to 189 MiB seen (`docker stats`); ~20 ms
+  per short text.
+- Each additional language: one more small spaCy model, ~160-190 MiB (an earlier measurement the
+  same day: ~360 MiB for English plus one more language; not re-run here).
+- Image: the worker venv is 565 MB, of which ~325 MB are Presidio, spaCy, numpy and the model;
+  worker image 927 MB.
 
 ## Backup overlay
 

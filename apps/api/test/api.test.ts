@@ -577,6 +577,35 @@ describe('PostHog webhook -> GitHub issue', () => {
       Object.assign(env, { GITHUB_TOKEN: undefined, GITHUB_REPO: undefined });
     }
   });
+
+  it('redacts answers with the PII sidecar and fails closed when it is down', async () => {
+    Object.assign(env, { PII_REDACT_URL: 'http://pii.test:8000' });
+    const sidecar: string[][] = [];
+    let up = true;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      expect(String(input)).toBe('http://pii.test:8000/redact'); // never GitHub in a dry run
+      if (!up) throw new TypeError('fetch failed');
+      const { texts } = JSON.parse(String(init?.body)) as { texts: string[] };
+      sidecar.push(texts);
+      return Response.json({ texts: texts.map(() => 'Upload fails, call [name] at [phone]') });
+    });
+    try {
+      const secret = env.POSTHOG_WEBHOOK_SECRET!;
+      const filed = (await hook(secret, survey)).json();
+      expect(filed).toMatchObject({ action: 'dry-run', label: 'from-users' });
+      expect(filed.body).toContain('call [name] at [phone]');
+      expect(sidecar).toEqual([['Upload fails, mail me at a@example.com']]);
+      up = false;
+      const down = await hook(secret, survey);
+      expect(down.statusCode).toBe(503);
+      expect(down.body).not.toContain('example.com');
+      // Alerts carry no user text and do not need the sidecar.
+      expect((await hook(secret, alert)).statusCode).toBe(200);
+    } finally {
+      fetchMock.mockRestore();
+      Object.assign(env, { PII_REDACT_URL: undefined });
+    }
+  });
 });
 
 describe('service desk (Chatwoot)', () => {

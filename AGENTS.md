@@ -75,7 +75,8 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log,
                       secret decryption, auto-disable, retention (daily Temporal Schedule)
   worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
-  worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
+  worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts (posthog SDK)
+  worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
   worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
@@ -98,7 +99,8 @@ compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
 compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy (docs/deploy.md)
 deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
 compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
-infra/backup/       backup image (postgres + pgBackRest/rclone) and its scripts (ADR 0015)
+infra/backup/       Postgres image (+ pgvector) and backup image (+ pgBackRest/rclone), scripts (ADR 0015)
+infra/chatwoot/     Chatwoot initializer: attachments served through Chatwoot (docs/support.md)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
@@ -431,8 +433,8 @@ Details: docs/releases.md.
   `deny.toml`): permissive licenses plus MPL-2.0 (file-level copyleft, no obligations on our
   code while unmodified). GPL/LGPL/AGPL/EUPL/SSPL/BUSL and other copyleft or source-available
   licenses stay banned for code dependencies (infrastructure containers are separate, see
-  docs/LICENSES.md). Never add an exception to make the gate pass; ask a human
-  (docs/adr/0005-license-policy.md).
+  docs/LICENSES.md). Never add an exception, a license or an `ALIASES` entry to make the gate
+  pass; ask a human (docs/adr/0005-license-policy.md).
 - We never modify dependency files: no `pnpm patch`/`patch-package`, no edits in
   `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
   go upstream (issue or PR); until a release lands, work around it in our own code.
