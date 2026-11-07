@@ -33,9 +33,9 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | site (nginx)     | marketing     |                 7 |          64 |       0.0% |
 | postiz           | marketing     |             1,264 |        2048 |       ~20% |
 | serpbear         | marketing     |                71 |         512 |       0.0% |
-| twenty            | crm           |               650 |        1536 |       0.9% |
-| twenty-worker     | crm           |               792 |        1024 |       0.8% |
-| caldiy            | booking       |   TODO_CALDIY_ROW |
+| twenty           | crm           |               650 |        1536 |       0.9% |
+| twenty-worker    | crm           |               792 |        1024 |       0.8% |
+| caldiy           | booking       |   TODO_CALDIY_ROW |
 
 Since ADR 0024 the worker imports LiteLLM: measured 2026-11-07, the worker process' RSS after
 importing the gateway is ~194 MiB (~81 MiB without LiteLLM), so its limit is now 512 MiB. The
