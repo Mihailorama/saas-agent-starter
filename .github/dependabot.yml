@@ -1,8 +1,10 @@
 version: 2
+# Conventional PR titles (chore(deps): bump ...), see docs/releases.md.
 updates:
   - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly }
+    commit-message: { prefix: chore, include: scope }
     groups: { npm: { patterns: ["*"], update-types: [minor, patch] } }
     ignore:
       # Types track the Node runtime major (22).
@@ -10,17 +12,22 @@ updates:
   - package-ecosystem: uv
     directory: /services/worker-py
     schedule: { interval: weekly }
+    commit-message: { prefix: chore, include: scope }
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: weekly }
+    commit-message: { prefix: chore, include: scope }
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    commit-message: { prefix: chore, include: scope }
   - package-ecosystem: docker
     directories: [/apps/api, /apps/web, /services/worker-py, /infra/backup]
     schedule: { interval: weekly }
+    commit-message: { prefix: chore, include: scope }
     ignore:
       - { dependency-name: node, update-types: [version-update:semver-major] }
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly }
+    commit-message: { prefix: chore, include: scope }
