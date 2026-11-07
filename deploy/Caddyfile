@@ -1,0 +1,32 @@
+# Ingress for compose.prod.yaml (ADR 0016). {$VAR} comes from the caddy service environment.
+# CADDY_TLS: the ACME account e-mail (public certificates; ports 80 and 443 must be reachable),
+# or "internal" for Caddy's own CA (rehearsals, intranets: clients must trust
+# /data/caddy/pki/authorities/local/root.crt from the caddy_data volume).
+# Edited? `pnpm run deploy` copies it and reloads Caddy without dropping connections.
+
+{$APP_DOMAIN} {
+	tls {$CADDY_TLS}
+	encode zstd gzip
+
+	# The web container already sends CSP, HSTS, nosniff and Referrer-Policy on every response
+	# (apps/web/nginx.conf.template, the single source for the CSP). `?` only fills a header
+	# that is missing, so the two never disagree.
+	header {
+		-Server
+		?Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		?X-Content-Type-Options nosniff
+		?Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# Holds requests (instead of 502) while the web container is recreated during a deploy.
+	reverse_proxy web:8080 {
+		lb_try_duration 10s
+	}
+}
+
+# Profile s3 (SeaweedFS on this host): presigned browser uploads need a public S3 endpoint.
+# Uncomment, set S3_PUBLIC_ENDPOINT=https://s3.example.com and S3_PUBLIC_ORIGIN to the same.
+# s3.example.com {
+# 	tls {$CADDY_TLS}
+# 	reverse_proxy s3:8333
+# }

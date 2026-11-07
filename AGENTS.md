@@ -56,8 +56,11 @@ crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
                     rules (infra/otel), Grafana datasources + dashboards (infra/grafana)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
+compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy (docs/deploy.md)
+deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
-                    check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels)
+                    check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
+                    deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 ```
@@ -87,6 +90,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
 - PostHog Cloud for product analytics, replay, surveys, AI feedback; Umami (MIT) self-hosted
   where data must stay in place (ADR 0012).
+- Deploy: images by digest + `compose.prod.yaml` + Caddy (auto TLS) + SOPS/age env files, run
+  with compose over SSH; Coolify/Kubernetes/on-prem are options on the same core (ADR 0016).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
 
@@ -116,6 +121,11 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 6. `pnpm check`.
 
 A Claude Code command with the same steps: `/add-resource <name>`.
+
+Schema changes are expand/contract (docs/deploy.md "Schema changes"): the previous release
+must keep working on the new schema. Drops, renames, type changes and new NOT NULL columns
+without a default go into a later release's migration marked `-- contract: <reason>`;
+`pnpm check:migrations` enforces it. Never weaken the check to pass it.
 
 ## Recipe: add a background workflow
 
@@ -244,7 +254,8 @@ Details: docs/product-analytics.md, ADR 0012.
 ## Never
 
 - Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`.
-- Commit `.env`, credentials, media/binary files, or generated `dist/`, `target/`, `.venv/`.
+- Commit `.env`, credentials, a decrypted `deploy/env/*.env`, media/binary files, or generated
+  `dist/`, `target/`, `.venv/`.
 - Add Next.js/Vercel-specific code, or GPL/LGPL/AGPL/SSPL/BSL code dependencies (infra
   containers run unmodified are exempt, see docs/LICENSES.md).
 - Patch, fork-in-place or edit a dependency's files (fixes go upstream).

@@ -75,6 +75,35 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose build api web worker
 
+  # The production deploy path end to end on the runner (deploy/rehearsal.sh, docs/deploy.md):
+  # SOPS-encrypted env, Caddy internal CA, migrate, deploy v1 -> v2, rollback, failing migration.
+  deploy-rehearsal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install sops and age (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          bin=$RUNNER_TEMP/bin && mkdir -p "$bin" && cd "$RUNNER_TEMP"
+          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          curl -fsSLO https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  sops" | sha256sum -c
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  age-v1.3.2-linux-amd64.tar.gz" | sha256sum -c
+          tar xzf age-v1.3.2-linux-amd64.tar.gz
+          install -m 755 sops age/age age/age-keygen "$bin/"
+          echo "$bin" >> "$GITHUB_PATH"
+      - name: Docker with the containerd image store (local images get digests)
+        run: |
+          if [[ $(docker info 2>/dev/null) != *io.containerd.snapshotter* ]]; then
+            conf=/etc/docker/daemon.json
+            { sudo cat "$conf" 2>/dev/null || echo '{}'; } |
+              jq '.features["containerd-snapshotter"] = true' | sudo tee "$conf.new" >/dev/null
+            sudo mv "$conf.new" "$conf" && sudo systemctl restart docker
+          fi
+          docker info | grep -i 'driver-type'
+      - run: deploy/rehearsal.sh
+
   gitleaks:
     runs-on: ubuntu-24.04
     steps:

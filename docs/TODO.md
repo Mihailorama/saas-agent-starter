@@ -64,3 +64,23 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Make the pre-migration backup mandatory.** `scripts/deploy.mjs` calls `pnpm run backup:now`
+  (env `DEPLOY_ENV=<env>`) between staging and migrating, but only warns and continues when the
+  script is missing (it is being added on the `backups` branch). Once it lands: fail the deploy
+  without it, agree its interface (which environment/database it backs up, where the dump goes),
+  and add pnpm setup to the `deploy` job in `.github/workflows/release.yml` (it has none today, so
+  the hook would fail there and abort the deploy). docs/deploy.md section 6.
+- **Short downtime on single-host deploys.** `docker compose up` recreates `api`/`web` in place
+  (seconds without the API; Caddy only holds requests to `web`). Zero-downtime on one host needs
+  two `api` replicas and a health-aware switch (e.g. a blue/green project pair behind Caddy).
+  Tier L on Kubernetes gets rolling updates. docs/deploy.md "Tiers".
+- **No Helm chart for tier L / customer clusters.** What it needs is listed in docs/deploy.md
+  "Kubernetes / Helm" (migrate as pre-upgrade hook Job, probes, Ingress + cert-manager, secrets).
+- **Production observability.** `compose.prod.yaml` has no observability profile; the dev one
+  (`docker-compose.yml`) mounts repo files and runs Grafana without login. Add a production
+  variant (authenticated Grafana behind Caddy, retention) or document an external backend.
+- **Release images are linux/amd64 only** (`.github/workflows/release.yml`). Add
+  `--platform linux/amd64,linux/arm64` (and QEMU/arm runners) when an arm64 host is needed.
+- **SSH transport of `scripts/deploy.mjs` is not exercised by the rehearsal** (it uses
+  `DEPLOY_HOST=local`, same script on `sh -s` instead of `ssh host sh -s`). Run the first real
+  deploy to a staging host and note the result in docs/deploy.md.

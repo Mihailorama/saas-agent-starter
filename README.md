@@ -16,7 +16,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
-- **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
+- **Ops**: Docker Compose locally; production from versioned images (GHCR, by digest) with
+  Caddy auto-TLS, SOPS-encrypted env files and one-command deploy/rollback over SSH, Coolify or
+  Kubernetes as options ([docs/deploy.md](docs/deploy.md)), OpenTelemetry everywhere,
   `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
   dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
   permissive-license twin of the whole stack, SBOMs + third-party notices, CI with gitleaks,
@@ -84,6 +86,13 @@ Format, lint, typecheck, tests (TS, Python, Rust; integration tests hit the real
 services, including a test proving tenant A cannot read tenant B even with a buggy query),
 license gate across npm, PyPI and crates.io, and a Playwright smoke test.
 `pnpm bench` prints the Rust vs Python speedup of the example hot path.
+
+## Deploy
+
+Tag a release (`git tag v1.0.0 && git push origin v1.0.0`): CI pushes the images to GHCR. Then
+`pnpm run deploy -- production --version v1.0.0` runs migrations, starts the stack behind Caddy
+with automatic HTTPS and checks health; `pnpm run deploy -- production --rollback` goes back to
+the previous digests. Setup, secrets, other targets: [docs/deploy.md](docs/deploy.md).
 
 ## Configuration
 
