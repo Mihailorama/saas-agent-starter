@@ -66,7 +66,7 @@ Notes:
   `postgres` image.
 - Product-analytics code dependencies (checked by the gate like every npm package):
   `posthog-js` is `Apache-2.0 AND MIT` (both permissive; ship the notices), `@langfuse/browser`
-  is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
+  is MIT, `vanilla-cookieconsent` (consent banner) is MIT with no dependencies. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
 - Feature-flag code dependencies ([docs/feature-flags.md](feature-flags.md), checked by the gate):
   `posthog-node` (MIT, API); `posthog-js` (above) in the web. The worker calls PostHog's `/flags`

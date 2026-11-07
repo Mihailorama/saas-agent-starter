@@ -54,7 +54,7 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await expect(page.getByText('No AI calls match these filters.')).toBeVisible();
 
   // No third-party sink configured in tests: nothing to consent to, no foreign hosts.
-  await expect(page.getByRole('region', { name: 'Analytics consent' })).toHaveCount(0);
+  await expect(page.locator('#cc-main')).toHaveCount(0);
   expect([...hosts]).toEqual(['localhost']);
 });
 

@@ -13,7 +13,7 @@ holds only the contract (what we track, which journeys matter) and the glue. Dec
 | ---------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Event catalog          | `config/events.json`                                        | Every event name, description, props and PII flag                            |
 | `track()`              | `apps/web/src/lib/analytics.ts`                             | One typed call, fans out to the configured sinks                             |
-| Consent banner         | `apps/web/src/components/consent-banner.tsx`                | Third-party sinks load only after "Allow"                                    |
+| Consent                | vanilla-cookieconsent, set up in `analytics.ts`             | Opt-in/opt-out per region, GPC, Google Consent Mode v2 ([below](#consent))   |
 | CI rail                | `pnpm check:events` (in `pnpm check`)                       | Fails on uncatalogued events/props or non-literal names                      |
 | Journeys (CJM as code) | `config/journeys.json`                                      | Ordered steps, conversion window, minimum conversion, step time targets      |
 | Sync                   | `pnpm journeys:sync [--dry-run]`                            | Creates/updates PostHog funnels, alerts, surveys, webhooks and Umami funnels |
@@ -102,6 +102,55 @@ request at all; the Playwright smoke test asserts that every request goes to our
 - GA4: CSP origins per Google's [CSP guide](https://developers.google.com/tag-platform/security/guides/csp).
 - Replacement criteria: they exist because marketing teams ask for them; drop either when the
   team does not use it. They are never the source of truth for journeys.
+
+### Consent
+
+Third-party sinks sit behind [vanilla-cookieconsent](https://github.com/orestbida/cookieconsent)
+(MIT, no dependencies), loaded only when one of them is configured. One optional category,
+`analytics`; "necessary" is always on. Self-hosted Umami is not gated (cookieless, first-party).
+
+- **opt-in** (default; GDPR + ePrivacy/PECR in the EU, EEA and UK, and wherever the region is
+  unknown): nothing third-party loads until "Allow". "Only necessary" has the same weight.
+  "Cookie settings" (user menu, and under the sign-in card) reopens the choices; withdrawing
+  clears the sinks' cookies and reloads the page, so no sink keeps running.
+- **opt-out** (US state privacy laws such as CCPA/CPRA): sinks start on the first visit, the
+  banner informs, and the link reads "Do Not Sell or Share My Personal Information". A Global
+  Privacy Control signal (`navigator.globalPrivacyControl`, `respectGpc`) counts as opting out
+  until the user decides otherwise; a saved choice always wins over the signal.
+- **Google Consent Mode v2**, basic mode: gtag.js loads only after consent and first sets
+  `gtag('consent', 'default', ...)` with everything `denied`, then grants `analytics_storage`.
+  `ad_storage`, `ad_user_data` and `ad_personalization` stay `denied`: there is no ads category.
+  If you run Google Ads, add a category and map those three signals to it.
+- Bots (`navigator.webdriver`) get no banner and no sink (the library's `hideFromBots`).
+- Events marked `pii` never reach third parties in either regime.
+
+Choosing the regime needs no geo-IP service. The `web` container's nginx decides per request and
+writes `<meta name="consent-mode">` into `index.html`:
+
+| Env (web container)         | Default        | Meaning                                                                    |
+| --------------------------- | -------------- | -------------------------------------------------------------------------- |
+| `CONSENT_MODE`              | `opt-in`       | Regime for every visitor, unless a country below matches                   |
+| `CONSENT_COUNTRY_HEADER`    | `cf_ipcountry` | nginx name of the edge's country header (`CF-IPCountry` on Cloudflare)     |
+| `CONSENT_OPT_OUT_COUNTRIES` | empty          | Countries that get opt-out, as a regex alternation of ISO codes, e.g. `US` |
+
+- EU or unknown audience: change nothing. US-only deployment: `CONSENT_MODE=opt-out`. Mixed
+  traffic behind Cloudflare (`CF-IPCountry`, every plan including Free, once "IP geolocation" is
+  on): `CONSENT_OPT_OUT_COUNTRIES=US`.
+  CloudFront: `CONSENT_COUNTRY_HEADER=cloudfront_viewer_country` and add `CloudFront-Viewer-Country`
+  to the origin request policy. Any other proxy that sets a country header works the same way.
+- Trust the header only from your edge. If the app is reachable without it, strip the header at
+  your proxy; otherwise a visitor can pick a regime for themselves.
+- `index.html` now differs per country: keep HTML out of shared caches or add the country to the
+  cache key.
+- The Vite dev server has no nginx and is always opt-in.
+- Limits, from the library's docs: it is not a CMP and keeps the choice only in its own cookie
+  (no server-side consent records; the `consent_set` event is the trail you get), it does not
+  implement the IAB TCF, and Google AdSense, Ad Manager and AdMob do not work with it.
+- Replacement criteria: replace if releases stop (v3.1.0 in 2025-02 was followed by a 20-month
+  gap before v3.2.0-v3.3.0 in 2026-10/11; one maintainer) or if a client needs the IAB TCF,
+  consent records or Google's ad products; then use a certified CMP. Checked 2026-11-07: Klaro
+  (BSD-3-Clause, last npm release 0.7.21 on 2024-03-26, last commit 2025-03-27) and Osano's
+  `cookieconsent` (MIT, last npm release 3.1.1 on 2019-05-23) were less maintained.
 
 ### AI-answer feedback (thumbs up/down)
 

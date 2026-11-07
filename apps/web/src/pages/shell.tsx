@@ -10,6 +10,7 @@ import {
   Moon,
   Plus,
   ScrollText,
+  ShieldCheck,
   Sparkles,
   Sun,
 } from 'lucide-react';
@@ -36,7 +37,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { identify, track } from '@/lib/analytics';
+import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -162,6 +163,11 @@ function UserMenu() {
           {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
           {theme === 'dark' ? 'Light mode' : 'Dark mode'}
         </DropdownMenuItem>
+        {privacyChoicesLabel && (
+          <DropdownMenuItem onSelect={showPrivacyChoices}>
+            <ShieldCheck className="size-4" /> {privacyChoicesLabel}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={async () => {

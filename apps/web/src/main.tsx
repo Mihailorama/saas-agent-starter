@@ -11,7 +11,6 @@ import {
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ConsentBanner } from '@/components/consent-banner';
 import { Toaster } from '@/components/ui/sonner';
 import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
@@ -31,7 +30,6 @@ const rootRoute = createRootRoute({
     <>
       <Outlet />
       <Toaster richColors closeButton />
-      <ConsentBanner />
     </>
   ),
 });

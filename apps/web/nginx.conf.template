@@ -1,3 +1,11 @@
+# Consent regime per request (docs/product-analytics.md#consent): CONSENT_MODE, except opt-out for
+# the countries in CONSENT_OPT_OUT_COUNTRIES (regex alternation, e.g. US|CA) per the edge's header.
+map $http_${CONSENT_COUNTRY_HEADER} $consent_mode {
+  default ${CONSENT_MODE};
+  "" ${CONSENT_MODE}; # no header; also stops an empty country list from matching
+  "~^(${CONSENT_OPT_OUT_COUNTRIES})$" opt-out;
+}
+
 server {
   listen 8080;
   root /usr/share/nginx/html;
@@ -20,5 +28,8 @@ server {
 
   location / {
     try_files $uri /index.html;
+    # Read by apps/web/src/lib/analytics.ts; HTML responses only (index.html).
+    sub_filter '<head>' '<head><meta name="consent-mode" content="$consent_mode">';
+    sub_filter_once on;
   }
 }

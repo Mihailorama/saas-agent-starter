@@ -90,3 +90,14 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **PII redaction with Microsoft Presidio: needs an ADR 0005 decision.** The feedback-to-issue
+  hook (`apps/api/src/routes/hooks.ts`) and the browser `track()` masks only emails/UUIDs with a
+  bounded regex. Presidio (MIT, `en_core_web_sm`) would also catch names, phones, cards, IBANs and
+  IPs, measured 2026-11-07 at ~165-200 MiB RSS for English (~360 MiB with a second language), but
+  `pnpm check:licenses` rejects 6 of its transitive packages: `numpy` (has a `Zlib` part), `regex`
+  (`CNRI-Python`), and `Jinja2`, `blis`, `requests-file`, `shellingham`, whose metadata strings
+  ("BSD License", "Apache 2.0", "ISC License") the gate does not map. The official
+  `mcr.microsoft.com/presidio-analyzer` image avoids the code gate but uses `en_core_web_lg`:
+  ~740 MiB RSS idle. Unblock: the owner adds `Zlib` and `CNRI-Python` to the allowlist and the
+  three strings as aliases (ADR 0005), then run Presidio as an opt-in sidecar from the worker
+  image (`python -m worker.pii`, compose profile `pii`), fail closed in the hook when it is down.
