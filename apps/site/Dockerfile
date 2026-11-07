@@ -22,6 +22,8 @@ RUN pnpm --filter site build
 FROM nginxinc/nginx-unprivileged:1.29-alpine
 # Space-separated origins of the enabled analytics sinks, added to the CSP (empty = none).
 ENV ANALYTICS_ORIGINS=""
+# Consent regime, as in the web container (docs/product-analytics.md#consent).
+ENV CONSENT_MODE=opt-in CONSENT_COUNTRY_HEADER=cf_ipcountry CONSENT_OPT_OUT_COUNTRIES=""
 COPY apps/site/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/apps/site/dist /usr/share/nginx/html
 EXPOSE 8080

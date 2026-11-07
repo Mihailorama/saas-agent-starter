@@ -59,12 +59,24 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
-- **Make the pre-migration backup mandatory.** `scripts/deploy.mjs` calls `pnpm run backup:now`
-  (env `DEPLOY_ENV=<env>`) between staging and migrating, but only warns and continues when the
-  script is missing (it is being added on the `backups` branch). Once it lands: fail the deploy
-  without it, agree its interface (which environment/database it backs up, where the dump goes),
-  and add pnpm setup to the `deploy` job in `.github/workflows/release.yml` (it has none today, so
-  the hook would fail there and abort the deploy). docs/deploy.md section 6.
+- **Backups: off-site storage and alert routing are deployment steps.** The backup overlay
+  (`compose.backup.yaml`, docs/backups.md) defaults to `backup-s3` on the same host, which does
+  not survive losing that host. Each deployment must set `BACKUP_S3_*` to another provider or
+  region, store `BACKUP_ENCRYPTION_PASSPHRASE` off the server, and route the `backups` alerts
+  (Alertmanager, see "Alert notifications" above).
+- **Backups: Chatwoot is not backed up.** The `support` profile runs its own Postgres
+  (`chatwoot-postgres`, `pgvector/pgvector`, volume `chatwoot-pgdata`) and keeps attachments in
+  the `chatwoot-storage` volume, so pgBackRest and the bucket copy (compose.backup.yaml) do not
+  reach customer conversations. Options: move Chatwoot's database onto the main Postgres server
+  (needs the pgvector extension in `infra/backup/Dockerfile` and the base image) so it is covered
+  automatically, or a second pgBackRest stanza for `chatwoot-postgres`; and switch Chatwoot's
+  `ACTIVE_STORAGE_SERVICE` to S3 with its bucket in `BACKUP_APP_BUCKETS`.
+- **Backups: a second repository.** pgBackRest supports `repo2` (e.g. a second provider or
+  object-locked bucket). Add `PGBACKREST_REPO2_*` to `compose.backup.yaml` if one off-site copy is
+  not enough; the restore check would then also need a run per repository.
+- **Backups: Grafana dashboard.** Backup and restore-check metrics only have alert rules
+  (`infra/otel/alerts.yml`); a `backups` dashboard (last backup age, WAL archive lag, restore
+  check duration) would help operators. Build it per AGENTS.md "Add a dashboard".
 - **Short downtime on single-host deploys.** `docker compose up` recreates `api`/`web` in place
   (seconds without the API; Caddy only holds requests to `web`). Zero-downtime on one host needs
   two `api` replicas and a health-aware switch (e.g. a blue/green project pair behind Caddy).
@@ -127,6 +139,19 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **PII redaction with Microsoft Presidio: needs an ADR 0005 decision.** The support triage's
+  LLM output (`services/worker-py/worker/support.py` `scrub`), the feedback-to-issue hook
+  (`apps/api/src/routes/hooks.ts`) and the browser `track()` mask only emails (and UUIDs) with a
+  bounded regex. Presidio (MIT, `en_core_web_sm`) would also catch names, phones, cards, IBANs and
+  IPs, measured 2026-11-07 at ~165-200 MiB RSS for English (~360 MiB with a second language), but
+  `pnpm check:licenses` rejects 6 of its transitive packages: `numpy` (has a `Zlib` part), `regex`
+  (`CNRI-Python`), and `Jinja2`, `blis`, `requests-file`, `shellingham`, whose metadata strings
+  ("BSD License", "Apache 2.0", "ISC License") the gate does not map. The official
+  `mcr.microsoft.com/presidio-analyzer` image avoids the code gate but uses `en_core_web_lg`:
+  ~740 MiB RSS idle. Unblock: the owner adds `Zlib` and `CNRI-Python` to the allowlist and the
+  three strings as aliases (ADR 0005), then call Presidio in-process in the worker for
+  `support.py`, and from the API hook through an opt-in sidecar of the worker image (compose
+  profile `pii`) that fails closed. The browser keeps its regex (no Python there).
 - **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
   ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
   transaction (ADR 0019 "Alternatives").

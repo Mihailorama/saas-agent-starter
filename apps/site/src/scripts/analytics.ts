@@ -1,11 +1,11 @@
-// The web app's analytics, unchanged: same track(), consent rule and sinks (env VITE_*), so
-// site visits and app sign-ups land in one PostHog/Umami project (docs/marketing.md).
+// The web app's analytics, unchanged: same track(), consent banner (vanilla-cookieconsent, regime
+// from nginx's consent-mode meta tag) and sinks (env VITE_*), so site visits and app sign-ups land
+// in one PostHog/Umami project (docs/marketing.md).
 import {
-  consent,
-  consentNeeded,
   initAnalytics,
   page,
-  setConsent,
+  privacyChoicesLabel,
+  showPrivacyChoices,
   track,
 } from '../../../web/src/lib/analytics.ts';
 
@@ -13,15 +13,11 @@ initAnalytics();
 // Static pages have no ids in their paths, so the path is the route.
 page(location.pathname);
 
-const banner = document.getElementById('consent');
-if (banner && consentNeeded && consent() === undefined) {
-  banner.hidden = false;
-  banner.addEventListener('click', (e) => {
-    const answer = (e.target as HTMLElement).closest('button')?.dataset.consent;
-    if (!answer) return;
-    setConsent(answer === 'granted');
-    banner.hidden = true;
-  });
+const choices = document.getElementById('privacy-choices');
+if (choices && privacyChoicesLabel) {
+  choices.textContent = privacyChoicesLabel;
+  choices.hidden = false;
+  choices.addEventListener('click', showPrivacyChoices);
 }
 
 // Links with data-cta="<id>" (sign-in, start free...) are the site's conversions.

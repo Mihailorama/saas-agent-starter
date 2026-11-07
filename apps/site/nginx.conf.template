@@ -1,3 +1,10 @@
+# Consent regime per request, same rule as the web app (docs/product-analytics.md#consent).
+map $http_${CONSENT_COUNTRY_HEADER} $consent_mode {
+  default ${CONSENT_MODE};
+  "" ${CONSENT_MODE}; # no header; also stops an empty country list from matching
+  "~^(${CONSENT_OPT_OUT_COUNTRIES})$" opt-out;
+}
+
 # Hashed build assets are immutable; HTML, feeds and sitemaps are revalidated on every visit.
 map $uri $site_cache_control {
   ~^/_astro/ "public, max-age=31536000, immutable";
@@ -20,5 +27,8 @@ server {
 
   location / {
     try_files $uri $uri/ =404;
+    # Read by apps/web/src/lib/analytics.ts; HTML responses only.
+    sub_filter '<head>' '<head><meta name="consent-mode" content="$consent_mode">';
+    sub_filter_once on;
   }
 }

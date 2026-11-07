@@ -59,6 +59,11 @@ no longer identifies anyone through our systems.
 - **Logs and traces** (Loki, Jaeger/Langfuse): ids and counts only by rule (AGENTS.md
   "Observability"); no content, no addresses.
 - **Mail provider**: delivery logs with recipient addresses, under the provider's retention.
+- **Backups** (docs/backups.md, when the backup overlay runs): deleted rows stay in the Postgres
+  backups until they expire (`BACKUP_RETENTION_FULL` weekly fulls, default 4) and deleted objects in
+  the object vault for `BACKUP_OBJECTS_RETENTION_DAYS` (30). They are not restored into production
+  except for disaster recovery; after a restore, re-run the deletions completed since the backup
+  (their `privacy_requests` rows say which).
 
 ## Export ("Download my data")
 

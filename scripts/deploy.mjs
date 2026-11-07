@@ -2,13 +2,14 @@
 // pnpm run deploy -- <env> --version <tag>   deploy a release (images pinned by digest)
 // pnpm run deploy -- <env> --rollback        back to the previous release's digests
 // pnpm run deploy -- <env> --status          what runs there now
+// --skip-backup: deploy without the pre-migration backup (logged on the target; docs/deploy.md 6)
 //
 // Decrypts deploy/env/<env>.enc.env with sops in memory (key: SOPS_AGE_KEY_FILE or SOPS_AGE_KEY),
 // then runs docker compose on DEPLOY_HOST over SSH, or on this machine with DEPLOY_HOST=local.
 // Secrets travel only on the stdin of `ssh ... sh -s`: never in argv, never printed.
 // Design and server layout: docs/deploy.md, ADR 0016.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 process.chdir(new URL('..', import.meta.url).pathname);
 const USAGE = 'usage: pnpm run deploy -- <env> (--version <tag> | --rollback | --status)';
@@ -89,6 +90,14 @@ const FILES = {
   Caddyfile: 'deploy/Caddyfile',
   'temporal-setup.sh': 'infra/temporal/setup-postgres.sh',
   'temporal-dynamicconfig.yaml': 'infra/temporal/dynamicconfig.yaml',
+  // Backup overlay and its image's build context, used when the env file sets
+  // COMPOSE_FILE=compose.yaml:compose.backup.yaml (docs/backups.md, docs/deploy.md section 6).
+  'compose.backup.yaml': 'compose.backup.yaml',
+  'infra/backup/Dockerfile': 'infra/backup/Dockerfile',
+  'infra/backup/s3.json': 'infra/backup/s3.json',
+  ...Object.fromEntries(
+    readdirSync('infra/backup/bin').map((f) => [`infra/backup/bin/${f}`, `infra/backup/bin/${f}`]),
+  ),
 };
 const url = `https://${domain}:${port}/api/auth/ok`;
 const head = `set -eu
@@ -142,6 +151,7 @@ console.log(`deploying ${version ?? 'pinned images'} to ${envName} on ${host}\n$
 // Phase 1: stage the new files as *.next and pull the images. Nothing running changes, so a
 // failure here needs no rollback.
 const staged = `${head}umask 022
+mkdir -p infra/backup/bin
 ${Object.entries(FILES)
   .map(([to, from]) => put(`${to}.next`, readFileSync(from)))
   .join('\n')}
@@ -152,19 +162,31 @@ docker compose -f compose.yaml.next --env-file .env.next pull --quiet --policy m
 `;
 if (!run(staged)) die('staging failed; nothing was changed on the target');
 
-// ------------------------------------------------------------------------------------------
-// PRE-MIGRATION BACKUP HOOK. `pnpm run backup:now` comes from the backups branch; until it
-// lands this warns and continues. TODO(docs/TODO.md): make it mandatory (fail without it).
-// ------------------------------------------------------------------------------------------
-const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts ?? {};
-if (scripts['backup:now']) {
-  const backup = spawnSync('pnpm', ['run', 'backup:now'], {
-    stdio: 'inherit',
-    env: { ...process.env, DEPLOY_ENV: envName },
-  });
-  if (backup.status !== 0) die('backup failed; nothing was changed on the target');
+// Pre-migration backup: a differential pgBackRest backup (WAL archiving already gives
+// point-in-time recovery; this pins a restore point right before the migration), taken by the
+// backup sidecar on the target, same as `pnpm run backup:now` locally. No sidecar or a failed
+// backup stops the deploy before anything changes. The very first deploy has nothing to back up.
+// --skip-backup is the explicit way past it (e.g. a managed database with provider snapshots);
+// it is written to deploy.log on the target.
+if (args.includes('--skip-backup')) {
+  console.warn('WARNING: --skip-backup: deploying WITHOUT a pre-migration backup');
+  run(
+    `${head}printf '%s backup skipped (--skip-backup) %s\\n' "$(date -u +%FT%TZ)" ${q(version ?? 'pinned')} >> deploy.log`,
+  );
 } else {
-  console.warn('WARNING: no `backup:now` script yet: deploying WITHOUT a pre-migration backup.');
+  const backup =
+    run(`${head}if [ ! -f release.good.env ]; then echo "first deploy: no data to back up yet"; exit 0; fi
+if [ -z "$(docker compose ps -q --status running backup)" ]; then
+  echo "no running backup sidecar: set COMPOSE_FILE=compose.yaml:compose.backup.yaml (docs/deploy.md section 6)" >&2
+  exit 1
+fi
+docker compose exec -T backup /backup/bin/backup.sh diff`);
+  if (!backup) {
+    die(
+      'pre-migration backup failed; nothing was changed on the target.\n' +
+        `Fix it, or deploy without a backup (logged): pnpm run deploy -- ${envName} --version <tag> --skip-backup`,
+    );
+  }
 }
 
 // Phase 2: swap the files in place (same inode, so the mounted Caddyfile updates) and make the
