@@ -11,9 +11,10 @@ for tool in sops age-keygen docker curl jq ss; do
 done
 HTTP_PORT=${HTTP_PORT:-28080}
 HTTPS_PORT=${HTTPS_PORT:-28443}
+PUSHGATEWAY_PORT=${PUSHGATEWAY_PORT:-28091} # backup overlay (loopback)
 PROJECT=${PROJECT:-saas-deploy-rehearsal}
 REPO=localhost/$PROJECT
-for p in "$HTTP_PORT" "$HTTPS_PORT"; do
+for p in "$HTTP_PORT" "$HTTPS_PORT" "$PUSHGATEWAY_PORT"; do
   if [ -n "$(ss -ltnH "sport = :$p")" ]; then echo "port $p is in use: abort" >&2; exit 1; fi
 done
 
@@ -50,6 +51,7 @@ age-keygen -o "$work/age.key" 2>/dev/null
 export SOPS_AGE_KEY_FILE=$work/age.key
 plain=$work/rehearsal.env
 cp deploy/env/example.env "$plain"
+sed -i '/^BACKUP_/d' "$plain" # backups go to the overlay's local stand-in (backup-s3), not AWS
 kv() { if grep -q "^$1=" "$plain"; then sed -i "s|^$1=.*|$1=$2|" "$plain"; else echo "$1=$2" >>"$plain"; fi; }
 rnd() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 pg=$(rnd)
@@ -58,6 +60,8 @@ kv DEPLOY_PATH "$server"
 kv IMAGE_REPO "$REPO"
 kv COMPOSE_PROJECT_NAME "$PROJECT"
 kv COMPOSE_PROFILES db,s3
+kv COMPOSE_FILE compose.yaml:compose.backup.yaml
+kv PUSHGATEWAY_PORT "$PUSHGATEWAY_PORT"
 kv APP_DOMAIN app.localhost
 kv CADDY_TLS internal
 kv PUBLISH_IP 127.0.0.1
@@ -71,8 +75,12 @@ kv DATABASE_URL "postgres://app_user:$(rnd)@postgres:5432/app"
 kv BETTER_AUTH_SECRET "$(rnd)$(rnd)"
 kv WEBHOOK_ENCRYPTION_KEYS "k1:$(rnd)"
 kv S3_ENDPOINT http://s3:8333
-kv S3_ACCESS_KEY_ID "$(rnd)"
-kv S3_SECRET_ACCESS_KEY "$(rnd)"
+s3_key=$(rnd) s3_secret=$(rnd)
+kv S3_ACCESS_KEY_ID "$s3_key"
+kv S3_SECRET_ACCESS_KEY "$s3_secret"
+kv BACKUP_APP_S3_ACCESS_KEY_ID "$s3_key"
+kv BACKUP_APP_S3_SECRET_ACCESS_KEY "$s3_secret"
+kv BACKUP_ENCRYPTION_PASSPHRASE "$(rnd)"
 # --config /dev/null: the repo .sops.yaml rules are for deploy/env/, not this temp file
 sops --config /dev/null encrypt --age "$(age-keygen -y "$SOPS_AGE_KEY_FILE")" --input-type dotenv \
   --output-type dotenv "$plain" >"$work/rehearsal.enc.env"
@@ -122,14 +130,23 @@ expect_api v2
 expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" $((base + 1)) "applied migrations"
 expect_eq "$(sql "select count(*) from information_schema.columns where column_name = 'rehearsal_note'")" 1 \
   "expand column present"
+diffs() { in_server docker compose exec -T backup pgbackrest info --output=json | jq '[.[0].backup[] | select(.type == "diff")] | length'; }
+expect_eq "$(diffs)" 1 "pre-migration diff backups"
 
 step "rollback to v1 (old code on the expanded schema)"
 node scripts/deploy.mjs rehearsal --rollback
 expect_api v1
 expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" $((base + 1)) "applied migrations"
 
-step "deploy v3 with a failing migration: stopped before anything restarts, v1 keeps serving"
-if node scripts/deploy.mjs rehearsal --version v3; then echo "FAIL: v3 deployed" >&2; exit 1; fi
+step "deploy v3 without a running backup sidecar: stopped before anything changes"
+in_server docker compose stop backup
+if node scripts/deploy.mjs rehearsal --version v3; then echo "FAIL: v3 deployed without a backup" >&2; exit 1; fi
+expect_eq "$(sed -n 's/^RELEASE_VERSION=//p' "$server/release.env")" v1 "current release"
+
+step "deploy v3 --skip-backup with a failing migration: stopped before anything restarts, v1 keeps serving"
+if node scripts/deploy.mjs rehearsal --version v3 --skip-backup; then echo "FAIL: v3 deployed" >&2; exit 1; fi
+grep -q 'backup skipped (--skip-backup) v3' "$server/deploy.log" || { echo "FAIL: skip not logged" >&2; exit 1; }
+echo "OK: --skip-backup logged in deploy.log"
 expect_api v1
 expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" $((base + 1)) "applied migrations"
 expect_eq "$(sed -n 's/^RELEASE_VERSION=//p' "$server/release.env")" v1 "current release"

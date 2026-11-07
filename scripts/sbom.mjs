@@ -14,13 +14,15 @@ const sh = (cmd, args, opts = {}) =>
 const compose = (files, ...args) =>
   sh('docker', ['compose', ...files.flatMap((f) => ['-f', f]), '--profile', '*', ...args]);
 const twins = [['docker-compose.yml'], ['docker-compose.yml', 'compose.permissive.yaml']];
+const backups = ['docker-compose.yml', 'compose.backup.yaml']; // backup overlay (ADR 0015)
 
 sh('node', ['scripts/license-check.mjs', '--notices', `${out}/THIRD_PARTY_NOTICES.md`], {
   stdio: 'inherit',
 });
 compose(twins[0], 'build', 'api', 'web', 'worker');
+compose(backups, 'build', 'postgres');
 const images = new Set();
-for (const files of twins) {
+for (const files of [...twins, backups]) {
   compose(files, 'pull', '--ignore-buildable', '--quiet');
   for (const image of compose(files, 'config', '--images').split('\n').filter(Boolean)) {
     images.add(image);

@@ -35,6 +35,8 @@ on an image that is not. Their primary software licenses:
 | `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
 | `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
 | `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
+| `saas-agent-starter-pgbackup`          | Postgres + backup tools (`compose.backup.yaml`)    | PostgreSQL + MIT            |
+| `prom/pushgateway`                     | backup metrics for Prometheus (backup overlay)     | Apache-2.0                  |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -64,6 +66,12 @@ Notes:
   use are MIT (`@sentry/react`, `@sentry/node-core`, `sentry-sdk`). `@sentry/node` 11 is not
   used: it depends on the `sentry` CLI package (FSL-1.1-Apache-2.0), which the code license gate
   rejects.
+- `saas-agent-starter-pgbackup` is built locally from `infra/backup/Dockerfile`: the `postgres`
+  image plus Alpine packages pgBackRest (MIT), rclone (MIT), supercronic (MIT), jq (MIT), curl
+  (curl license, MIT-style) and openssl (Apache-2.0); licenses as declared in the Alpine package
+  metadata (`apk info -a <pkg>`). `chrislusf/seaweedfs` also runs as `backup-s3`, the local
+  stand-in for off-site backup storage. Every backup container is permissive, so the permissive
+  twin needs no replacement (ADR 0015).
 - Tooling, not part of the stack: `anchore/syft` (Apache-2.0) generates the SBOMs (`pnpm run sbom`).
 - Deploy tooling on the operator machine or CI runner, not part of the stack or the images:
   [SOPS](https://github.com/getsops/sops) (MPL-2.0, run unmodified as a CLI) and

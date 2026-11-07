@@ -83,6 +83,23 @@ jobs:
       - if: failure()
         run: docker compose logs --tail 100; tail -n 100 worker.log
 
+  # Backup -> destroy -> restore with the real containers (ADR 0015, docs/backups.md).
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      COMPOSE_PROJECT_NAME: backup-e2e
+      COMPOSE_FILE: docker-compose.yml:compose.backup.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: ./scripts/backup-e2e.sh
+
   docker-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

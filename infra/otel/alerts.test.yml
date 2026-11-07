@@ -1,0 +1,87 @@
+# promtool test rules alerts.test.yml (run by scripts/backup-e2e.sh). Backup alert expressions.
+rule_files: [alerts.yml]
+evaluation_interval: 1h # coarse: the 35-day case would otherwise take minutes
+tests:
+  - name: fresh backup and restore check -> quiet; then the restore check fails
+    interval: 1m
+    input_series:
+      - series: 'backup_last_success_timestamp_seconds{job="pgbackrest",type="full"}'
+        values: "0x120"
+      - series: 'restore_check_last_success_timestamp_seconds{job="restore_check"}'
+        values: "0x120"
+      - series: 'restore_check_last_failure_timestamp_seconds{job="restore_check"}'
+        values: "_x59 3600x60"
+    alert_rule_test:
+      - { eval_time: 30m, alertname: RestoreCheckFailed, exp_alerts: [] }
+      - eval_time: 61m
+        alertname: RestoreCheckFailed
+        exp_alerts:
+          [
+            {
+              exp_labels: { severity: page },
+              exp_annotations:
+                { summary: "The last restore check failed: backups may not be restorable" },
+            },
+          ]
+      - { eval_time: 61m, alertname: BackupMetricsMissing, exp_alerts: [] }
+
+  - name: a failed check without any success ever also alerts
+    interval: 1m
+    input_series:
+      - series: 'restore_check_last_failure_timestamp_seconds{job="restore_check"}'
+        values: "60x5"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: RestoreCheckFailed
+        exp_alerts:
+          [
+            {
+              exp_labels: { severity: page },
+              exp_annotations:
+                { summary: "The last restore check failed: backups may not be restorable" },
+            },
+          ]
+
+  - name: stale backup, nothing on record
+    interval: 1h
+    input_series:
+      - series: 'backup_last_success_timestamp_seconds{job="pgbackrest",type="diff"}'
+        values: "0x30"
+    alert_rule_test:
+      - { eval_time: 25h, alertname: BackupTooOld, exp_alerts: [] }
+      - eval_time: 28h
+        alertname: BackupTooOld
+        exp_alerts:
+          [
+            {
+              exp_labels: { severity: page },
+              exp_annotations: { summary: "Last Postgres backup is older than 26 hours" },
+            },
+          ]
+      - eval_time: 2h
+        alertname: BackupMetricsMissing
+        exp_alerts:
+          [
+            {
+              exp_labels: { severity: page },
+              exp_annotations:
+                { summary: "No backup or restore check on record: backups are not running" },
+            },
+          ]
+
+  - name: restore check older than 35 days
+    interval: 1d
+    input_series:
+      - series: 'restore_check_last_success_timestamp_seconds{job="restore_check"}'
+        values: "0x40"
+    alert_rule_test:
+      - { eval_time: 34d, alertname: RestoreCheckTooOld, exp_alerts: [] }
+      - eval_time: 36d
+        alertname: RestoreCheckTooOld
+        exp_alerts:
+          [
+            {
+              exp_labels: { severity: ticket },
+              exp_annotations: { summary: "No successful restore check in 35 days" },
+            },
+          ]
