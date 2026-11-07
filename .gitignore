@@ -14,3 +14,6 @@ __pycache__/
 deploy/env/*.env
 !deploy/env/*.enc.env
 !deploy/env/example.env
+evals/**/.out/
+evals/**/.effective.json
+evals/**/pulled.jsonl

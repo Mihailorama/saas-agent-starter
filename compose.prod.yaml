@@ -86,6 +86,7 @@ services:
       - POSTHOG_KEY
       - POSTHOG_HOST
       - POSTHOG_SECRET_KEY
+      - AI_CONTENT_BUCKET
     healthcheck: # readiness: database + Redis reachable
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null"]
       interval: 5s
@@ -123,6 +124,10 @@ services:
       - EMAIL_TASK_QUEUE
       - SMTP_URL
       - MAIL_FROM
+      - POSTHOG_PRIVACY_MODE
+      # separate trace endpoint for the worker, e.g. Langfuse OTLP (ADR 0009)
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_TRACES_HEADERS
       - FLAGS_ON
       - FLAGS_OFF
       - POSTHOG_KEY

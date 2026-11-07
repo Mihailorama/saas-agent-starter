@@ -13,6 +13,7 @@ FROM python:3.12-slim-trixie
 RUN useradd --system --uid 10001 worker
 COPY --from=build /app/services/worker-py /app/services/worker-py
 COPY config /app/config
+COPY prompts /app/prompts
 WORKDIR /app/services/worker-py
 ENV PATH=/app/services/worker-py/.venv/bin:$PATH PYTHONUNBUFFERED=1
 ARG GIT_SHA=dev
