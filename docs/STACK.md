@@ -36,3 +36,26 @@ what Redis does.
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then
 `docker stats --no-stream $(docker compose --profile observability --profile glitchtip ps -q)`.
+
+## LLM-ops tiers (ADR 0009)
+
+- **S tier (one 8 CPU / 24 GB server): PostHog Cloud by default.** Generations, feedback and
+  online judges live in PostHog; the stack adds no container and no RAM (the worker posts one
+  small HTTP event per LLM call). Promptfoo runs only during `pnpm eval` (a short-lived
+  container).
+- **Langfuse (`--profile llmops`), optional**, when data must not leave the servers (client
+  requirement, RU contour). Measured 2026-11-06 on the same kind of 8 vCPU / 23.5 GiB host,
+  `docker stats` after an e2e warm-up (5 runs) and again after a burst of 10,000 spans sent in
+  2.7 s (the client queue dropped part of them):
+
+  | Container       | After warm-up, MiB | After the burst, MiB |                  `mem_limit` |
+  | --------------- | -----------------: | -------------------: | ---------------------------: |
+  | langfuse-web    |                679 |                  701 | 1536 MiB (Node heap 768 MiB) |
+  | clickhouse      |                658 |           669 to 690 |                     1536 MiB |
+  | langfuse-worker |                455 |                  513 | 1024 MiB (Node heap 768 MiB) |
+
+  Langfuse's share is about **1.8 to 1.9 GiB** (plus about 15 MiB in Postgres for its database);
+  the Langfuse worker peaked at about 200 % CPU while ingesting; nothing was OOM-killed. It fits
+  a 24 GB box by memory, but Langfuse's own guidance is at least 4 cores / 16 GiB and it calls a
+  single-container ClickHouse "development only"; at real traffic give it its own host. Whether
+  the S tier runs it at all is an open owner decision (ADR 0009).
