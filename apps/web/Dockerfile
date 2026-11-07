@@ -13,6 +13,8 @@ ARG VITE_SENTRY_RELEASE=dev
 ARG VITE_RELEASE=dev VITE_POSTHOG_KEY= VITE_POSTHOG_HOST= VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID= \
     VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID= VITE_UMAMI_SCRIPT_URL= VITE_UMAMI_WEBSITE_ID= \
     VITE_GA4_ID= VITE_YM_ID= VITE_YM_WEBVISOR= VITE_LANGFUSE_PUBLIC_KEY= VITE_LANGFUSE_HOST=
+# Feature flag overrides (docs/feature-flags.md), comma-separated names.
+ARG VITE_FLAGS_ON= VITE_FLAGS_OFF=
 RUN pnpm --filter web build
 
 # Static files + /api reverse proxy; runs as non-root on port 8080.

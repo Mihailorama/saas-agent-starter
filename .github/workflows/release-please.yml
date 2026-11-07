@@ -1,0 +1,60 @@
+name: Release
+
+# release-please (docs/releases.md): keeps a release PR with CHANGELOG.md up to date from the
+# Conventional Commit titles on main; merging it tags vX.Y.Z and publishes the GitHub release.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write # labels on the release PR
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+
+  # A tag or release made with GITHUB_TOKEN starts no other workflow (GitHub rule), so the
+  # follow-ups run from here: the issue comments, and every tag workflow that accepts dispatch.
+  released:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    uses: ./.github/workflows/released.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag }}
+
+  tag-workflows:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Dispatch workflows that run on v* tags and accept workflow_dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          for f in $(grep -lE '^\s+workflow_dispatch:' .github/workflows/*.yml | xargs grep -lE '^\s+tags:'); do
+            echo "dispatch $(basename "$f") on $TAG"
+            gh workflow run "$(basename "$f")" --ref "$TAG"
+          done

@@ -32,11 +32,12 @@ rolling updates; the expand/contract rule below is what makes them, and rollback
 
 ## 1. Release images
 
-Push a tag: `git tag v1.4.0 && git push origin v1.4.0`. The `Release` workflow builds the three
+Merge the release-please PR (docs/releases.md), or push a tag yourself:
+`git tag v1.4.0 && git push origin v1.4.0`. The `Release images` workflow builds the three
 images, refuses to overwrite an existing tag, pushes `ghcr.io/<owner>/<repo>/{api,worker,web}:v1.4.0`
 and prints each digest in the run summary. The `CI` (tsc release typecheck) and `SBOM` workflows
 run on the same tag. It uses only the built-in `GITHUB_TOKEN`. Tags created with `GITHUB_TOKEN`
-(release-please) do not fire tag pushes, so `Release` also accepts `workflow_dispatch` on a tag ref
+(release-please) do not fire tag pushes, so `Release images` also accepts `workflow_dispatch` on a tag ref
 (dispatched on a branch, it does nothing).
 
 - GHCR packages are private by default: make them public, or run
@@ -132,7 +133,7 @@ profile) is not part of the production file yet; send OTLP to an existing collec
 
 ### GitHub Actions (optional)
 
-The `deploy` job of the `Release` workflow is inert until you opt in:
+The `deploy` job of the `Release images` workflow is inert until you opt in:
 
 1. Create a GitHub environment, e.g. `production`, with required reviewers (and optionally a
    tag rule `v*`).
@@ -262,4 +263,4 @@ migration now runs first as a one-off. (2) An unset pass-through variable (`- NA
 
 Not covered by the rehearsal: the SSH transport (`DEPLOY_HOST=local` runs the same script with
 `sh -s` instead of `ssh <host> sh -s`), real ACME certificates, a registry pull (images were
-resolved from the local daemon) and the GitHub Actions `Release` workflow.
+resolved from the local daemon) and the GitHub Actions `Release images` workflow.

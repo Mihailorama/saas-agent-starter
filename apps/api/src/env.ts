@@ -23,6 +23,10 @@ const schema = z
     TEMPORAL_ADDRESS: z.string().default('localhost:7233'),
     TEMPORAL_NAMESPACE: z.string().default('default'),
     TEMPORAL_TASK_QUEUE: z.string().default('projects'),
+    /** Task queue of the worker's SendEmailWorkflow (docs/email.md). */
+    EMAIL_TASK_QUEUE: z.string().default('email'),
+    /** Sign-in needs a confirmed email address. Off only for setups that verify elsewhere. */
+    REQUIRE_EMAIL_VERIFICATION: z.stringbool().default(true),
     S3_ENDPOINT: z.url().optional(),
     /** Endpoint browsers use for presigned URLs; defaults to S3_ENDPOINT. */
     S3_PUBLIC_ENDPOINT: z.url().optional(),
@@ -49,6 +53,15 @@ const schema = z
     /** PostHog app host for links in issues, e.g. https://eu.posthog.com */
     POSTHOG_APP_HOST: z.union([z.url(), z.literal('')]).optional(),
     POSTHOG_PROJECT_ID: z.string().optional(),
+    // Feature flags (docs/feature-flags.md). Without POSTHOG_KEY a flag is its catalog default;
+    // FLAGS_ON / FLAGS_OFF (comma-separated names) override everything, PostHog included.
+    FLAGS_ON: list,
+    FLAGS_OFF: list,
+    /** PostHog project key (phc_...) and ingestion host, e.g. https://eu.i.posthog.com */
+    POSTHOG_KEY: z.string().optional(),
+    POSTHOG_HOST: z.union([z.url(), z.literal('')]).optional(),
+    /** Optional project secret API key (feature_flag:read): local evaluation, no request per check. */
+    POSTHOG_SECRET_KEY: z.string().optional(),
     GITHUB_TOKEN: z.string().optional(),
     /** owner/name of the repository that receives the issues. */
     GITHUB_REPO: z.string().optional(),

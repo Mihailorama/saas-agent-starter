@@ -79,6 +79,13 @@ services:
       - POSTHOG_PROJECT_ID
       - GITHUB_TOKEN
       - GITHUB_REPO
+      - EMAIL_TASK_QUEUE
+      - REQUIRE_EMAIL_VERIFICATION
+      - FLAGS_ON
+      - FLAGS_OFF
+      - POSTHOG_KEY
+      - POSTHOG_HOST
+      - POSTHOG_SECRET_KEY
     healthcheck: # readiness: database + Redis reachable
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null"]
       interval: 5s
@@ -113,6 +120,13 @@ services:
       - ANTHROPIC_API_KEY
       - OPENAI_API_KEY
       - OPENAI_BASE_URL
+      - EMAIL_TASK_QUEUE
+      - SMTP_URL
+      - MAIL_FROM
+      - FLAGS_ON
+      - FLAGS_OFF
+      - POSTHOG_KEY
+      - POSTHOG_HOST
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }

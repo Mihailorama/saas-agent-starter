@@ -18,7 +18,7 @@
     "typecheck:fast": "pnpm -r typecheck:fast",
     "test": "pnpm -r test",
     "e2e": "pnpm --filter web e2e",
-    "check:ts": "biome ci . && pnpm check:events && pnpm check:migrations && node --test 'scripts/*.test.mjs' && pnpm typecheck:fast && pnpm test",
+    "check:ts": "biome ci . && pnpm check:events && pnpm check:flags && pnpm check:migrations && node --test 'scripts/*.test.mjs' && pnpm typecheck:fast && pnpm test",
     "check:rust": "cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test",
     "check:py": "cd services/worker-py && uv sync --locked && uv run ruff format --check && uv run ruff check && pyright && uv run pytest -q",
     "check:licenses": "node scripts/license-check.mjs",
@@ -29,7 +29,9 @@
     "check:migrations": "node scripts/check-migrations.mjs",
     "deploy": "node scripts/deploy.mjs",
     "journeys:sync": "node scripts/journeys.mjs sync",
-    "journeys:report": "node scripts/journeys.mjs report"
+    "journeys:report": "node scripts/journeys.mjs report",
+    "check:flags": "node scripts/check-flags.mjs",
+    "flags:sync": "node scripts/flags.mjs sync"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",
