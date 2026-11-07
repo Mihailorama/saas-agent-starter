@@ -36,6 +36,9 @@ on an image that is not. Their primary software licenses:
 | `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
 | `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
 | `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
+| `vllm/vllm-openai`                     | self-hosted models, GPU (`local-llm` profile)      | Apache-2.0                  |
+| `vllm/vllm-openai-cpu`                 | self-hosted models, CPU smoke (`local-llm-cpu`)    | Apache-2.0                  |
+| `ollama/ollama`                        | self-hosted models, dev (`local-llm` profile)      | MIT                         |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -136,6 +139,34 @@ Notes:
   Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
   never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
   dependencies). Details in [docs/billing.md](billing.md).
+
+- AI providers ([docs/llm-providers.md](llm-providers.md), [ADR 0022](adr/0022-llm-providers.md)).
+  Code dependency: `litellm` (PyPI, MIT; checked 2026-11-07 with 1.108.2). Its repository is MIT
+  outside `enterprise/` ([LICENSE](https://github.com/BerriAI/litellm/blob/main/LICENSE)); the
+  enterprise code is the separate `litellm-enterprise` package (`LicenseRef-Proprietary`), pulled
+  in only by the `proxy` extra, which the worker does not install, and nothing from it is used.
+  Open: 8 of LiteLLM's transitive dependencies fail the gate on their metadata (ADR 0022,
+  "Consequences"); no exception was added.
+- Vendor CLIs in the `llm-cli` image (`services/llm-cli/Dockerfile`, base `node`), installed from
+  npm at build time as separate tools, run unmodified, never code dependencies of this repo (no
+  package.json lists them, so the gate never sees them):
+  - `@anthropic-ai/claude-code` (Claude Code): proprietary, "© Anthropic PBC. All rights reserved.
+    Use is subject to Anthropic's Commercial Terms of Service"
+    ([LICENSE.md](https://github.com/anthropics/claude-code/blob/main/LICENSE.md)). Allowed only as
+    a separately installed tool: CI does not build or publish the llm-cli image; operators build
+    it and keep it in a private registry.
+  - `@openai/codex` (Codex CLI): Apache-2.0 ([LICENSE](https://github.com/openai/codex/blob/main/LICENSE)).
+  - `@google/gemini-cli` (Gemini CLI): Apache-2.0
+    ([LICENSE](https://github.com/google-gemini/gemini-cli/blob/main/LICENSE)).
+  - Not installed by default, configurable as a `command` CLI: Kimi Code (`MoonshotAI/kimi-code`,
+    MIT), xAI Grok Build (`xai-org/grok-build`, Apache-2.0 as detected by GitHub).
+    Using a subscription through these CLIs is governed by each vendor's terms of use, not by these
+    licenses (docs/llm-providers.md, "Terms of use").
+- `vllm/vllm-openai`, `vllm/vllm-openai-cpu` (vLLM, Apache-2.0,
+  [LICENSE](https://github.com/vllm-project/vllm/blob/main/LICENSE)) and `ollama/ollama` (MIT,
+  [LICENSE](https://github.com/ollama/ollama/blob/main/LICENSE)) are already permissive. Model
+  weights have their own licenses: the compose defaults `Qwen/Qwen3-0.6B` (Apache-2.0) and
+  `BAAI/bge-small-en-v1.5` (MIT), per their Hugging Face model cards.
 
 ## Permissive twin (replacement map)
 

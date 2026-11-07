@@ -64,7 +64,8 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   e2e/                Playwright smoke
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
-  worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
+  worker/ai.py        AI gateway: Gateway.call_llm, model registry, BYO routing, fallback (the ONLY LLM caller)
+  worker/providers.py providers via LiteLLM (every kind), prices from LiteLLM's cost map, BYO SSRF pin
   worker/prompts.py   versioned prompt loader (prompts/<purpose>/<name>.v<N>.md)
   worker/posthog.py   each LLM call as a PostHog `$ai_generation` (when POSTHOG_* is set)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
@@ -74,7 +75,7 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
-config/             ai-models.json (allowed models per contour/purpose, prices),
+config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
                     plans.json (plans, limits, prices per currency, billing contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
@@ -82,6 +83,8 @@ config/             ai-models.json (allowed models per contour/purpose, prices),
                     webhook-events.json (outbound webhook event catalog)
 prompts/            prompt templates, one immutable file per version; lock.json pins hashes
 evals/              Promptfoo golden sets per purpose (`pnpm eval`, scripts/eval.mjs)
+services/llm-cli    vendor CLI subscriptions (claude, codex, gemini, ...) as an internal
+                    OpenAI-compatible endpoint; per-subscription limits, queue, round-robin
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
                     rules (infra/otel), Grafana datasources + dashboards (infra/grafana),
@@ -122,6 +125,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   Sentry SaaS/self-hosted for bigger installs. Only the DSN differs.
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
+- LiteLLM SDK as the one path to model providers; vendor CLI subscriptions (default mode) in a
+  separate llm-cli container; vLLM for multi-user self-hosting, Ollama for dev (ADR 0022,
+  docs/llm-providers.md).
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
 - Transactional mail: React Email's renderer in the API, delivery by a Temporal activity
   with stdlib `smtplib` over one `SMTP_URL` (any provider), Mailpit in dev (ADR 0014).
@@ -231,9 +237,10 @@ A prompt is code: reviewed, tested, evaluated. Never edit a released `.v<N>.md`.
    (Biome also formats Markdown), then add its hash to `prompts/lock.json` (the failing
    `tests/test_prompts.py` prints the line).
 2. Point the eval at it (`gate.prompt.version` in `evals/<purpose>/promptfooconfig.json`) and
-   run `pnpm eval:real` on your machine. It runs the model and the judge through your Claude
-   subscription (the logged-in `claude` CLI, model always explicit); there is no API key, in
-   CI or anywhere else. It must pass `gate.minScore`; put the result and the previous
+   run `pnpm eval:real` on your machine. It runs the model the eval config names
+   (`<provider>:<model>` of config/ai-models.json; a CLI subscription runs the logged-in CLI) and
+   the judge `claude_cli:claude-opus-5-5` through your Claude subscription (model always
+   explicit); no API key in CI. It must pass `gate.minScore`; put the result and the previous
    version's score in the PR description. CI runs only the key-free `pnpm eval --fake-llm`.
 3. Switch the code to the new version (e.g. `SUMMARY_PROMPT` in `activities.py`). Every call
    carries the version (`ai_calls`, `ai_prompt_version` in PostHog), so compare versions there
@@ -321,6 +328,9 @@ the replacement map.
   a provider SDK or HTTP API directly, and never call an LLM from the TypeScript API or web.
 - The model is always explicit: no default model in code, config or function signatures. A
   model that is not in `config/ai-models.json` for the current `AI_CONTOUR` is refused.
+- A new provider is a `providers` entry in `config/ai-models.json` (LiteLLM prefix + env names)
+  or a CLI in the llm-cli config, not new gateway code (docs/llm-providers.md). Never pass a key
+  implicitly, never log CLI output, never bake logins into an image.
 - Never put prompt or completion content in logs, span attributes, exceptions, audit rows or
   Temporal workflow arguments. It lives only in the `ai_calls` S3 objects.
 - `ai_calls` is append-only: never grant UPDATE/DELETE on it or "fix" rows; record a new event.

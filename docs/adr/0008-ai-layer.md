@@ -19,10 +19,10 @@ fact is impossible if calls are scattered across the code base.
   which provider/model pairs may serve which purpose, with a price per 1k tokens. The gateway
   refuses anything else with a non-retryable `ModelNotAllowed`. The same file feeds the public
   `/ai-transparency` page, so the page cannot drift from what the code allows.
-- **Providers.** `anthropic` (official `anthropic` SDK) and `openai_compatible` (official
-  `openai` SDK with `OPENAI_BASE_URL`, for self-hosted or in-country endpoints). Keys come from
-  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. A provider is a plain async function, so tests inject
-  a fake one; `tests/test_providers.py` checks both SDK adapters against canned HTTP responses.
+- **Providers.** Superseded by [ADR 0022](0022-llm-providers.md): every provider goes through
+  LiteLLM (`worker/providers.py`), CLI subscriptions through the llm-cli container. A provider is
+  still a plain async function, so tests inject a fake one; `tests/test_providers.py` checks
+  each kind against a local HTTP mock.
 - **Append-only log.** One `ai_calls` row per call (also for provider errors): org, actor,
   purpose, provider, requested and reported model, template id/version, token counts, cost,
   latency, status, error class, trace/span id, contour. It is a tenant table with RLS; the app

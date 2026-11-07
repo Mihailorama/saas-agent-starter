@@ -46,6 +46,12 @@ run on the same tag. It uses only the built-in `GITHUB_TOKEN`. Tags created with
   reads them from repository **variables** (unset = feature off). Environments that need
   different browser config need their own web build.
 - Images are linux/amd64 only.
+- The `llm-cli` image (vendor CLI subscriptions, docs/llm-providers.md) is not built here: it
+  contains the proprietary Claude Code CLI. Build it yourself
+  (`docker build -f services/llm-cli/Dockerfile -t <private registry>/llm-cli:<tag> .`), push it
+  to a private registry, and put `IMAGE_LLM_CLI=<repo>@sha256:...`, `llm-cli` in
+  `COMPOSE_PROFILES`, `LLM_CLI_TOKEN` (32+ random characters) and `LLM_CLI_SECRETS_DIR` (a
+  host directory with the login files, mode 600) in the env file.
 
 ## 2. Secrets: SOPS + age
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { aiCalls, auditLog, subscriptions, user, withOrg } from '@app/db';
+import { aiCalls, aiProviders, auditLog, subscriptions, user, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +10,7 @@ import { billingPeriod, entitlementsOf, type Subscription } from '../src/billing
 import { plans } from '../src/billing/plans.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
+import { costCurrency } from '../src/routes/billing.ts';
 import { billingWorkflowId, closeTemporal, temporal } from '../src/temporal.ts';
 
 const app = await buildApp();
@@ -41,7 +42,12 @@ async function signUp(): Promise<User> {
   expect(signIn.statusCode).toBe(200);
   return { id, cookie: signIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
 }
-const call = (user: User, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: object) =>
+const call = (
+  user: User,
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  url: string,
+  payload?: object,
+) =>
   app.inject({
     method,
     url,
@@ -165,11 +171,9 @@ describe('plans and entitlements', () => {
       readFileSync(new URL('../../../config/ai-models.json', import.meta.url), 'utf8'),
     );
     const costCurrencies = new Set<string>(
-      Object.values(
-        models.contours as Record<string, { pricePer1kTokens: { currency: string } | null }[]>,
-      )
+      Object.values(models.contours as Record<string, Parameters<typeof costCurrency>[0][]>)
         .flat()
-        .flatMap((m) => (m.pricePer1kTokens ? [m.pricePer1kTokens.currency] : [])),
+        .flatMap((m) => costCurrency(m) ?? []),
     );
     for (const [id, plan] of Object.entries(plans.plans)) {
       for (const cur of costCurrencies) {
@@ -410,5 +414,81 @@ describe('Stripe (stripe-mock)', () => {
       (await app.inject({ method: 'POST', url: '/api/billing/webhooks/paypal', payload: '{}' }))
         .statusCode,
     ).toBe(404);
+  });
+});
+
+describe('organization-owned AI providers (BYO)', () => {
+  const custom = {
+    name: 'On-prem',
+    provider: 'openai_compatible',
+    baseUrl: 'https://llm.example.com/v1',
+    apiKey: 'sk-local-dev-byo-secret-1234',
+    models: { 'project.summary': 'example-model' },
+  };
+
+  it('needs the byoLlm plan feature and an admin', async () => {
+    const { owner, org } = await ownerWithOrg();
+    expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(402);
+    await subscribe(org);
+    const m = await signUp();
+    await auth.api.addMember({ body: { userId: m.id, organizationId: org, role: 'member' } });
+    await call(m, 'POST', '/api/auth/organization/set-active', { organizationId: org });
+    expect((await call(m, 'GET', '/api/ai-providers')).statusCode).toBe(403);
+    expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(201);
+  });
+
+  it('stores the key encrypted, never returns it, and audit-logs changes', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await subscribe(org);
+    const created = await call(owner, 'POST', '/api/ai-providers', custom);
+    expect(created.statusCode).toBe(201);
+    const body = created.json();
+    expect(body).toMatchObject({ kind: 'custom', apiKeyHint: '1234', enabled: true });
+    expect(JSON.stringify(body)).not.toContain(custom.apiKey);
+    const [row] = await withOrg(db, org, (tx) => tx.select().from(aiProviders));
+    expect(row!.apiKey).toMatch(/^v1:[^:]+:[^:]+:[^:]+$/);
+    expect(row!.apiKey).not.toContain(custom.apiKey);
+
+    const listed = await call(owner, 'GET', '/api/ai-providers');
+    expect(JSON.stringify(listed.json())).not.toContain('sk-local-dev');
+    const patched = await call(owner, 'PATCH', `/api/ai-providers/${body.id}`, {
+      apiKey: 'sk-local-dev-rotated-5678',
+      enabled: false,
+    });
+    expect(patched.json()).toMatchObject({ apiKeyHint: '5678', enabled: false });
+    expect((await call(owner, 'DELETE', `/api/ai-providers/${body.id}`)).statusCode).toBe(204);
+    const audit = await withOrg(db, org, (tx) =>
+      tx.select().from(auditLog).where(eq(auditLog.target, body.id)),
+    );
+    expect(audit.map((a) => a.action).sort()).toEqual([
+      'DELETE /api/ai-providers/:id',
+      'PATCH /api/ai-providers/:id',
+      'POST /api/ai-providers',
+    ]);
+  });
+
+  it('validates the shape and isolates organizations', async () => {
+    const a = await ownerWithOrg();
+    const b = await ownerWithOrg();
+    await subscribe(a.org);
+    await subscribe(b.org);
+    const bad = async (payload: object) =>
+      (await call(a.owner, 'POST', '/api/ai-providers', { ...custom, ...payload })).statusCode;
+    expect(await bad({ baseUrl: null })).toBe(400); // custom without a base URL
+    expect(await bad({ provider: 'anthropic' })).toBe(400); // vendor with a base URL
+    expect(await bad({ provider: 'claude_cli', baseUrl: null })).toBe(400); // not BYO-able
+    expect(await bad({ baseUrl: 'https://user:pw@llm.example.com' })).toBe(400);
+    expect(await bad({ models: { 'contract.review': 'x' } })).toBe(400);
+    expect(await bad({ provider: 'anthropic', baseUrl: null, apiKey: undefined })).toBe(400);
+
+    const own = (await call(a.owner, 'POST', '/api/ai-providers', custom)).json();
+    expect((await call(b.owner, 'GET', '/api/ai-providers')).json()).toEqual([]);
+    const other = await call(b.owner, 'PATCH', `/api/ai-providers/${own.id}`, { enabled: false });
+    expect(other.statusCode).toBe(404);
+    expect((await call(b.owner, 'DELETE', `/api/ai-providers/${own.id}`)).statusCode).toBe(404);
+    const options = (await call(a.owner, 'GET', '/api/ai-providers/options')).json();
+    expect(options.purposes).toContain('project.summary');
+    expect(options.purposes).not.toContain('judge');
+    expect(options.providers.map((p: { id: string }) => p.id)).not.toContain('claude_cli');
   });
 });

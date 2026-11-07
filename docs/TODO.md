@@ -1,5 +1,21 @@
 # Known limitations / backlog
 
+- **LiteLLM's dependencies fail the license gate (blocks CI of ADR 0022).** `pnpm check:licenses`
+  rejects `jinja2`, `fastuuid`, `aiosignal`, `s3transfer`, `tokenizers`, `tiktoken`,
+  `python-dateutil` (metadata the gate cannot map) and `regex` (`Apache-2.0 AND CNRI-Python`). No
+  exception was added. Owner decision needed: amend ADR 0005 (classifier mapping + CNRI-Python),
+  or move the LiteLLM route to the LiteLLM Proxy container (docs/adr/0022-llm-providers.md).
+- **Billing page does not show the calls/tokens limit** of unmetered models (`llmUsageMonthly`,
+  worker/billing.py `check_llm_usage`); the API's billing response and the web page only show the
+  money limit. Add a usage block next to `llmSpend`, and an alert on
+  `billing_llm_usage_blocked_total` like `LlmSpendLimitHit`.
+- **llm-cli limits are per process** (services/llm-cli/src/pool.ts): run one replica. If one is not
+  enough, move the per-subscription counters and cooldowns to Redis.
+- **vLLM CPU path not verified end to end.** On the dev host (AVX2 only, load ~25) the
+  `local-llm-cpu` container loaded SmolLM2-135M and allocated its KV cache, then stalled before
+  serving (2026-11-07); the vLLM route is tested against an OpenAI-compatible mock only. Retry on
+  an AVX-512 host or a GPU box.
+
 - **2FA/passkey audit rows are not atomic with the change** (`apps/api/src/mfa.ts`): written
   after Better Auth commits, so a crash in between loses the row. Fix if it matters: Better Auth
   database hooks inside its transaction once they cover plugin models.

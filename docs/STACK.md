@@ -30,6 +30,13 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | chatwoot-sidekiq  | support       |               445 |        1024 |       0.3% |
 | chatwoot-postgres | support       |                70 |         512 |       5.5% |
 
+Since ADR 0022 the worker imports LiteLLM: measured 2026-11-07, the worker process' RSS after
+importing the gateway is ~194 MiB (~81 MiB without LiteLLM), so its limit is now 512 MiB. The
+`llm-cli` container (default service, not in the snapshot) is a small Node server plus one CLI
+process per running request (Claude Code and Gemini CLI are Node programs); its limit of 2 GiB
+fits a few concurrent runs, raise it with the subscriptions' `concurrency`. The `local-llm`
+profiles are sized by the model (docs/llm-providers.md "VRAM sizing").
+
 Totals (used / limit): default stack ~612 / 2304 MiB, observability ~670 / 2432 MiB,
 GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.1 GiB. Jaeger keeps traces in memory, so its
 use grows with traffic until the limit; Prometheus and Loki grow with retention (volumes, not

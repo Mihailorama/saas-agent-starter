@@ -17,6 +17,7 @@ import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
 import { AiCallsPage } from '@/pages/ai-calls';
+import { AiProvidersPage } from '@/pages/ai-providers';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { ApiKeysPage } from '@/pages/api-keys';
 import { BillingPage } from '@/pages/billing';
@@ -136,6 +137,12 @@ const webhooksRoute = createRoute({
   component: WebhooksPage,
 });
 
+const aiProvidersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/ai-providers',
+  component: AiProvidersPage,
+});
+
 const securityRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/security',
@@ -156,6 +163,7 @@ const router = createRouter({
       securityRoute,
       apiKeysRoute,
       webhooksRoute,
+      aiProvidersRoute,
       billingRoute,
     ]),
   ]),

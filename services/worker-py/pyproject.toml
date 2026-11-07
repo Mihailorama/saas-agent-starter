@@ -5,10 +5,10 @@ description = "Temporal worker for AI/data processing. Rust hot paths via saas-c
 requires-python = ">=3.12"
 license = "MIT-0"
 dependencies = [
-  "anthropic>=2.5.0",
   "asyncpg>=0.32",
   "cryptography>=46",
   "httpx2>=2.16.0",
+  "litellm>=1.108.2",
   "openai>=3.46.0",
   "opentelemetry-exporter-otlp-proto-http>=1.45",
   "opentelemetry-sdk>=1.45",

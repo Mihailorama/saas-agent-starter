@@ -98,6 +98,33 @@ export const aiCalls = pgTable(
   ],
 );
 
+/**
+ * AI providers an organization brings itself (BYO, docs/llm-providers.md): a provider of
+ * config/ai-models.json (`provider`, kind api/aggregator/custom), its API key and, for the custom
+ * kind, a base URL; `models` maps a purpose to the model id the org wants for it. The key is
+ * stored encrypted like webhook secrets (`v1:<key id>:<iv>:<data>`, AES-256-GCM,
+ * WEBHOOK_ENCRYPTION_KEYS, bound to `<org id>/<id>`); only the worker's gateway decrypts it, and
+ * only for this organization's calls.
+ */
+export const aiProviders = pgTable(
+  'ai_providers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    name: text('name').notNull(),
+    provider: text('provider').notNull(),
+    baseUrl: text('base_url'),
+    apiKey: text('api_key'),
+    /** Last 4 characters of the key, to recognise it in settings. */
+    apiKeyHint: text('api_key_hint'),
+    models: jsonb('models').$type<Record<string, string>>().notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.orgId), tenantIsolation()],
+);
+
 /** Files in S3. The object key is derived from ids; access is checked via this row (RLS). */
 export const attachments = pgTable(
   'attachments',

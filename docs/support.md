@@ -227,7 +227,7 @@ Chats, emails and Telegram messages are personal data. Deployments with data-res
 requirements self-host Chatwoot (this profile) in the required jurisdiction instead of using
 Chatwoot Cloud, and keep the rest of the path there too: a self-hosted tracker (Plane, not
 GitHub), a triage model served from an allowed endpoint (a contour in `config/ai-models.json`
-with an OpenAI-compatible `OPENAI_BASE_URL`), and the Chatwoot version check blocked if nothing
+with a self-hosted or custom OpenAI-compatible endpoint, docs/llm-providers.md), and the Chatwoot version check blocked if nothing
 may leave. Telegram messages transit Telegram's own servers; that is the user's choice of channel,
 but Chatwoot's copy stays where you host it.
 

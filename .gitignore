@@ -17,3 +17,5 @@ deploy/env/*.env
 evals/**/.out/
 evals/**/.effective.json
 evals/**/pulled.jsonl
+# Subscription logins for the llm-cli container (docs/llm-providers.md); never commit them.
+.secrets/

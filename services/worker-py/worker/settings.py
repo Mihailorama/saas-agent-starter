@@ -46,9 +46,19 @@ AI_CONTENT_RETENTION_DAYS = int(os.environ.get("AI_CONTENT_RETENTION_DAYS", "180
 # Model for the project summary. No default on purpose: unset = feature off.
 AI_PROJECT_SUMMARY_PROVIDER = os.environ.get("AI_PROJECT_SUMMARY_PROVIDER", "")
 AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
-# Provider credentials: ANTHROPIC_API_KEY and OPENAI_API_KEY are read by the SDKs.
-# OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
-OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+# Providers (docs/llm-providers.md): `providers` in AI_MODELS_FILE names the env variables with
+# each provider's key and base URL (ANTHROPIC_API_KEY, VLLM_BASE_URL, ...); read at startup.
+# CLI subscriptions: the llm-cli container (services/llm-cli) and its bearer token.
+LLM_CLI_URL = os.environ.get("LLM_CLI_URL", "")
+LLM_CLI_TOKEN = os.environ.get("LLM_CLI_TOKEN", "")
+AI_REQUEST_TIMEOUT_SECONDS = float(os.environ.get("AI_REQUEST_TIMEOUT_SECONDS", "120"))
+# A CLI run includes the CLI's start-up and the llm-cli queue; keep it above LLM_CLI_TIMEOUT_MS.
+AI_CLI_TIMEOUT_SECONDS = float(os.environ.get("AI_CLI_TIMEOUT_SECONDS", "330"))
+# Organization-owned providers (ai_providers): custom base URLs in non-global ranges are refused
+# like webhook targets; list CIDRs to allow some anyway (an on-prem model server).
+AI_BYO_ALLOWED_CIDRS = [
+    c.strip() for c in os.environ.get("AI_BYO_ALLOWED_CIDRS", "").split(",") if c.strip()
+]
 
 # Outbound webhooks (worker/webhooks.py). Non-global addresses (private, loopback, link-local...)
 # are refused; list CIDRs here to allow some anyway (e.g. an on-prem receiver). Dev/tests only
@@ -57,7 +67,8 @@ WEBHOOK_ALLOWED_CIDRS = [
     c.strip() for c in os.environ.get("WEBHOOK_ALLOWED_CIDRS", "").split(",") if c.strip()
 ]
 WEBHOOK_MAX_PAYLOAD_BYTES = int(os.environ.get("WEBHOOK_MAX_PAYLOAD_BYTES", "65536"))
-# Same value as the API's: `id:secret,...`, first one active (worker.webhooks.parse_keys).
+# Same value as the API's: `id:secret,...`, first one active (worker.webhooks.parse_keys). Also
+# encrypts the API keys of organization-owned AI providers.
 WEBHOOK_ENCRYPTION_KEYS = os.environ.get("WEBHOOK_ENCRYPTION_KEYS", "")
 # Disable an endpoint after this many failed deliveries in a row (0 = never); 410 disables at once.
 WEBHOOK_DISABLE_AFTER_FAILURES = int(os.environ.get("WEBHOOK_DISABLE_AFTER_FAILURES", "5"))
