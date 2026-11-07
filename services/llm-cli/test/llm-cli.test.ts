@@ -30,24 +30,24 @@ async function sub(
   env: Record<string, string>,
   concurrency = 1,
 ): Promise<Subscription> {
+  const home = await dir();
   return {
     name,
     concurrency,
-    home: await dir(),
-    env: { PATH: process.env.PATH ?? '', FAKE_SUB: name, ...env },
+    home,
+    env: { PATH: process.env.PATH ?? '', HOME: home, FAKE_SUB: name, ...env },
   };
 }
 
-async function run(as: string, extra: Record<string, string> = {}) {
+async function run(as: string, extra: Record<string, string> = {}, messages = MESSAGES) {
   const log = join(await dir(), 'log.jsonl');
   const s = await sub('s1', { FAKE_AS: as, FAKE_LOG: log, ...extra });
   const result = await runCli({
     bin: FAKE,
-    adapter: adapters[as] ?? command([FAKE, '--model', '{model}', '-p', '{prompt}']),
+    adapter: adapters[as] ?? command([FAKE, '--model', '{model}', '--print']),
     model: 'model-x',
-    messages: MESSAGES,
+    messages,
     env: s.env,
-    cwd: s.home,
     timeoutMs: 10_000,
   });
   const [call] = await lines(log);
@@ -84,7 +84,7 @@ describe('CLI adapters (fake binary)', () => {
     );
   });
 
-  it('codex: exec --json from stdin, read-only, instructions lead the prompt', async () => {
+  it('codex: exec --json from stdin, read-only, no tools, instructions lead the prompt', async () => {
     const { result, call } = await run('codex');
     assert.deepEqual(call.args, [
       'exec',
@@ -92,9 +92,25 @@ describe('CLI adapters (fake binary)', () => {
       'model-x',
       '--json',
       '--skip-git-repo-check',
+      '--ephemeral',
+      '--ignore-user-config',
+      '--ignore-rules',
       '--sandbox',
       'read-only',
-      '--ephemeral',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'web_search="disabled"',
+      '--disable',
+      'shell_tool',
+      '--disable',
+      'unified_exec',
+      '--disable',
+      'view_image',
+      '--disable',
+      'multi_agent',
+      '--disable',
+      'goals',
       '-',
     ]);
     assert.equal(call.stdin, '<instructions>\nBe brief.\n</instructions>\n\nSummarize: Apollo');
@@ -106,10 +122,24 @@ describe('CLI adapters (fake binary)', () => {
     });
   });
 
-  it('gemini: JSON output, system prompt from GEMINI_SYSTEM_MD', async () => {
+  it('gemini: JSON output, deny-all tool policy, system prompt from GEMINI_SYSTEM_MD', async () => {
     const { result, call } = await run('gemini');
-    assert.deepEqual(call.args, ['--model', 'model-x', '--output-format', 'json', '-p', ' ']);
+    const policy = call.args[call.args.indexOf('--policy') + 1];
+    assert.deepEqual(call.args, [
+      '--model',
+      'model-x',
+      '--output-format',
+      'json',
+      '--skip-trust',
+      '--policy',
+      policy,
+      '-p',
+      ' ',
+    ]);
+    assert.equal(call.policy, '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n');
+    assert.ok(call.envKeys.includes('GOOGLE_GENAI_USE_GCA'));
     assert.equal(call.system, 'Be brief.');
+    assert.equal(call.stdin, 'Summarize: Apollo');
     assert.deepEqual(result, {
       text: 'answer from s1',
       model: 'model-x',
@@ -118,18 +148,29 @@ describe('CLI adapters (fake binary)', () => {
     });
   });
 
-  it('command: argv template for any other CLI, plain text', async () => {
+  it('command: argv template for any other CLI, prompt on stdin, plain text', async () => {
     const { result, call } = await run('other');
-    assert.deepEqual(call.args, ['--model', 'model-x', '-p', 'Be brief.\n\nSummarize: Apollo']);
-    assert.equal(call.stdin, '');
+    assert.deepEqual(call.args, ['--model', 'model-x', '--print']);
+    assert.equal(call.stdin, 'Be brief.\n\nSummarize: Apollo');
     assert.equal(result.text, 'answer from s1');
+    assert.throws(() => command([FAKE, '-p', '{prompt}']), /stdin/);
+  });
+
+  it('never puts the prompt on argv: option-like and large prompts go on stdin', async () => {
+    const big = `--help ${'x'.repeat(3 * 1024 * 1024)}`; // above Linux's per-argument limit
+    for (const as of ['claude', 'codex', 'gemini', 'other']) {
+      const { call } = await run(as, {}, [{ role: 'user', content: big }]);
+      assert.ok(call.stdin.endsWith(big), as);
+      assert.ok(!call.args.some((a: string) => a.includes('--help')), as);
+    }
   });
 
   it('runs with only the subscription env, in a scratch dir, and classifies failures', async () => {
     process.env.LLM_CLI_TOKEN = TOKEN;
     const { call } = await run('claude');
     assert.ok(!call.envKeys.includes('LLM_CLI_TOKEN'));
-    assert.match(call.cwd, /run-/);
+    assert.match(call.cwd, /llm-cli-run-/);
+    assert.ok(!call.cwd.startsWith(call.home), 'the login (HOME) is outside the workspace');
     await assert.rejects(
       run('claude', { FAKE_MODE: 'ratelimit' }),
       (e: CliError) => e.kind === 'rate_limited',
@@ -145,7 +186,6 @@ describe('CLI adapters (fake binary)', () => {
       model: 'm',
       messages: MESSAGES,
       env: s.env,
-      cwd: s.home,
       timeoutMs: 200,
     });
     await assert.rejects(slow, (e: CliError) => e.kind === 'timeout');

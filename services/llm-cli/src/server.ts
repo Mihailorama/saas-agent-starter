@@ -165,7 +165,6 @@ export function createApp(clis: Map<string, Cli>, opts: { token: string; timeout
           model: parsed.model,
           messages: parsed.messages,
           env: sub.env,
-          cwd: sub.home,
           timeoutMs: opts.timeoutMs,
         });
       });

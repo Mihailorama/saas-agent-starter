@@ -1,12 +1,16 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /**
- * One vendor CLI run, non-interactive, explicit model, no tools, structured output where the CLI
- * has it (docs/llm-providers.md "CLI subscriptions"). Flags checked against each CLI's docs and
- * `--help` on 2026-11-07; a CLI release can change them, so adapters stay small and tested
- * against a fake binary (test/fake-cli.mjs).
+ * One vendor CLI run, non-interactive, explicit model, no tools, prompt on stdin, structured
+ * output where the CLI has it (docs/llm-providers.md "CLI subscriptions"). Each run's HOME holds
+ * the CLI's login, so no tool may read files or run commands: a prompt injection could otherwise
+ * copy the subscription token into the answer. Flags checked against each CLI's docs and `--help`
+ * on 2026-11-07, and the tool list each CLI sends checked against a local mock of the vendor API
+ * (Codex 0.167.0, Gemini CLI 0.67.0, the Dockerfile's versions); a CLI release can change them,
+ * so adapters stay small and tested against a fake binary (test/fake-cli.mjs).
  */
 export type Message = { role: 'system' | 'user' | 'assistant'; content: string };
 export type Result = {
@@ -84,7 +88,15 @@ type CodexEvent = {
   message?: string;
 };
 
-/** OpenAI Codex: `codex exec --json` JSONL events; no system prompt flag, so it leads the prompt. */
+/**
+ * OpenAI Codex: `codex exec --json` JSONL events; no system prompt flag, so it leads the prompt.
+ * Tools off via `codex exec --help` (`--disable <feature>` = `-c features.<name>=false`) and the
+ * feature list of `codex features list`: no shell (`shell_tool`, `unified_exec`), no file or image
+ * reads (`view_image`), no web search, no sub-agents (`multi_agent`, which also brings
+ * `tool_search`), no goals; no user config, rules or MCP servers. Left by Codex itself (model
+ * catalog, no switch): `apply_patch`, refused by the read-only sandbox with approvals `never`, and
+ * `request_user_input`; neither reads files.
+ */
 const codex: Adapter = {
   prepare: (model, system, prompt) => ({
     args: [
@@ -93,9 +105,19 @@ const codex: Adapter = {
       model,
       '--json',
       '--skip-git-repo-check',
+      '--ephemeral',
+      '--ignore-user-config',
+      '--ignore-rules',
       '--sandbox',
       'read-only',
-      '--ephemeral',
+      '-c',
+      'approval_policy="never"',
+      '-c',
+      'web_search="disabled"',
+      ...['shell_tool', 'unified_exec', 'view_image', 'multi_agent', 'goals'].flatMap((f) => [
+        '--disable',
+        f,
+      ]),
       '-',
     ],
     stdin: system ? `<instructions>\n${system}\n</instructions>\n\n${prompt}` : prompt,
@@ -123,16 +145,40 @@ const codex: Adapter = {
   },
 };
 
-/** Gemini CLI: `gemini -p --output-format json` (response, stats); system prompt from a file. */
+/**
+ * Gemini CLI: `gemini -p --output-format json` (response, stats); system prompt from a file.
+ * Tools off with a policy file that denies every tool (geminicli.com/docs/reference/policy-engine:
+ * a global `deny` rule removes the tool from what the model is offered; `*` matches all, MCP
+ * included). Without it, headless runs still offer read_file, grep_search, glob, web search.
+ * `--skip-trust`: the run directory is a fresh scratch dir (the CLI refuses untrusted ones in
+ * headless mode). GOOGLE_GENAI_USE_GCA: the subscription login (oauth_creds.json), not an API key.
+ */
+const DENY_ALL = '[[rule]]\ntoolName = "*"\ndecision = "deny"\npriority = 999\n';
 const gemini: Adapter = {
   async prepare(model, system, prompt, tmp) {
-    const env: Record<string, string> = {};
+    const env: Record<string, string> = { GOOGLE_GENAI_USE_GCA: 'true' };
     if (system) {
       env.GEMINI_SYSTEM_MD = join(tmp, 'system.md');
       await writeFile(env.GEMINI_SYSTEM_MD, system, { mode: 0o600 });
     }
+    const policy = join(tmp, 'no-tools.toml');
+    await writeFile(policy, DENY_ALL, { mode: 0o600 });
     // -p is appended to stdin and forces non-interactive mode; the prompt itself goes on stdin.
-    return { args: ['--model', model, '--output-format', 'json', '-p', ' '], stdin: prompt, env };
+    return {
+      args: [
+        '--model',
+        model,
+        '--output-format',
+        'json',
+        '--skip-trust',
+        '--policy',
+        policy,
+        '-p',
+        ' ',
+      ],
+      stdin: prompt,
+      env,
+    };
   },
   parse(stdout) {
     const res = json(stdout);
@@ -151,21 +197,31 @@ const gemini: Adapter = {
 };
 
 /**
- * Any other CLI (Kimi Code, Grok Build, ...): an argv template from the config with `{model}` and
- * optionally `{prompt}` (else the prompt goes on stdin); plain-text output, no usage.
+ * Any other CLI (Kimi Code, Grok Build, ...): an argv template from the config with `{model}`; the
+ * prompt always goes on stdin (never argv: text starting with `--` would parse as an option, and a
+ * large prompt hits E2BIG). Plain-text output, no usage. Whether it can run without tools is that
+ * CLI's business: configure it tool-less in the template (docs/llm-providers.md).
  */
-export const command = (argv: string[]): Adapter => ({
-  prepare(model, system, prompt) {
-    const full = system ? `${system}\n\n${prompt}` : prompt;
-    const inArgs = argv.some((a) => a.includes('{prompt}'));
-    return {
-      args: argv.slice(1).map((a) => a.replaceAll('{model}', model).replaceAll('{prompt}', full)),
-      stdin: inArgs ? '' : full,
-      env: {},
-    };
-  },
-  parse: (stdout) => ({ text: stdout.trim(), model: null, inputTokens: null, outputTokens: null }),
-});
+export const command = (argv: string[]): Adapter => {
+  if (argv.some((a) => a.includes('{prompt}'))) {
+    throw new Error('command: {prompt} is not supported, the prompt is sent on stdin');
+  }
+  return {
+    prepare(model, system, prompt) {
+      return {
+        args: argv.slice(1).map((a) => a.replaceAll('{model}', model)),
+        stdin: system ? `${system}\n\n${prompt}` : prompt,
+        env: {},
+      };
+    },
+    parse: (stdout) => ({
+      text: stdout.trim(),
+      model: null,
+      inputTokens: null,
+      outputTokens: null,
+    }),
+  };
+};
 
 export const adapters: Record<string, Adapter> = { claude, codex, gemini };
 
@@ -186,8 +242,9 @@ export function render(messages: Message[]) {
 const MAX_OUTPUT = 10 * 1024 * 1024;
 
 /**
- * Runs the CLI in `cwd` with exactly `env` (never the shim's own environment, so its token and
- * other subscriptions' secrets are not visible). Prompt and output are never logged.
+ * Runs the CLI with exactly `env` (never the shim's own environment, so its token and other
+ * subscriptions' secrets are not visible), in a scratch dir outside the subscription's HOME (so
+ * the login is not in the CLI's workspace). Prompt and output are never logged.
  */
 export async function runCli(opts: {
   bin: string;
@@ -195,11 +252,10 @@ export async function runCli(opts: {
   model: string;
   messages: Message[];
   env: Record<string, string>;
-  cwd: string;
   timeoutMs: number;
 }): Promise<Result> {
   const { system, prompt } = render(opts.messages);
-  const tmp = await mkdtemp(join(opts.cwd, 'run-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'llm-cli-run-'));
   try {
     const run = await opts.adapter.prepare(opts.model, system, prompt, tmp);
     const { code, stdout, stderr, timedOut } = await exec(opts.bin, run.args, {

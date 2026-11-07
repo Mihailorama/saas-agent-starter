@@ -2,7 +2,14 @@
 // Stands in for claude / codex / gemini / any CLI in tests. FAKE_AS picks the output format,
 // FAKE_MODE the outcome (ok | ratelimit | fail | slow | is_error), FAKE_LOG records each run and
 // FAKE_STATE (a directory) tracks how many runs overlap.
-import { appendFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -15,14 +22,14 @@ if (mark) {
   writeFileSync(mark, '');
 }
 const overlap = env.FAKE_STATE ? readdirSync(env.FAKE_STATE).length : 1;
-const system = env.GEMINI_SYSTEM_MD
-  ? (await import('node:fs')).readFileSync(env.GEMINI_SYSTEM_MD, 'utf8')
-  : null;
+const read = (f) => (f ? readFileSync(f, 'utf8') : null);
+const system = read(env.GEMINI_SYSTEM_MD);
+const policy = args.includes('--policy') ? read(args[args.indexOf('--policy') + 1]) : null;
 if (env.FAKE_LOG) {
   const envKeys = Object.keys(env).sort();
   appendFileSync(
     env.FAKE_LOG,
-    `${JSON.stringify({ args, stdin, envKeys, sub: env.FAKE_SUB, overlap, system, cwd: process.cwd() })}\n`,
+    `${JSON.stringify({ args, stdin, envKeys, sub: env.FAKE_SUB, overlap, system, policy, cwd: process.cwd(), home: env.HOME })}\n`,
   );
 }
 const mode = env.FAKE_MODE ?? 'ok';
