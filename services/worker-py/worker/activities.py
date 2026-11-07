@@ -6,6 +6,7 @@ from temporalio.exceptions import ApplicationError
 
 from worker import prompts
 from worker.ai import Gateway, Message
+from worker.billing import SpendLimitExceeded
 from worker.text import simhash
 
 
@@ -97,20 +98,25 @@ class Activities:
             return project["ai_summary"]
 
         prompt = prompts.load(*SUMMARY_PROMPT)
-        result = await self.ai.call_llm(
-            SUMMARY_PURPOSE,
-            [
-                Message("system", prompt.text),
-                Message("user", summary_input(project["name"], project["description"])),
-            ],
-            model=self.summary_model.model,
-            provider=self.summary_model.provider,
-            org_id=event.orgId,
-            actor_id=event.actorId,
-            prompt_template_id=prompt.id,
-            prompt_template_version=prompt.version,
-            max_tokens=2048,
-        )
+        try:
+            result = await self.ai.call_llm(
+                SUMMARY_PURPOSE,
+                [
+                    Message("system", prompt.text),
+                    Message("user", summary_input(project["name"], project["description"])),
+                ],
+                model=self.summary_model.model,
+                provider=self.summary_model.provider,
+                org_id=event.orgId,
+                actor_id=event.actorId,
+                prompt_template_id=prompt.id,
+                prompt_template_version=prompt.version,
+                max_tokens=2048,
+            )
+        except SpendLimitExceeded:
+            # No summary for now; the billing page shows the LLM spend limit as reached.
+            activity.logger.warning("project %s: summary skipped, spend limit", event.projectId)
+            return None
         async with self.pool.acquire() as conn, conn.transaction():
             await conn.execute("select set_config('app.org_id', $1, true)", event.orgId)
             updated = await conn.fetchval(

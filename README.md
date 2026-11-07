@@ -14,6 +14,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
+- **Billing**: plans with limits in `config/plans.json`, prices per currency, Stripe behind a
+  swappable provider interface (one provider per contour), webhooks via Temporal, per-org LLM
+  spend limit enforced in the AI gateway. See [docs/billing.md](docs/billing.md).
 - **Public API**: organization API keys with scopes (Better Auth API key plugin), per-key
   rate limits, OpenAPI; outbound webhooks signed per Standard Webhooks, retried by Temporal,
   with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).

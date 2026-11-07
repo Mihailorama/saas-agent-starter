@@ -104,3 +104,6 @@ FLAGS_ON = frozenset(f.strip() for f in os.environ.get("FLAGS_ON", "").split(","
 FLAGS_OFF = frozenset(f.strip() for f in os.environ.get("FLAGS_OFF", "").split(",") if f.strip())
 POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
 POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
+
+# Billing (docs/billing.md): plans and limits, shared with the API.
+PLANS_FILE = Path(os.environ.get("PLANS_FILE", _ROOT / "config" / "plans.json"))
