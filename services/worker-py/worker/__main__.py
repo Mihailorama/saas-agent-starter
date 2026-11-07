@@ -22,6 +22,7 @@ from temporalio.worker import Worker
 from worker import settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import PROVIDERS, Gateway, load_registry
+from worker.billing import BillingActivities, load_plans
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
@@ -38,6 +39,7 @@ from worker.support import (
 from worker.text import backend
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
+    BillingEventWorkflow,
     ProjectCreatedWorkflow,
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
@@ -117,6 +119,7 @@ async def main() -> None:
         if settings.POSTHOG_HOST and settings.POSTHOG_KEY
         else None
     )
+    plans = load_plans(settings.PLANS_FILE)
     ai: Gateway | None = None
     if settings.AI_CONTOUR:
         await s3.ensure_bucket()
@@ -128,6 +131,7 @@ async def main() -> None:
             providers=PROVIDERS,
             retention_days=settings.AI_CONTENT_RETENTION_DAYS,
             posthog=posthog,
+            plans=plans,
         )
     summary_model = (
         ModelChoice(settings.AI_PROJECT_SUMMARY_PROVIDER, settings.AI_PROJECT_SUMMARY_MODEL)
@@ -135,6 +139,7 @@ async def main() -> None:
         else None
     )
     activities = Activities(pool, ai, summary_model)
+    billing = BillingActivities(pool, plans)
     webhooks = WebhookActivities(
         pool,
         allowed_networks=[ip_network(c) for c in settings.WEBHOOK_ALLOWED_CIDRS],
@@ -175,6 +180,7 @@ async def main() -> None:
         task_queue=settings.TEMPORAL_TASK_QUEUE,
         workflows=[
             ProjectCreatedWorkflow,
+            BillingEventWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
             WebhookEventWorkflow,
@@ -183,6 +189,7 @@ async def main() -> None:
         activities=[
             activities.fingerprint_project,
             activities.summarize_project,
+            billing.apply_billing_event,
             support.triage,
             support.issue_closed,
             webhooks.deliver_webhook,

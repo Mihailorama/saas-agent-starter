@@ -144,9 +144,24 @@
   three strings as aliases (ADR 0005), then call Presidio in-process in the worker for
   `support.py`, and from the API hook through an opt-in sidecar of the worker image (compose
   profile `pii`) that fails closed. The browser keeps its regex (no Python there).
+- **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
+  ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
+  transaction (ADR 0019 "Alternatives").
 - **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.
 - **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.
+- **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
+  (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
+  site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`
+  service in `compose.prod.yaml` behind Caddy), run it after a successful deploy with the
+  previously deployed sha and `INDEXNOW_KEY`.
+- **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
+  others, add a runner per assistant CLI the team is logged in to (same config, same report),
+  never an API key in CI.
+- **Postiz idle cost.** ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
+  each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
+  task queues this server does not poll) listing the networks you do not use; measure before and
+  after in docs/STACK.md, and never exclude a network you post to.

@@ -1,0 +1,21 @@
+---
+// FAQ section; pair it with faqLd() in the page's jsonLd so the markup matches the visible text.
+interface Props {
+  items: { q: string; a: string }[];
+}
+const { items } = Astro.props;
+---
+
+<section aria-labelledby="faq" class="mx-auto max-w-3xl px-6 py-16">
+  <h2 id="faq" class="text-2xl font-semibold tracking-tight">Frequently asked questions</h2>
+  <div class="mt-6 divide-y rounded-lg border">
+    {
+      items.map((f) => (
+        <details class="group p-4">
+          <summary class="cursor-pointer font-medium">{f.q}</summary>
+          <p class="mt-2 text-muted-foreground">{f.a}</p>
+        </details>
+      ))
+    }
+  </div>
+</section>

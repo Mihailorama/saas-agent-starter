@@ -142,6 +142,15 @@ services:
     environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_UI_PORT: "8233" }
     ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8233"]
 
+  # Stripe's official API mock (MIT), for tests and local dev only (`--profile billing`).
+  # It validates requests against Stripe's OpenAPI spec and returns fixtures; no webhooks.
+  stripe-mock:
+    logging: *logging
+    mem_limit: 128m
+    image: stripe/stripe-mock:v0.206.0
+    profiles: [billing]
+    ports: ["127.0.0.1:${STRIPE_MOCK_PORT:-12111}:12111"]
+
   migrate:
     logging: *logging
     mem_limit: 256m
@@ -164,6 +173,11 @@ services:
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-}
+      # Billing (docs/billing.md); empty keys = checkout answers 503.
+      BILLING_CONTOUR: ${BILLING_CONTOUR:-en}
+      AI_CONTOUR: ${AI_CONTOUR:-eu}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Service desk webhooks + widget identity (docs/support.md); empty = endpoint off.
       CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:-}
       CHATWOOT_HMAC_TOKEN: ${CHATWOOT_HMAC_TOKEN:-}
@@ -405,6 +419,112 @@ services:
       start_period: 60s
       retries: 30
 
+  # --- marketing profile (docs/marketing.md, ADR 0021): the public site, Postiz (social posting,
+  # AGPL-3.0, unmodified) and SerpBear (rank tracking, MIT). Postiz reuses our Postgres (own
+  # database), Redis (db 3) and Temporal (own namespace). `docker compose up -d site` alone works.
+  site:
+    logging: *logging
+    profiles: [marketing]
+    mem_limit: 64m
+    build:
+      context: .
+      dockerfile: apps/site/Dockerfile
+      args:
+        SITE_URL: ${SITE_URL:-http://localhost:${SITE_PORT:-8090}}
+        SITE_APP_URL: ${SITE_APP_URL:-http://localhost:${WEB_PORT:-8080}}
+        SITE_OG_IMAGE: ${SITE_OG_IMAGE:-}
+        SITE_TWITTER: ${SITE_TWITTER:-}
+        SITE_NOINDEX: ${SITE_NOINDEX:-}
+        INDEXNOW_KEY: ${INDEXNOW_KEY:-}
+        VITE_RELEASE: ${GIT_SHA:-dev}
+        VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
+        VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
+        VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}
+        VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
+        VITE_GA4_ID: ${VITE_GA4_ID:-}
+    environment:
+      ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
+      CONSENT_MODE: ${CONSENT_MODE:-opt-in}
+      CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
+      CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
+    ports: ["127.0.0.1:${SITE_PORT:-8090}:8080"]
+
+  # One-shots: role + database `postiz` on our Postgres server, namespace `postiz` in our
+  # Temporal (Postiz registers its search attributes there on start).
+  postiz-db:
+    logging: *logging
+    profiles: [marketing]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'postiz'" | grep -q 1 ||
+         psql -c "create role postiz login password 'postiz'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'postiz'" | grep -q 1 ||
+         psql -c "create database postiz owner postiz")
+
+  postiz-namespace:
+    logging: *logging
+    profiles: [marketing]
+    image: temporalio/admin-tools:1.32.0
+    mem_limit: 128m
+    depends_on: { temporal: { condition: service_healthy } }
+    restart: on-failure:10
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        temporal operator cluster health --address temporal:7233 &&
+        (temporal operator namespace describe -n postiz --address temporal:7233 ||
+         temporal operator namespace create -n postiz --address temporal:7233)
+
+  postiz:
+    logging: *logging
+    profiles: [marketing]
+    image: ghcr.io/gitroomhq/postiz-app:v2.25.3
+    mem_limit: 2g # measured in docs/STACK.md
+    depends_on:
+      postiz-db: { condition: service_completed_successfully }
+      postiz-namespace: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    environment:
+      MAIN_URL: http://localhost:${POSTIZ_PORT:-4007}
+      FRONTEND_URL: http://localhost:${POSTIZ_PORT:-4007}
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:${POSTIZ_PORT:-4007}/api
+      BACKEND_INTERNAL_URL: http://localhost:3000
+      JWT_SECRET: ${POSTIZ_JWT_SECRET:-local-dev-postiz-jwt-secret}
+      DATABASE_URL: postgresql://postiz:postiz@postgres:5432/postiz
+      REDIS_URL: redis://redis:6379/3 # db 1 GlitchTip/Langfuse, db 2 Chatwoot
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: postiz
+      IS_GENERAL: "true"
+      DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-false}
+      RUN_CRON: "true"
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+    # Social network app keys (X_API_KEY, LINKEDIN_CLIENT_ID, ...): put them in .env.postiz.
+    env_file: [{ path: .env.postiz, required: false }]
+    volumes: [postiz-config:/config, postiz-uploads:/uploads]
+    ports: ["127.0.0.1:${POSTIZ_PORT:-4007}:5000"]
+
+  serpbear:
+    logging: *logging
+    profiles: [marketing]
+    image: towfiqi/serpbear:3.1.2
+    mem_limit: 512m # measured in docs/STACK.md
+    environment:
+      USER_NAME: ${SERPBEAR_USER:-admin}
+      PASSWORD: ${SERPBEAR_PASSWORD:-local-dev-serpbear-password}
+      SECRET: ${SERPBEAR_SECRET:-local-dev-serpbear-secret-change-me}
+      APIKEY: ${SERPBEAR_APIKEY:-local-dev-serpbear-api-key}
+      NEXT_PUBLIC_APP_URL: http://localhost:${SERPBEAR_PORT:-3200}
+      # Optional: Search Console data next to the ranks (same service account as seo:report).
+      SEARCH_CONSOLE_CLIENT_EMAIL: ${SERPBEAR_SEARCH_CONSOLE_CLIENT_EMAIL:-}
+      SEARCH_CONSOLE_PRIVATE_KEY: ${SERPBEAR_SEARCH_CONSOLE_PRIVATE_KEY:-}
+    volumes: [serpbear-data:/app/data] # SQLite
+    ports: ["127.0.0.1:${SERPBEAR_PORT:-3200}:3000"]
   # --- support profile: Chatwoot CE (MIT; `-ce` images are built with enterprise/ removed) as
   # the service desk. docker compose --profile support up -d ; docs/support.md, ADR 0013.
   # Own Postgres: Chatwoot's schema needs the pgvector extension, which postgres:17-alpine lacks.
@@ -595,6 +715,9 @@ volumes:
   pgdata:
   s3data:
   lokidata:
+  postiz-config:
+  postiz-uploads:
+  serpbear-data:
   chatwoot-pgdata:
   chatwoot-storage:
   clickhousedata:

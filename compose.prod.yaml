@@ -97,6 +97,11 @@ services:
       - GITHUB_WEBHOOK_SECRET
       - PLANE_WEBHOOK_SECRET
       - PLANE_PROJECT_ID
+      # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
+      - AI_CONTOUR=${AI_CONTOUR:-}
+      - BILLING_CONTOUR
+      - STRIPE_SECRET_KEY
+      - STRIPE_WEBHOOK_SECRET
     healthcheck: # readiness: database + Redis reachable
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null"]
       interval: 5s
@@ -164,6 +169,8 @@ services:
       - FLAGS_OFF
       - POSTHOG_KEY
       - POSTHOG_HOST
+      # billing: plans and LLM spend limits (default: config/plans.json in the image)
+      - PLANS_FILE
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }
