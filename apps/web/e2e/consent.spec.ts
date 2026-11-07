@@ -52,7 +52,11 @@ test('opt-in: nothing loads before "Allow", withdrawing stops it again', async (
   // Withdraw: cookies are cleared and the page reloads without the sink.
   await page.getByRole('button', { name: 'Cookie settings' }).click();
   const prefs = page.getByRole('dialog', { name: 'Privacy choices' });
-  await prefs.getByRole('button', { name: 'Only necessary' }).click();
+  // Withdrawing reloads the page itself: wait for that load, or our reload races it (ERR_ABORTED).
+  await Promise.all([
+    page.waitForEvent('load'),
+    prefs.getByRole('button', { name: 'Only necessary' }).click(),
+  ]);
   await page.waitForLoadState('networkidle');
   google.length = 0;
   await page.reload();

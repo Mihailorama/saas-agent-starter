@@ -165,7 +165,8 @@ docker compose --profile booking up -d              # Cal.diy on http://localhos
 - `infra/caldiy/build.sh` builds upstream's own Dockerfile (repository root) at the commit pinned
   in the script, with the build args its README lists (`MAX_OLD_SPACE_SIZE`,
   `CALCOM_TELEMETRY_DISABLED`); no source changes. CI job `caldiy-image` builds the same, scans it
-  with Trivy (fails on fixable critical vulnerabilities) and boots it on our Postgres; on a `v*`
+  with Trivy (`infra/caldiy/scan.sh`: fails on fixable critical vulnerabilities; it skips three
+  build-only Go binaries in `node_modules`, with the reasons in the script) and boots it on our Postgres; on a `v*`
   tag `release.yml` pushes `ghcr.io/<owner>/<repo>/caldiy:<version>` and deploys pin it by digest
   (`IMAGE_CALDIY`, [docs/deploy.md](deploy.md)). Locally `CALDIY_IMAGE` can point at that image
   instead of building.

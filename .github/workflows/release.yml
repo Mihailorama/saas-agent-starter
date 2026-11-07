@@ -119,9 +119,7 @@ jobs:
             exit 1
           fi
           infra/caldiy/build.sh "$ref"
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            ghcr.io/aquasecurity/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 \
-            image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 "$ref"
+          infra/caldiy/scan.sh "$ref"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$ref"
           digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)

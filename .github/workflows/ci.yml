@@ -123,9 +123,7 @@ jobs:
       - run: infra/caldiy/build.sh caldiy:ci
       - name: Scan with Trivy (fails on fixable critical vulnerabilities)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            ghcr.io/aquasecurity/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 \
-            image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 caldiy:ci
+          infra/caldiy/scan.sh caldiy:ci
       - name: Boot on our Postgres (migrations, login page, memory)
         env:
           CALDIY_IMAGE: caldiy:ci
