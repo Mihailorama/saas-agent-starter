@@ -1,8 +1,10 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect as baseExpect, type Page, test } from '@playwright/test';
 
 // Runs against the build with GA4 configured (playwright.config.ts). Requests that leave
 // localhost are recorded and aborted. The regime meta tag is injected the way nginx does it.
 test.use({ baseURL: `http://localhost:${process.env.PLAYWRIGHT_CONSENT_PORT ?? '5174'}` });
+// The first page of this dev server also compiles the lazily imported consent library.
+const expect = baseExpect.configure({ timeout: 15_000 });
 
 async function open(page: Page, opts: { mode?: 'opt-out'; gpc?: boolean } = {}) {
   const google: string[] = [];
