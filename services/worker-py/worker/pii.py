@@ -11,6 +11,7 @@ Also served over HTTP to the API by `python -m worker.pii` (compose profile `pii
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 from functools import cache
@@ -38,6 +39,9 @@ NOT_PII_LABELS = [
     *("CARDINAL", "DATE", "EVENT", "FAC", "GPE", "LANGUAGE", "LAW", "LOC", "MONEY"),
     *("NORP", "ORDINAL", "ORG", "PERCENT", "PRODUCT", "QUANTITY", "TIME", "WORK_OF_ART"),
 ]
+# Presidio's email recognizer misses addresses inside paths/query strings and some TLDs
+# (`/invite/bob@acme.io`, `a+x@corp.internal`); this bounded pattern runs after it, as before.
+EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+")
 MAX_CHARS = 20_000  # per text; longer input is cut before analysis
 
 
@@ -74,7 +78,8 @@ def redact(text: str) -> str:
     analyzer, anonymizer, operators = _engines()
     with _lock:
         found = analyzer.analyze(text=text, language=LANGUAGE, entities=list(REPLACEMENTS))
-        return anonymizer.anonymize(text=text, analyzer_results=found, operators=operators).text
+        out = anonymizer.anonymize(text=text, analyzer_results=found, operators=operators).text
+    return EMAIL.sub(REPLACEMENTS["EMAIL_ADDRESS"], out)
 
 
 def warm_up() -> None:

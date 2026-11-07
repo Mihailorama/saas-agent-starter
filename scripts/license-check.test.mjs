@@ -32,8 +32,7 @@ test('fails closed on unknown, ambiguous, malformed and disallowed strings', () 
   all(
     [
       'BSD', // which BSD?
-      'Apache Software License', // which version?
-      'Apache',
+      'Apache', // not the classifier
       'UNKNOWN',
       '',
       'MIT-ish',

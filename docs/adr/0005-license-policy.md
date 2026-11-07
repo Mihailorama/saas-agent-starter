@@ -23,12 +23,19 @@ copyleft license, including the file-level MPL-2.0, which kept Tailwind on v3 an
     summarize changes in derivative works. `regex` declares it.
 - Expressions are parsed with `license-expression` (Apache-2.0, `scripts/spdx-allowed.py`), not
   by hand. Package metadata that is not SPDX passes only through an exact alias in
-  `scripts/license-check.mjs` (`ALIASES`, e.g. "BSD License", "Apache 2.0",
+  `scripts/license-check.mjs` (`ALIASES`, e.g. "BSD License", "Apache Software License", "Apache 2.0",
   "Apache License, Version 2.0", "ISC License", "MIT License", owner decision 2026-11-07).
   Everything else fails closed: an unknown id, a string the parser rejects, an ambiguous name
-  ("BSD", "Apache Software License" without a version) and any `WITH` exception. The JS SPDX
+  ("BSD") and any `WITH` exception. The two trove classifiers "BSD License" and
+  "Apache Software License" name a family without a version; every member of both families is
+  permissive, so they map to BSD-3-Clause and Apache-2.0 (tokenizers, python-dateutil and jinja2
+  declare only these). The JS SPDX
   libraries (`spdx-expression-parse`, `spdx-satisfies`, `spdx-correct`) are not used: all of them
-  depend on `spdx-exceptions` (CC-BY-3.0), which the allowlist does not include. Adding an alias
+  depend on `spdx-exceptions` (CC-BY-3.0), which the allowlist does not include.
+  `license-expression` itself ships a CC-BY-4.0 data file (`scancode-licensedb-index.json`):
+  accepted by the owner (2026-11-07) because CC-BY only asks to keep the credit, the credit ships
+  with the package, and the tool runs in `pnpm check` only, never in a shipped image. This does
+  not put CC-BY on the code allowlist. Adding an alias
   or a license is an owner decision, like everything in this ADR.
 - MPL-2.0 is allowed (owner decision, 2026-11-05). It is file-level copyleft: its obligations
   attach only to the MPL-licensed files themselves, and only if we modify and distribute them.

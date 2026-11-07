@@ -44,7 +44,8 @@ export async function redact(texts: string[]): Promise<string[]> {
       out.length === cut.length &&
       out.every((t) => typeof t === 'string')
     ) {
-      return out;
+      // Same email pattern after Presidio: it misses addresses in paths and query strings.
+      return out.map((t) => t.replace(EMAIL, '[email]'));
     }
     throw new Error(`status ${res.status}`);
   } catch (err) {

@@ -4,7 +4,8 @@
 // Infra container images must be listed in docs/LICENSES.md.
 // `--notices <file>` also writes THIRD_PARTY_NOTICES.md (used by `pnpm sbom`).
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 export const ALLOWED = [
   'MIT',
@@ -27,12 +28,15 @@ export const ALLOWED = [
 ];
 // Exact (trimmed) non-SPDX strings in package metadata that name an allowed license, mapped to
 // SPDX. Anything else must be a valid SPDX expression; unknown or ambiguous strings fail (e.g.
-// "BSD", or "Apache Software License", which does not say which version).
+// "BSD").
 export const ALIASES = {
   'MIT License': 'MIT',
   // Trove classifier; it does not say 2- or 3-clause, both are allowed.
   'BSD License': 'BSD-3-Clause',
   '3-Clause BSD License': 'BSD-3-Clause',
+  // Trove classifier; it does not say the version. Every Apache license (1.0, 1.1, 2.0) is
+  // permissive, the same reasoning as "BSD License" (owner-approved alias, 2026-11-07).
+  'Apache Software License': 'Apache-2.0',
   'Apache 2.0': 'Apache-2.0',
   'Apache License 2.0': 'Apache-2.0',
   'Apache License, Version 2.0': 'Apache-2.0',
@@ -64,7 +68,10 @@ export function verdicts(licenses) {
   return new Map(strings.map((l, i) => [l, ok[i] === true]));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+// pathToFileURL: a plain `file://${argv[1]}` never matches paths with spaces/symlinks or on
+// Windows, and the gate would then pass without checking anything.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href)
+  main();
 
 function main() {
   const bad = [];
@@ -106,7 +113,7 @@ function main() {
   // A classifier naming a disallowed copyleft/source-available family vetoes an allowed-looking
   // field. MPL 2.0 is allowed; MPL 1.x is not.
   const copyleft =
-    /GPL|MPL 1\.|Mozilla Public License 1\.|EUPL|SSPL|Server Side|Business Source|Commons Clause/i;
+    /GPL|General Public License|Affero|MPL 1\.|Mozilla Public License 1\.|EUPL|SSPL|Server Side|Business Source|Commons Clause/i;
   for (const p of py) {
     const expr = p['License-Expression'];
     const [field, classifier] = [p['License-Metadata'], p['License-Classifier']];

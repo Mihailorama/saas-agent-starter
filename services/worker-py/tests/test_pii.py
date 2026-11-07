@@ -11,6 +11,10 @@ from worker import pii
 # Structured PII: pattern recognizers with checksums/validation, language independent.
 FOUND = [
     ("Upload fails, mail me at a@example.com", "Upload fails, mail me at [email]"),
+    # Missed by Presidio alone, caught by the EMAIL pattern that runs after it.
+    ("from john.doe+x@corp.internal", "from [email]"),
+    ("page /invite/bob@acme.io", "page /invite/[email]"),
+    ("/orgs/abc?email=bob@acme.io", "/orgs/abc?email=[email]"),
     ("Call +1 415 555 0132 or (415) 555-0199", "Call [phone] or [phone]"),
     ("Ring +44 20 7946 0958 please", "Ring [phone] please"),
     ("Mobile 07700 900123", "Mobile [phone]"),
