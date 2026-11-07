@@ -78,7 +78,7 @@ const schema = z
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),
     // Alert-to-issue loop (docs/product-analytics.md). Empty secret = webhook disabled (401);
-    // no tracker credentials = dry run.
+    // the worker files the item (worker/tracker.py), a dry run without tracker credentials.
     POSTHOG_WEBHOOK_SECRET: z.string().optional(),
     /** PostHog app host for links in issues, e.g. https://eu.posthog.com */
     POSTHOG_APP_HOST: z.union([z.url(), z.literal('')]).optional(),
@@ -92,22 +92,11 @@ const schema = z
     POSTHOG_HOST: z.union([z.url(), z.literal('')]).optional(),
     /** Optional project secret API key (feature_flag:read): local evaluation, no request per check. */
     POSTHOG_SECRET_KEY: z.string().optional(),
-    // Tracker for alerts, feedback and support items (src/tracker.ts, docs/support.md).
-    TRACKER: z.enum(['plane', 'github']).default('plane'),
-    /** Plane API base (https://api.plane.so or self-hosted), workspace slug, project, API key. */
-    PLANE_API_URL: z.string().optional(),
-    /** Where humans open items, when it differs from PLANE_API_URL (e.g. https://app.plane.so). */
-    PLANE_APP_URL: z.string().optional(),
-    PLANE_WORKSPACE: z.string().optional(),
-    PLANE_API_TOKEN: z.string().optional(),
     /**
      * Presidio PII sidecar (compose profile `pii`), e.g. http://pii:8000. Set: survey answers are
      * redacted there and the hook fails closed (503) when it is down. Empty: emails masked only.
      */
     PII_REDACT_URL: z.union([z.url(), z.literal('')]).optional(),
-    /** Optional GitHub Issues tracker (TRACKER=github): fine-grained token, owner/name. */
-    GITHUB_TOKEN: z.string().optional(),
-    GITHUB_REPO: z.string().optional(),
     // Billing (docs/billing.md). Contour of new subscriptions; config/plans.json `contours`.
     BILLING_CONTOUR: z.string().default('en'),
     /** Contour of config/ai-models.json: which cost currencies the billing page shows. */

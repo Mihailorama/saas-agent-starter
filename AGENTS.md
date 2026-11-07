@@ -49,10 +49,9 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/access.ts       org roles (Better Auth AC) + organization API key plugin config
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
-                      hooks.ts = PostHog alerts, support.ts = Chatwoot/Plane/GitHub hooks,
+                      hooks.ts = PostHog alerts (-> S3 + TrackerItemWorkflow),
+                      support.ts = Chatwoot/Plane/GitHub hooks,
                       privacy.ts = data export/deletion requests (docs/privacy.md)
-  src/tracker.ts      the one tracker for alerts, feedback, support items and release comments:
-                      Plane (default, Intake) or GitHub (optional); config/tracker.json
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md)
@@ -77,7 +76,8 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log,
                       secret decryption, auto-disable, retention (daily Temporal Schedule)
   worker/support.py   service desk triage, return path
-  worker/tracker.py   twin of apps/api/src/tracker.ts (Plane default, GitHub optional)
+  worker/tracker.py   the one tracker client (Plane SDK default, GitHub optional): alerts,
+                      feedback, triage items; worker/released.py = release comments
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts (posthog SDK)
   worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
@@ -106,7 +106,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
                     deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract),
-                    check-flags.mjs, flags.mjs (flags:sync), released.mjs (release comments),
+                    check-flags.mjs, flags.mjs (flags:sync),
                     eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
@@ -156,8 +156,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
 - Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items, alerts and feedback in
-  Plane (Intake, official Node SDK), GitHub Issues (`@octokit/rest`) optional; triage is a Temporal
-  workflow in the worker, no own ticket table (ADR 0013).
+  Plane (Intake, official Python SDK `plane-sdk`), GitHub Issues (plain REST) optional, one
+  tracker client in the worker; triage is a Temporal workflow, no own ticket table (ADR 0013).
 - Web API types generated from the API's OpenAPI document (`openapi-typescript`), calls through
   `openapi-fetch`; no hand-written response types (`apps/web/src/lib/api.ts`).
 
@@ -416,8 +416,9 @@ Details: docs/releases.md.
 - PR title rule: the title must be a Conventional Commit (`feat: ...`, `fix(api): ...`,
   `chore: ...`) because the squash-merge title is the commit release-please turns into the
   changelog; `feat`/`fix` titles are user-facing release notes, so write them for users.
-- Name the tracker item in the PR title or body: Plane `APP-123` (default), or `Closes #<issue>`
-  with `TRACKER=github`. The release then comments "Released in vX.Y.Z" on it (never closes it).
+- Close the tracker item from the PR title or body: `Fixes APP-123` (Plane, default), or
+  `Closes #<issue>` with `TRACKER=github`. The release then comments "Released in vX.Y.Z" on it
+  (never closes it); a bare mention gets nothing.
 - Never create tags or releases by hand; merging the release-please PR does it.
 
 ## Security rules

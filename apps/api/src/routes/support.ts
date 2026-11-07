@@ -61,7 +61,7 @@ const GithubEvent = z.object({
     .optional(),
   comment: z.object({ body: z.string() }).optional(),
 });
-/** scripts/released.mjs comments `Released in vX.Y.Z (via #PR). ...` on GitHub or Plane items. */
+/** scripts/released.py comments `Released in vX.Y.Z (via #PR). ...` on GitHub or Plane items. */
 const RELEASED = /^Released in (v[\w.+-]{1,40}) /;
 /**
  * Plane webhooks: v2 (Plane Cloud and commercial editions: `version`, dot-notation `event`,
@@ -82,10 +82,14 @@ const PlaneEvent = z.object({
       issue: z.string().optional(), // v1 comment: the work item
       updated_at: z.string().optional(),
       comment_stripped: z.string().optional(), // v1 comment
-      comment: z.object({ comment_stripped: z.string().default('') }).optional(), // v2
+      comment: z // v2
+        .object({ comment_stripped: z.string().default(''), actor_id: z.string().nullish() })
+        .optional(),
     })
     .default({}),
-  activity: z.object({ field: z.string().nullish() }).nullish(), // v1
+  activity: z // v1
+    .object({ field: z.string().nullish(), actor: z.object({ id: z.string() }).nullish() })
+    .nullish(),
   previous_attributes: z.record(z.string(), z.unknown()).default({}),
 });
 const Result = z.object({ action: z.enum(['ignored', 'started', 'duplicate']) });
@@ -173,7 +177,7 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       const { version, event, action, entity_type, event_id, data } = req.body;
       const v1 = !version && !event_id;
-      // The release comment (scripts/released.mjs) means the fix is live. A v2 comment payload
+      // The release comment (scripts/released.py) means the fix is live. A v2 comment payload
       // carries no project id; the worker reads the item in its own project and ignores others.
       const comment =
         (v1
@@ -192,7 +196,9 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!(release || (stateChanged && ours)) || !issueId || !closeId) {
         return { action: 'ignored' as const };
       }
-      const e = { tracker: 'plane' as const, issueId, release: release || '' };
+      // Author of the release comment: the worker acts only on its own token's comments.
+      const author = (v1 ? req.body.activity?.actor?.id : data.comment?.actor_id) ?? '';
+      const e = { tracker: 'plane' as const, issueId, release: release || '', author };
       const started = await startSupportIssueClosed(e, closeId);
       req.log.info({ ...e, started }, 'plane hook -> support issue closed');
       return { action: started ? ('started' as const) : ('duplicate' as const) };

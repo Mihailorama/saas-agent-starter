@@ -20,7 +20,7 @@ from temporalio import activity
 from worker import pii, prompts
 from worker.activities import ModelChoice
 from worker.ai import Gateway, Message
-from worker.tracker import Item, Tracker, obj
+from worker.tracker import GitHub, Item, Tracker, obj
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ class SupportIssueClosed:
     tracker: str  # github | plane
     issueId: str
     release: str = ""  # tag from the "Released in vX.Y.Z" comment (GitHub or Plane), "" for a close
+    author: str = ""  # Plane: the release comment's author; only our own token's comments count
 
 
 @dataclass(frozen=True)
@@ -235,7 +236,7 @@ class SupportActivities:
         """A "+1" comment on an open duplicate, or a new tracker item."""
         assert self.chatwoot is not None
         link = self.chatwoot.link(c)
-        candidates = await self.tracker.search(t.search) if t.search else []
+        candidates = (await self.tracker.search(t.search))[:5] if t.search else []
         if candidates:
             listing = "\n".join(f"{n}. {i.title}" for n, i in enumerate(candidates, 1))
             answer = await self._llm(
@@ -250,6 +251,8 @@ class SupportActivities:
                 await self.tracker.comment(
                     dup.ref, f"+1 user: {t.summary}\n\nSupport conversation: {link}"
                 )
+                if isinstance(self.tracker, GitHub):  # its return-path hook needs the label
+                    await self.tracker.label(dup.ref, "support")
                 return dup, True
         details = await asyncio.to_thread(
             lambda: [f"- {k}: {scrub(context[k])}" for k in CONTEXT_KEYS if context.get(k)]
@@ -274,6 +277,9 @@ class SupportActivities:
         """Writes a private note into every conversation linked from the closed item."""
         if e.tracker != self.tracker.name:
             log.info("ignored %s close event: tracker here is %s", e.tracker, self.tracker.name)
+            return 0
+        if e.release and not await self.tracker.is_own(e.author):
+            log.info("ignored release comment on %s: not by our integration user", e.issueId)
             return 0
         item = await self.tracker.read(e.issueId)
         # A release comment means shipped, whatever the state; a close event needs a closed item.

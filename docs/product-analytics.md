@@ -213,22 +213,24 @@ same URL and an `x-webhook-secret` header.
 
 PostHog alert or survey response -> webhook -> `POST /api/hooks/posthog` (header
 `x-webhook-secret` = `POSTHOG_WEBHOOK_SECRET`, compared in constant time; empty secret = 401)
--> a work item in the tracker, Plane by default (`apps/api/src/tracker.ts`, the same tracker
-the support triage files into; setup in [docs/support.md](support.md#trackers)). Alerts never
+-> the redacted item goes to S3 and a `TrackerItemWorkflow`, whose worker activity files it as a
+work item in the tracker, Plane by default (`worker/tracker.py`, the same client the support
+triage uses; setup in [docs/support.md](support.md#trackers)). Alerts never
 create GitHub issues unless an installation switches the whole tracker to `TRACKER=github`.
 
 - `$insight_alert_firing` -> producer `cjm-regression`, title `[cjm] <alert name>`, body with
   the breach text and the insight link; a repeat of the same alert comments on the open item
-  (found in the project's Intake or by Plane's work item search, every page).
+  with exactly that title (found in the project's Intake or by Plane's work item search).
 - `survey sent` from the feedback survey -> producer `from-users`, the answers (personal data
   redacted by the Presidio sidecar when `PII_REDACT_URL` is set, and nothing filed while it is
   down; emails masked otherwise, docs/support.md "Personal data"), page, release and the session
-  replay link.
+  replay link. The title is cut from the redacted first answer.
 - Producers map to labels and to Intake or a target state in `config/tracker.json`. New items
   land in Plane's Intake by default, where a human accepts, declines or snoozes them. Nothing
   here closes an item or moves it to a completed state.
 - Thumbs on AI answers (`$ai_trace_id`) and any other event are ignored.
-- Without tracker credentials the endpoint answers with the planned item (dry run).
+- The endpoint answers `started` (or `duplicate` for a redelivered webhook). Without tracker
+  credentials the worker only logs what it would file (dry run).
 
 PostHog's own GitHub destination exists but creates issues from error-tracking exceptions via
 a GitHub App, not from alerts or surveys, so the receiver above is the smallest working path.
@@ -253,4 +255,4 @@ improvement" widget, so that tier has no feedback channel yet (docs/TODO.md).
   UUIDs and keeps only declared props; mark anything that may identify a person `pii: true`.
 - Read the product's state before changing a flow: `pnpm journeys:report`, or the PostHog /
   Umami MCP (`.mcp.json.example`). Tracker items labelled `cjm-regression` or `from-users` are
-  real user pain: name them in the PR that fixes them (Plane `PROJ-123`, docs/releases.md).
+  real user pain: close them from the PR that fixes them (`Fixes PROJ-123`, docs/releases.md).

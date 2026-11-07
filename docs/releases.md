@@ -13,7 +13,7 @@ changelog by hand. Decision record: [ADR 0020](adr/0020-feature-flags-and-releas
    updates one release PR, `chore(main): release X.Y.Z`, with `CHANGELOG.md` and `version.txt`.
 3. Merging that PR tags `vX.Y.Z` on `main` and publishes a GitHub release with the same notes.
 4. The `Released` workflow comments `Released in vX.Y.Z` on every tracker item a PR in the
-   release refers to (Plane by default, below). The same run dispatches the workflows that build on `v*`
+   release closes (Plane by default, below). The same run dispatches the workflows that build on `v*`
    tags (CI's release typecheck, SBOMs, and any deploy workflow, see below).
 
 Releasing is a human decision: merge the release PR when you want to ship. Do not create tags or
@@ -36,9 +36,10 @@ makes it `v0.1.0`.
 
 Write `feat`/`fix` summaries for users: what changed for them, not how ("fix: AI summary no
 longer disappears after a correction", not "fix: invalidate query key"). Internal work uses a
-hidden type. Name the tracker item in the PR: the Plane identifier (`APP-123`, the project's
-identifier and the item's number) in the title or body, or, with `TRACKER=github`, `Closes #<issue>`
-in the body. That reference is what the release comment uses.
+hidden type. Close the tracker item from the PR with a closing keyword in the title or body:
+`Fixes APP-123` (Plane: the project's identifier and the item's number; also `Closes`, `Resolves`
+and their forms), or, with `TRACKER=github`, `Closes #<issue>`. Only those get the release
+comment; a bare mention (`see APP-123`) does not.
 Dependabot titles are `chore(deps): ...` (`.github/dependabot.yml`).
 
 The repository allows squash merging only, with the PR title as the commit title. The check also
@@ -47,23 +48,26 @@ settings change goes back to GitHub's default (commit title for one-commit PRs).
 
 ## Release comment on tracker items
 
-`scripts/released.mjs <tag>` (run by `.github/workflows/released.yml`): takes the commits from
-the previous `v*` tag to the new one and finds their merged PRs (GitHub API), then comments
-`Released in vX.Y.Z (via #PR). Release notes: <release URL>` on every item they refer to,
-through the same tracker as the rest of the app (`apps/api/src/tracker.ts`, docs/support.md):
+`worker/released.py <tag>` (run by `.github/workflows/released.yml` with `uv run`): takes the
+commits from the previous `v*` tag to the new one and finds their merged PRs (GitHub API,
+`GITHUB_API_URL` for Enterprise Server), then comments
+`Released in vX.Y.Z (via #PR). Release notes: <release URL>` on every item they close, through
+the same tracker client as the rest of the app (`worker/tracker.py`, docs/support.md):
 
-- Plane (`TRACKER=plane`, default): identifiers of the configured project (`APP-123`) in the PR
-  title or body, resolved with `GET /workspaces/{slug}/work-items/APP-123/`; unknown ones are
-  skipped. The comment is a work item comment. The item's state is never changed: closing it is a
-  human's call.
-- GitHub (`TRACKER=github`, optional): the issues the PR closed (closing keywords, GraphQL
-  `closingIssuesReferences`).
+- Plane (`TRACKER=plane`, default): `Fixes|Closes|Resolves APP-123` (any form of the keyword,
+  optional colon) with the configured project's identifier, resolved by identifier; unknown ones
+  are skipped. The comment is a work item comment. The item's state is never changed: closing
+  it is a human's call.
+- GitHub (`TRACKER=github`, optional): `Closes #12` and the other closing keywords for issues of
+  the same repository.
 
 Re-running is safe: an item that already has the comment for that tag is skipped. Try it locally
-without writing: `GITHUB_TOKEN=$(gh auth token) PLANE_API_TOKEN=... node scripts/released.mjs <tag> --dry-run`.
+without writing:
+`GITHUB_TOKEN=$(gh auth token) PLANE_API_TOKEN=... uv run --directory services/worker-py python -m worker.released <tag> --dry-run`.
 In the workflow, set the repository variables `PLANE_API_URL`, `PLANE_WORKSPACE`,
-`PLANE_PROJECT_ID` (and `TRACKER=github` to switch) and the secret `PLANE_API_TOKEN`; without
-them the step logs "nothing to do".
+`PLANE_PROJECT_ID` (optional `PLANE_APP_URL`; `TRACKER=github` to switch) and the secret
+`PLANE_API_TOKEN`, the same token the worker uses (the return path only trusts comments by that
+Plane user); without them the step logs "nothing to do".
 
 Support integration: the Chatwoot bridge (docs/support.md, "Return path") keys off this comment
 instead of the close event: a new comment starting with `Released in v` on a linked item (Plane

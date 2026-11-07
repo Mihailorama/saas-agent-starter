@@ -38,9 +38,9 @@ Release notes ([docs/releases.md](../releases.md)):
   Features and Fixes are shown; chores, docs, refactors, tests, CI and build are hidden.
 - Conventional Commits come from PR titles: squash-merge titles become the commits, checked by
   `amannn/action-semantic-pull-request` (MIT), including the single-commit case.
-- `scripts/released.mjs` comments "Released in vX.Y.Z" on the tracker items the release's PRs
-  refer to: Plane work items named `PROJ-123` in the PR title or body (default), or GitHub issues
-  the PR closed (`TRACKER=github`). It never changes their state; it runs from release-please's workflow because releases made with
+- `worker/released.py` (the worker's tracker client, run with `uv run`) comments "Released in
+  vX.Y.Z" on the tracker items the release's PRs close with a closing keyword: `Fixes PROJ-123`
+  for Plane work items (default), `Closes #12` for GitHub issues (`TRACKER=github`). It never changes their state; it runs from release-please's workflow because releases made with
   `GITHUB_TOKEN` start no workflows. Tag workflows are started with `workflow_dispatch` for the
   same reason. The only secret is the optional `PLANE_API_TOKEN` (without it the step does
   nothing).

@@ -32,7 +32,7 @@ tracker item closed or released ──webhook──> POST /api/hooks/{plane,gith
 | Widget identity (HMAC) | `GET /api/support/identity` (`apps/api/src/routes/support.ts`) |
 | Webhook receivers      | `POST /api/hooks/chatwoot`, `/plane`, `/github` (same file)    |
 | Triage + return path   | `services/worker-py/worker/support.py`, `workflows.py`         |
-| Tracker (one contract) | `apps/api/src/tracker.ts`, twin `worker/tracker.py`            |
+| Tracker (one client)   | `services/worker-py/worker/tracker.py`                         |
 | Prompts (versioned)    | `prompts/support.triage/system.v1.md`, `duplicate.v1.md`       |
 | Containers             | `docker compose --profile support` (`docker-compose.yml`)      |
 
@@ -201,45 +201,69 @@ Dry runs:
 
 ## Trackers
 
-Every producer of backlog items files through one tracker contract (find an open duplicate,
-create, comment, read): `apps/api/src/tracker.ts` for the PostHog alert/survey hook
-([docs/product-analytics.md](product-analytics.md)) and the release comments
-([docs/releases.md](releases.md)), and its Python twin `worker/tracker.py` for this triage. Both
-read the same configuration:
+Every producer of backlog items files through one tracker client, `worker/tracker.py` (search
+open items, create, comment, read): the PostHog alert/survey hook
+([docs/product-analytics.md](product-analytics.md)), this triage and the release comments
+([docs/releases.md](releases.md), `worker/released.py`). The API never calls a tracker: its
+PostHog hook redacts the text, writes `{title, body}` to the uploads bucket under
+`tracker-inbox/` and starts `TrackerItemWorkflow` (id = hash of the text, duplicates rejected)
+with only the producer and the key; the worker files the item and deletes the object, and the
+daily retention schedule deletes any left over after a day. Configuration (worker only):
 
 - `TRACKER`: `plane` (default) or `github` (optional, off by default). Credentials empty = dry
   run everywhere.
 - `config/tracker.json`: one entry per producer (`cjm-regression`, `from-users`, `support-bug`,
   `support-feature-request`) with its `labels` and, for Plane, an optional `state` (a state
   name). Without `state` a new item goes to the project's **Intake**; with it, straight into that
-  state. Labels are created in Plane when missing.
+  state. The worker resolves the states at start and refuses to start when one is unknown or in
+  the `completed` or `cancelled` group. Labels are created in Plane when missing.
 - Nothing ever closes an item or moves it to a completed state: accepting, declining and closing
   are for humans.
+- Errors from tracker calls carry only the HTTP status or the error class: request URLs (Plane's
+  search takes the keywords as a query parameter) never reach logs, Temporal history or Sentry.
 
 **Plane** (default; `PLANE_API_URL` e.g. `https://api.plane.so` or your self-hosted URL,
 `PLANE_WORKSPACE` slug, `PLANE_PROJECT_ID`, `PLANE_API_TOKEN`, optional `PLANE_APP_URL` for links
-when the app host differs; API and worker both need them). The API side uses Plane's official
-Node SDK (`@makeplane/plane-node-sdk`), the worker the REST API v1 directly (header `X-API-Key`):
+when the app host differs). The worker uses Plane's official Python SDK
+([`plane-sdk`](https://pypi.org/project/plane-sdk/), MIT, by Plane Software), REST API v1:
 
-- New item in Intake: `POST /api/v1/workspaces/{slug}/projects/{project_id}/intake-issues/` with
-  `{"issue": {"name", "description_html"}}`, then the producer's labels on the work item behind
-  it (`PATCH .../work-items/{id}/`, Intake takes no labels on create). Intake must be enabled
-  for the project. With a `state`: `POST .../work-items/` with `state` and `labels`.
-- Duplicates: Plane's work item search (`GET /workspaces/{slug}/work-items/search/?search=...
-  &project_id=...`) skips items still in Intake (they have the triage state), so the project's
-  Intake list (`GET .../intake-issues/`, every page) is read as well: items pending or snoozed
-  count as open; accepted ones come from the search, minus those in a completed or cancelled
-  state group. The alert hook matches the exact title; the triage passes keywords and lets the
-  duplicate prompt decide.
-- "+1" and release notes are work item comments (`POST .../work-items/{id}/comments/`).
+- New item in Intake: `intake.create` (`{"issue": {"name", "description_html"}}`), then the
+  producer's labels on the work item behind it (`work_items.update`, Intake takes no labels on
+  create). Intake must be enabled for the project. With a `state`: `work_items.create` with that
+  state and the labels.
+- Duplicates: Plane's work item search (`work_items.search`, narrowed to the project) skips items
+  still in Intake (they have the triage state), so the project's Intake list (every page) is read
+  as well: items pending or snoozed count as open; accepted ones come from the search, minus
+  those in a completed or cancelled state group. Alerts and feedback match the exact title
+  (Intake included); the triage passes keywords and lets the duplicate prompt decide.
+- "+1" and release notes are work item comments.
 
 **GitHub Issues** (optional: `TRACKER=github`, `GITHUB_TOKEN` fine-grained with Issues
-read/write, `GITHUB_REPO`). The API side uses `@octokit/rest`; duplicate checks read every page
-of open issues with the producer's labels. New items get the producer's labels; a "+1" also
-adds `support` to the existing issue. The triage's duplicate search uses `GET /search/issues`
-(`repo:<repo> is:issue is:open <keywords>`). GitHub is a US processor: issues contain the
-model's summary, not the transcript, but still a description of a user's problem; use Plane
-on-prem where that is not allowed.
+read/write, `GITHUB_REPO`, `GITHUB_API_URL` for GitHub Enterprise Server). Plain REST over
+httpx2: PyGithub is LGPL (banned by the license gate) and githubkit (MIT) would add a second HTTP
+client stack for six calls. New items get the producer's labels; a "+1" also adds `support` to
+the existing issue. Duplicates come from `GET /search/issues` (`repo:<repo> is:issue is:open
+<words>`). GitHub is a US processor: issues contain the model's summary, not the transcript, but
+still a description of a user's problem; use Plane on-prem where that is not allowed.
+
+### Live smoke run
+
+Against a real Plane project (for example a demo project such as `STARTERDEMO`), once a token
+is available. It files one alert (`[cjm] smoke test: signup funnel`, a comment on later runs),
+one support item and one release comment on that item, all in Intake, and prints their links;
+nothing is closed or moved. Decline the items in Intake afterwards.
+
+```sh
+cd services/worker-py
+PLANE_API_URL=https://api.plane.so PLANE_APP_URL=https://app.plane.so \
+PLANE_WORKSPACE=<slug> PLANE_PROJECT_ID=<project uuid> PLANE_API_TOKEN=<token> \
+uv run python -m worker.tracker smoke v0.0.0-smoke
+```
+
+The project needs Intake enabled. With the Plane webhook configured (below), the release
+comment also reaches `POST /api/hooks/plane`; it is ignored unless the token's user wrote it.
+A release-comment run over real PRs: `GITHUB_TOKEN=$(gh auth token) PLANE_...=...
+uv run --directory services/worker-py python -m worker.released <tag> --dry-run`.
 
 ## Return path
 
@@ -263,13 +287,16 @@ With `SUPPORT_NOTIFY_ON_CLOSE=true` it also sends the customer a short "has been
 message, only for items closed as done (Plane state group `completed`, GitHub `completed`). The
 text is `RESOLVED_MESSAGE` in `worker/support.py` (English; change it for your audience).
 
-Releases: when the repo uses the release flow (docs/releases.md), `scripts/released.mjs`
-comments `Released in vX.Y.Z (via #PR) ...` on every item a released PR refers to: Plane work
-items named by identifier (`PROJ-123`) in the PR title or body, or, with `TRACKER=github`, the
-issues the PR closed. It never changes an item's state. That comment starts the same workflow
-(id per tag), which notes "Linked issue ... is live in vX.Y.Z", also while the Plane item is
-still open (nobody has moved it yet). With `SUPPORT_NOTIFY_ON_CLOSE=release` the customer
-message waits for that comment instead of the close.
+Releases: when the repo uses the release flow (docs/releases.md), `worker/released.py`
+comments `Released in vX.Y.Z (via #PR) ...` on every item a released PR closes: a closing
+keyword in the PR title or body (`Fixes PROJ-123` for Plane, `Closes #12` with `TRACKER=github`);
+a bare mention is not enough. It never changes an item's state. That comment starts the same
+workflow (id per tag), which notes "Linked issue ... is live in vX.Y.Z", also while the Plane
+item is still open (nobody has moved it yet). On Plane the worker acts only on release comments
+written by its own token's user (`users/me`, looked up once), so give the release workflow the
+same `PLANE_API_TOKEN`; a person typing "Released in v9" changes nothing. With
+`SUPPORT_NOTIFY_ON_CLOSE=release` the customer message waits for that comment
+instead of the close.
 
 ## Personal data
 

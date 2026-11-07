@@ -7,6 +7,7 @@ synchronous: each call runs in a thread so the event loop stays free.
 
 import asyncio
 import io
+from datetime import datetime
 from urllib.parse import urlsplit
 
 import urllib3
@@ -67,12 +68,17 @@ class S3:
         """Idempotent: deleting a missing key succeeds (S3 answers 204 either way)."""
         await asyncio.to_thread(self._client.remove_object, self.bucket, key)
 
-    async def list_keys(self, prefix: str) -> list[str]:
-        """Every key under `prefix` (ListObjectsV2, all pages)."""
+    async def list_keys(self, prefix: str, before: datetime | None = None) -> list[str]:
+        """Every key under `prefix` (ListObjectsV2, all pages); with `before`, only older ones."""
 
         def keys() -> list[str]:
             found = self._client.list_objects(self.bucket, prefix=prefix, recursive=True)
-            return [o.object_name for o in found if o.object_name]
+            return [
+                o.object_name
+                for o in found
+                if o.object_name
+                and (before is None or (o.last_modified is not None and o.last_modified < before))
+            ]
 
         return await asyncio.to_thread(keys)
 

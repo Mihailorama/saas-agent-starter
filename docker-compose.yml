@@ -175,14 +175,7 @@ services:
       POSTHOG_WEBHOOK_SECRET: ${POSTHOG_WEBHOOK_SECRET:-local-dev-posthog-webhook-secret}
       POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
-      # Tracker (docs/support.md): Plane by default; empty credentials = dry run.
-      TRACKER: ${TRACKER:-plane}
-      PLANE_API_URL: ${PLANE_API_URL:-}
-      PLANE_APP_URL: ${PLANE_APP_URL:-}
-      PLANE_WORKSPACE: ${PLANE_WORKSPACE:-}
-      PLANE_API_TOKEN: ${PLANE_API_TOKEN:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      GITHUB_REPO: ${GITHUB_REPO:-}
+      # The tracker credentials live in the worker only (worker/tracker.py, docs/support.md).
       # With --profile pii: http://pii:8000 (survey answers redacted by Presidio, fail closed).
       PII_REDACT_URL: ${PII_REDACT_URL:-}
       # Billing (docs/billing.md); empty keys = checkout answers 503.

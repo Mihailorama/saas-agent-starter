@@ -31,7 +31,8 @@ open-source tools and give agents and humans a worse UI than those tools have.
 - `pnpm journeys:sync` defines PostHog funnel insights, funnel alerts, surveys and webhook
   destinations, and Umami funnels through their APIs; `--dry-run` prints the plan.
 - Alerts and survey responses reach agents as tracker items (`cjm-regression`, `from-users`)
-  through one small webhook receiver in the API (shared secret; dry run without credentials),
+  through one small webhook receiver in the API (shared secret; the worker files the item, dry
+  run without credentials),
   because PostHog's GitHub destination only covers error tracking. The tracker is Plane by
   default (Intake), the same one the service desk uses (ADR 0013); GitHub Issues is optional.
 - Every sink is optional and env-driven; with no env the app makes no analytics request.

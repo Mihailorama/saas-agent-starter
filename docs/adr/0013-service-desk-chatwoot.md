@@ -19,10 +19,12 @@ still lack channels, an agent inbox and a widget.
 - **Backlog items live in the tracker**: Plane by default, new items in the project's Intake so
   they wait for a human to accept them (owner decision 2026-11-07: tasks go to Plane, alerts never
   open GitHub issues). One tracker contract serves every producer (PostHog hook, this triage,
-  release comments): `apps/api/src/tracker.ts` and its worker twin, configured by `TRACKER` and
-  `config/tracker.json` (labels, Intake or a target state per producer). GitHub Issues stays an
-  optional adapter (`TRACKER=github`, `@octokit/rest`) for installations that want it. No code
-  closes an item or moves it to a completed state.
+  release comments): one client in the worker, `worker/tracker.py` on Plane's official Python
+  SDK, configured by `TRACKER` and `config/tracker.json` (labels, Intake or a target state per
+  producer). The API only stores the redacted text in S3 and starts a workflow. GitHub Issues
+  stays an optional adapter (`TRACKER=github`, plain REST) for installations that want it. No code
+  closes an item or moves it to a completed state; a completed or cancelled target state stops
+  the worker at start.
 - **No link table**: the conversation URL goes into the issue (body or "+1" comment), the issue
   URL into the conversation's `tracker_issue_url` custom attribute. Both survive without us.
 - **Triage is a Temporal workflow in the Python worker** (`SupportTriageWorkflow`, id per

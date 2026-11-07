@@ -41,5 +41,3 @@ overrides:
   # Security fixes (osv-scanner) for transitive deps whose parents pin old majors.
   "@esbuild-kit/core-utils>esbuild": ^0.25.12
   "@fastify/otel>minimatch": ^11.0.1
-  # plane-node-sdk 0.3.1 pins axios 1.16.0 (GHSA-x97p-jq2g-jp4f and others, fixed in 1.20.0).
-  "@makeplane/plane-node-sdk>axios": ^1.20.0

@@ -31,7 +31,8 @@ from worker.privacy import PrivacyActivities, configured_tools
 from worker.s3 import S3
 from worker.support import Chatwoot, SupportActivities
 from worker.text import backend
-from worker.tracker import from_settings as tracker_from_settings
+from worker.tracker import TrackerActivities
+from worker.tracker import connect as tracker_connect
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
@@ -42,6 +43,7 @@ from worker.workflows import (
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
+    TrackerItemWorkflow,
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
     ensure_maintenance_schedule,
@@ -157,7 +159,8 @@ async def main() -> None:
         if settings.AI_SUPPORT_TRIAGE_PROVIDER and settings.AI_SUPPORT_TRIAGE_MODEL
         else None
     )
-    tracker = tracker_from_settings(http)
+    tracker = await tracker_connect(http)  # refuses a completed/cancelled target state
+    tracker_items = TrackerActivities(tracker, files)
     support = SupportActivities(
         chatwoot=chatwoot,
         tracker=tracker,
@@ -180,6 +183,7 @@ async def main() -> None:
             BillingEventWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
+            TrackerItemWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,
             DataExportWorkflow,
@@ -192,6 +196,7 @@ async def main() -> None:
             billing.apply_billing_event,
             support.triage,
             support.issue_closed,
+            tracker_items.file_item,
             webhooks.deliver_webhook,
             webhooks.prune_webhooks,
             webhooks.reencrypt_webhook_secrets,
@@ -203,6 +208,7 @@ async def main() -> None:
             privacy.purge_ai_content,
             privacy.purge_exports,
             privacy.purge_deleted_orgs,
+            privacy.purge_tracker_inbox,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],

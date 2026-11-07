@@ -108,6 +108,7 @@ async def env(pool: asyncpg.Pool) -> AsyncIterator[tuple[Client, PrivacyActiviti
             acts.purge_ai_content,
             acts.purge_exports,
             acts.purge_deleted_orgs,
+            acts.purge_tracker_inbox,
             fake_send_email,
         ],
     ):
@@ -424,9 +425,19 @@ async def test_retention_deletes_expired_content_keeps_metadata(
         export_key,
     )
 
+    inbox_key = f"tracker-inbox/{uuid.uuid4()}.json"  # an unfiled tracker item, minutes old
+    await acts.files.put(inbox_key, b'{"title": "t", "body": "b"}')
+
     result = await client.execute_workflow(
         PrivacyRetentionWorkflow.run, id=f"privacy-retention-{uuid.uuid4()}", task_queue=TASK_QUEUE
     )
+    # Tracker items go after a day; the cut-off is S3's LastModified.
+    assert "tracker_inbox" in result and await exists(acts.files, inbox_key)
+    later = now + timedelta(minutes=5)
+    assert inbox_key in await acts.files.list_keys("tracker-inbox/", before=later)
+    earlier = now - timedelta(minutes=5)
+    assert inbox_key not in await acts.files.list_keys("tracker-inbox/", before=earlier)
+    await acts.files.delete(inbox_key)
 
     assert result["calls"] >= 1 and result["exports"] >= 1 and result["until"]
     assert not await exists(acts.ai_content, f"{expired}/request.json")

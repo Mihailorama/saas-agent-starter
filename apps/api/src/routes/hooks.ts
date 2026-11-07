@@ -1,15 +1,16 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { env } from '../env.ts';
-import { type Tracker, trackerFromEnv } from '../tracker.ts';
+import { putJson } from '../s3.ts';
+import { startTrackerItem } from '../temporal.ts';
 
 /**
- * Alert-to-agent loop (docs/product-analytics.md): PostHog webhook destinations post here, we
- * open or update a tracker item (Plane by default, src/tracker.ts) that coding agents pick up.
+ * Alert-to-agent loop (docs/product-analytics.md): PostHog webhook destinations post here; the
+ * worker opens or updates a tracker item (Plane by default, worker/tracker.py) for coding agents.
  * - `$insight_alert_firing` (a journey funnel fell below its threshold) -> producer `cjm-regression`
  * - `survey sent` from the "Report a problem" survey -> producer `from-users`
- * Without tracker credentials it is a dry run: the response shows the planned item.
+ * The item's text goes to S3 and only its key into the Temporal workflow (TrackerItemWorkflow).
  * Survey answers are redacted first: by the Presidio sidecar when PII_REDACT_URL is set (compose
  * profile `pii`, docs/support.md "Personal data"), otherwise only emails are masked.
  */
@@ -62,8 +63,8 @@ const agentHint = [
   '---',
   'For the agent: journeys are defined in `config/journeys.json`; `pnpm journeys:report` prints',
   'the current funnels; the PostHog MCP (`.mcp.json.example`) can query events, replays and',
-  'errors for the affected step. Fix the cause, then reference this item in the PR (Plane: its',
-  '`PROJ-123` identifier in the title or body; docs/releases.md).',
+  'errors for the affected step. Fix the cause, then close this item from the PR (Plane:',
+  '`Fixes PROJ-123` in the title or body; docs/releases.md).',
 ];
 
 /** Maps a PostHog event to the issue it should produce, or undefined to ignore it. */
@@ -121,19 +122,6 @@ export async function toIssue(e: z.infer<typeof Hook>['event']): Promise<Issue |
   return undefined;
 }
 
-/** Comments on the producer's open item with the same title, or files a new one. */
-async function upsertIssue(tracker: Tracker, issue: Issue) {
-  const existing = await tracker.findOpen(issue.producer, issue.title);
-  if (existing) {
-    await tracker.comment(existing.ref, issue.body);
-    return { action: 'commented' as const, ...existing };
-  }
-  return {
-    action: 'created' as const,
-    ...(await tracker.create(issue.producer, issue.title, issue.body)),
-  };
-}
-
 const sameSecret = (given: string | undefined) => {
   const want = Buffer.from(env.POSTHOG_WEBHOOK_SECRET ?? '');
   const got = Buffer.from(given ?? '');
@@ -161,11 +149,17 @@ export const hookRoutes: FastifyPluginAsyncZod = async (app) => {
         return reply.code(503).send({ error: 'pii redaction unavailable' });
       }
       if (!issue) return { action: 'ignored' };
-      const tracker = trackerFromEnv(env);
-      if (!tracker) return { action: 'dry-run', ...issue };
-      const result = await upsertIssue(tracker, issue);
-      req.log.info({ ...result, producer: issue.producer }, `posthog hook -> ${tracker.name} item`);
-      return result;
+      // Same text, same key and workflow id: a redelivered webhook files nothing twice.
+      const hash = createHash('sha256').update(JSON.stringify(issue)).digest('hex');
+      const item = { producer: issue.producer, s3Key: `tracker-inbox/${hash}.json` };
+      await putJson(item.s3Key, { title: issue.title, body: issue.body });
+      const started = await startTrackerItem(item, hash);
+      req.log.info({ producer: issue.producer, started }, 'posthog hook -> tracker item workflow');
+      return {
+        action: started ? 'started' : 'duplicate',
+        producer: issue.producer,
+        key: item.s3Key,
+      };
     },
   );
 };

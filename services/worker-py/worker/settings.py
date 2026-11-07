@@ -72,16 +72,18 @@ WEBHOOK_RETENTION_DAYS = int(os.environ.get("WEBHOOK_RETENTION_DAYS", "30"))
 CHATWOOT_URL = os.environ.get("CHATWOOT_URL", "")  # how the worker reaches Chatwoot
 CHATWOOT_PUBLIC_URL = os.environ.get("CHATWOOT_PUBLIC_URL", "") or CHATWOOT_URL  # links for humans
 CHATWOOT_API_TOKEN = os.environ.get("CHATWOOT_API_TOKEN", "")  # agent bot or agent access token
-# Tracker (worker/tracker.py, twin of apps/api/src/tracker.ts): plane (default) | github.
+# Tracker (worker/tracker.py, the only tracker client): plane (default) | github.
 TRACKER = os.environ.get("TRACKER", "plane")
 TRACKER_FILE = Path(os.environ.get("TRACKER_FILE", _ROOT / "config" / "tracker.json"))
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
+# GitHub Enterprise Server API base (GitHub Actions sets it); empty = https://api.github.com.
+GITHUB_API_URL = os.environ.get("GITHUB_API_URL", "")
 PLANE_API_URL = os.environ.get("PLANE_API_URL", "")  # e.g. https://api.plane.so
 PLANE_APP_URL = os.environ.get("PLANE_APP_URL", "") or PLANE_API_URL  # links for humans
 PLANE_WORKSPACE = os.environ.get("PLANE_WORKSPACE", "")
 PLANE_PROJECT_ID = os.environ.get("PLANE_PROJECT_ID", "")
-PLANE_API_TOKEN = os.environ.get("PLANE_API_TOKEN", "")
+PLANE_API_TOKEN = os.environ.get("PLANE_API_TOKEN", "")  # also the author of release comments
 # Model for triage. No default on purpose: unset = triage off. Its AI calls are audited under
 # SUPPORT_AI_ORG_ID, the operator's own organization (support data is not a tenant's data).
 AI_SUPPORT_TRIAGE_PROVIDER = os.environ.get("AI_SUPPORT_TRIAGE_PROVIDER", "")
