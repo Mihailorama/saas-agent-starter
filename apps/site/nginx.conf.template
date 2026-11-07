@@ -1,0 +1,24 @@
+# Hashed build assets are immutable; HTML, feeds and sitemaps are revalidated on every visit.
+map $uri $site_cache_control {
+  ~^/_astro/ "public, max-age=31536000, immutable";
+  default "public, max-age=0, must-revalidate";
+}
+
+server {
+  listen 8080;
+  root /usr/share/nginx/html;
+  server_tokens off;
+  absolute_redirect off;
+  error_page 404 /404.html;
+
+  # Images may come from your CDN/object storage (no media in git): img-src allows https:.
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' ${ANALYTICS_ORIGINS}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ${ANALYTICS_ORIGINS}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+  add_header X-Content-Type-Options nosniff always;
+  add_header Referrer-Policy strict-origin-when-cross-origin always;
+  add_header Cache-Control $site_cache_control always;
+
+  location / {
+    try_files $uri $uri/ =404;
+  }
+}

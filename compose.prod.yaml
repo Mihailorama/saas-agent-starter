@@ -97,6 +97,11 @@ services:
       - GITHUB_WEBHOOK_SECRET
       - PLANE_WEBHOOK_SECRET
       - PLANE_PROJECT_ID
+      # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
+      - AI_CONTOUR=${AI_CONTOUR:-}
+      - BILLING_CONTOUR
+      - STRIPE_SECRET_KEY
+      - STRIPE_WEBHOOK_SECRET
       # data-subject rights (docs/privacy.md)
       - PRIVACY_DELETION_GRACE_DAYS
       - PRIVACY_EXPORT_INTERVAL_HOURS
@@ -168,6 +173,8 @@ services:
       - FLAGS_OFF
       - POSTHOG_KEY
       - POSTHOG_HOST
+      # billing: plans and LLM spend limits (default: config/plans.json in the image)
+      - PLANS_FILE
       # data-subject rights (docs/privacy.md): retention and per-person export/deletion in tools
       - PRIVACY_EXPORT_TTL_DAYS
       - PRIVACY_ORG_RECORDS_DAYS

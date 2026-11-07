@@ -51,7 +51,7 @@ const files = (dir) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
     d.isDirectory() ? files(join(dir, d.name)) : /\.tsx?$/.test(d.name) ? [join(dir, d.name)] : [],
   );
-for (const file of files(join(root, 'apps/web/src'))) {
+for (const file of ['apps/web/src', 'apps/site/src'].flatMap((d) => files(join(root, d)))) {
   const text = readFileSync(file, 'utf8');
   const rel = file.slice(root.length);
   for (const m of text.matchAll(/(?<![.\w])track\(\s*/g)) {

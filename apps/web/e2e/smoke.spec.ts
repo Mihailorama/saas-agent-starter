@@ -37,6 +37,15 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'AI calls' })).toBeVisible();
   await expect(page.getByText('No AI calls match these filters.')).toBeVisible();
 
+  // Billing: plan, usage and prices read from config/plans.json through the API.
+  await page.getByRole('link', { name: 'Billing' }).click();
+  await expect(page.getByRole('heading', { name: 'Billing' })).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: 'Projects' })).toHaveAttribute(
+    'aria-valuenow',
+    '1',
+  );
+  await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible();
+
   // Data-subject rights (docs/privacy.md): the owner sees both cards and can request an export.
   await page.goto('/settings/privacy');
   await expect(page.getByText('Your data', { exact: true })).toBeVisible();

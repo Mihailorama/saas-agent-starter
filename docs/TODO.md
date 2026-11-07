@@ -127,6 +127,9 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
+  ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
+  transaction (ADR 0019 "Alternatives").
 - **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.
@@ -150,10 +153,20 @@
   they follow the vendor docs and source (docs/privacy.md, checked 2026-11-07) and are tested with
   HTTP mocks only. Run one export and one deletion against a real PostHog, Langfuse, Chatwoot and
   GA4 property once the owner has keys, and note the result in docs/privacy.md.
-- **Billing is not cancelled on organization deletion yet.** `PrivacyActivities._billing` is the
-  extension point; wire it to the billing provider interface when billing lands on main (ADR 0019).
 - **Export ZIP is built in memory** (`build_export`): fine for exports up to a few hundred MB.
   Stream to a temporary file and use multipart upload when organizations store more files.
 - **Every organization is visited for a user's export/deletion and the AI-content retention**
   (`PrivacyActivities._org_ids`, one RLS transaction each). Fine for thousands of organizations;
   for more, keep a per-user list of organizations they ever acted in, or batch by org.
+- **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
+  (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
+  site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`
+  service in `compose.prod.yaml` behind Caddy), run it after a successful deploy with the
+  previously deployed sha and `INDEXNOW_KEY`.
+- **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
+  others, add a runner per assistant CLI the team is logged in to (same config, same report),
+  never an API key in CI.
+- **Postiz idle cost.** ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
+  each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
+  task queues this server does not poll) listing the networks you do not use; measure before and
+  after in docs/STACK.md, and never exclude a network you post to.

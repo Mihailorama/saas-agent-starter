@@ -52,7 +52,9 @@ def gateway(pool: asyncpg.Pool, s3: S3, posthog: PostHogAi) -> Gateway:
             ("fake", "fake-model"): AllowedModel(
                 frozenset({"project.summary"}), Price(Decimal("0.001"), Decimal("0.002"), "USD")
             ),
-            ("broken", "broken-model"): AllowedModel(frozenset({"project.summary"}), None),
+            ("broken", "broken-model"): AllowedModel(
+                frozenset({"project.summary"}), None, unmetered=True
+            ),
         },
         providers={"fake": fake, "broken": broken},
         retention_days=1,

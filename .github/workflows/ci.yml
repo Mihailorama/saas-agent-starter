@@ -31,7 +31,7 @@ jobs:
         with:
           tool: cargo-deny
       - name: Start infra
-        run: docker compose up -d --wait postgres redis s3 temporal-ui mailpit
+        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web exec playwright install --with-deps chromium
       - run: pnpm db:migrate
@@ -69,7 +69,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Start infra (${{ matrix.kv }})
-        run: docker compose up -d --wait postgres redis s3 temporal-ui mailpit
+        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock
       - name: Check the store image
         run: docker compose images redis | tee /dev/stderr | grep -q "${{ matrix.kv }}"
       - run: pnpm install --frozen-lockfile
@@ -88,7 +88,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: docker compose build api web worker
+      - run: docker compose --profile marketing build api web worker site
 
   # The production deploy path end to end on the runner (deploy/rehearsal.sh, docs/deploy.md):
   # SOPS-encrypted env, Caddy internal CA, migrate, deploy v1 -> v2, rollback, failing migration.

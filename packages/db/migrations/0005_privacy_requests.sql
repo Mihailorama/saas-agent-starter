@@ -19,5 +19,5 @@ CREATE TABLE "privacy_requests" (
 ALTER TABLE "attachments" ADD COLUMN "created_by" text;--> statement-breakpoint
 CREATE INDEX "privacy_requests_subject_type_subject_id_created_at_index" ON "privacy_requests" USING btree ("subject_type","subject_id","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "privacy_requests_open_deletion" ON "privacy_requests" USING btree ("subject_type","subject_id") WHERE "privacy_requests"."kind" = 'deletion' and "privacy_requests"."status" in ('scheduled', 'running');--> statement-breakpoint
-CREATE INDEX "ai_calls_org_id_content_expires_at_index" ON "ai_calls" USING btree ("org_id","content_expires_at");--> statement-breakpoint
-CREATE INDEX "ai_calls_org_id_actor_id_index" ON "ai_calls" USING btree ("org_id","actor_id");
+CREATE INDEX "ai_calls_content_expires_at_index" ON "ai_calls" USING btree ("content_expires_at");--> statement-breakpoint
+CREATE INDEX "ai_calls_actor_id_index" ON "ai_calls" USING btree ("actor_id");

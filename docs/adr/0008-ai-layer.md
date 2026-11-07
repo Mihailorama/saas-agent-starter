@@ -112,4 +112,4 @@ set.
 - Adding an AI feature is a recipe (AGENTS.md "Recipe: add an AI purpose"), not a design task.
 - `ai_calls` grows with usage. Content is deleted after `content_expires_at` by the daily
   `privacy-retention` schedule; rows stay, and a deleted organization's rows go after its record
-  period (ADR 0021, docs/privacy.md).
+  period (ADR 0022, docs/privacy.md).

@@ -363,13 +363,23 @@ async def test_org_deletion_then_record_purge(
         endpoint,
         org,
     )
+    # Renewal was stopped by the API when the deletion was requested (cancel_at_period_end).
+    await in_org(
+        pool,
+        org,
+        "insert into subscriptions (org_id, plan_id, status, contour, provider, currency,"
+        " cancel_at_period_end) values ($1, 'pro', 'active', 'en', 'stripe', 'USD', true)"
+        " returning org_id",
+        org,
+    )
     req = await new_request(pool, "deletion", "org", org, datetime.now(UTC))
     report = await client.execute_workflow(
         DataDeletionWorkflow.run, req, id=f"privacy-deletion-{req.requestId}", task_queue=TASK_QUEUE
     )
     for step in ("access", "webhooks", "storage", "database"):
         assert report[step]["status"] == "done", (step, report[step])
-    assert report["billing"]["status"] == "skipped"
+    assert report["billing"]["status"] == "done"
+    assert await in_org(pool, org, "select 1 from subscriptions") == []
     assert await pool.fetchval("select count(*) from apikey where reference_id = $1", org) == 0
     assert await pool.fetchval("select count(*) from member where organization_id = $1", org) == 0
     assert await in_org(pool, org, "select 1 from projects") == []
@@ -456,3 +466,26 @@ async def test_sole_owner_by_then_is_refused(
     assert row is not None and row["status"] == "failed"
     assert json.loads(row["report"])["ownership"]["status"] == "failed"
     assert await pool.fetchval('select count(*) from "user" where id = $1', p["uid"]) == 1
+
+
+async def test_org_deletion_reports_a_renewing_subscription(
+    env: tuple[Client, PrivacyActivities, FakeTools], pool: asyncpg.Pool
+) -> None:
+    client, _, _ = env
+    org = await new_org(pool)
+    await in_org(
+        pool,
+        org,
+        "insert into subscriptions (org_id, plan_id, status, contour, provider, currency)"
+        " values ($1, 'pro', 'active', 'en', 'stripe', 'USD') returning org_id",
+        org,
+    )
+    req = await new_request(pool, "deletion", "org", org, datetime.now(UTC))
+    report = await client.execute_workflow(
+        DataDeletionWorkflow.run, req, id=f"privacy-deletion-{req.requestId}", task_queue=TASK_QUEUE
+    )
+    assert report["billing"] == {
+        "status": "failed",
+        "detail": "subscription still renews: cancel it in Billing",
+    }
+    assert report["database"]["status"] == "done"  # the rest still ran

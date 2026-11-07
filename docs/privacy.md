@@ -2,7 +2,7 @@
 
 What personal data the app stores where, how a user or an organization owner exports or deletes
 it, what each external tool supports, and which retention dates are enforced. Design:
-[ADR 0021](adr/0021-data-subject-rights.md). Code: `apps/api/src/routes/privacy.ts` (requests),
+[ADR 0022](adr/0022-data-subject-rights.md). Code: `apps/api/src/routes/privacy.ts` (requests),
 `services/worker-py/worker/privacy.py` (the work), `worker/workflows.py` (the workflows).
 
 This is engineering documentation, not legal advice. Legal bases below are generic notes; the
@@ -37,6 +37,7 @@ agreements with the tools it configures.
 | `ai_calls` (+ S3 request/response content)                 | `actor_id`; content can hold anything users typed | the user's calls with content / all with content   | **row kept** (append-only AI Act record), content deleted           | content deleted; rows kept for the record period, then deleted | legal obligation (record-keeping, Art. 12/26(6)) for the row; content per retention |
 | `audit_log`                                                | `actor_id`, IP                                    | the user's rows / all                              | **row kept** (accountability), IP cleared                           | IP cleared; kept for the record period, then deleted           | legitimate interest (security, accountability)                                      |
 | `webhook_endpoints`, `_events`, `_deliveries`, `_attempts` | event payloads (project data), endpoint URLs      | - / yes, without signing secrets                   | -                                                                   | endpoints disabled first, then all deleted                     | contract                                                                            |
+| `subscriptions`                                            | none (provider customer/subscription ids)         | - / yes                                            | -                                                                   | renewal stopped at request, row deleted                        | contract                                                                            |
 | `privacy_requests`                                         | ids only                                          | the user's / the organization's                    | **kept** as the record of the request (report has no personal data) | **kept**                                                       | legal obligation (demonstrating compliance)                                         |
 
 `ai_calls.actor_id` and `audit_log.actor_id` keep a random user id after erasure. The user row
@@ -97,9 +98,11 @@ no longer identifies anyone through our systems.
 4. A deleted organization's anonymised row, `ai_calls` and `audit_log` are deleted by the
    retention schedule after `PRIVACY_ORG_RECORDS_DAYS` (default 180).
 
-Billing: there is no billing provider on main yet. The `billing` step
-(`PrivacyActivities._billing`) is the extension point: cancel the organization's subscription
-there (idempotently) when a provider is added.
+Billing (docs/billing.md): requesting an organization deletion stops renewal with the provider
+right away (`BillingProvider.cancel`, renewal ends with the paid period); cancelling the deletion
+does not resume it. At execution the `billing` step checks that nothing renews any more (a new
+subscription during the grace period is reported as `failed`) and deletes our `subscriptions` row.
+Invoices and payments stay with the provider under its own retention.
 
 ## Per-tool support
 

@@ -155,7 +155,11 @@ async def make(
         pool=pool,
         s3=s3,
         contour="eu",
-        registry={("fake", "fake-model"): AllowedModel(frozenset({"support.triage"}), None)},
+        registry={
+            ("fake", "fake-model"): AllowedModel(
+                frozenset({"support.triage"}), None, unmetered=True
+            )
+        },
         providers={"fake": provider},
         retention_days=30,
     )

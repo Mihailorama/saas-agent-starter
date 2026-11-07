@@ -14,6 +14,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
+- **Billing**: plans with limits in `config/plans.json`, prices per currency, Stripe behind a
+  swappable provider interface (one provider per contour), webhooks via Temporal, per-org LLM
+  spend limit enforced in the AI gateway. See [docs/billing.md](docs/billing.md).
 - **Public API**: organization API keys with scopes (Better Auth API key plugin), per-key
   rate limits, OpenAPI; outbound webhooks signed per Standard Webhooks, retried by Temporal,
   with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).
@@ -147,6 +150,16 @@ and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (priv
 the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
 (`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
 (about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
+
+## Marketing: site, SEO, social posting
+
+`apps/site` is an Astro static site and Markdown/MDX blog with the SEO basics built in (canonical,
+hreflang, Open Graph, schema.org JSON-LD, sitemap, robots.txt, RSS, `llms.txt`), the web app's
+design tokens and analytics, and Lighthouse budgets in CI: `pnpm --filter site dev`.
+`docker compose --profile marketing up -d` adds Postiz (social posting) and SerpBear (rank
+tracking); `pnpm seo:report` (Search Console), `pnpm seo:indexnow` (Bing/IndexNow after a deploy)
+and `pnpm geo:check` (is the product named in AI answers?). Details:
+[docs/marketing.md](docs/marketing.md).
 
 ## Feature flags and releases
 

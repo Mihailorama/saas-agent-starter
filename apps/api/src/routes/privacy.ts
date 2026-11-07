@@ -1,10 +1,19 @@
-import { member, organization, privacyRequests, type Tx, user } from '@app/db';
+import {
+  member,
+  organization,
+  privacyRequests,
+  subscriptions,
+  type Tx,
+  user,
+  withOrg,
+} from '@app/db';
 import { fromNodeHeaders } from 'better-auth/node';
 import { and, desc, eq, gt, ne, sql } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
+import { providerFor } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { pickLocale, renderEmail } from '../email.ts';
 import { env } from '../env.ts';
@@ -14,7 +23,7 @@ import { type PrivacyRequest, signalPrivacyCancel, startPrivacyRequest } from '.
 import { bearerToken, httpError, requireRole, withTenant } from '../tenant.ts';
 
 /**
- * Data-subject rights (docs/privacy.md, ADR 0021): a user exports or deletes their own data, an
+ * Data-subject rights (docs/privacy.md, ADR 0022): a user exports or deletes their own data, an
  * organization owner the organization's. The worker's DataExportWorkflow / DataDeletionWorkflow
  * do the work; a request row is the audit record and the only state kept here.
  */
@@ -42,7 +51,7 @@ const DeletionInput = z
       .regex(/^[\w.-]{1,64}$/)
       .optional(),
   })
-  .optional();
+  .nullish();
 const ErrorBody = z.object({ error: z.string() });
 export const NOT_FRESH = 'sign in again to confirm this request';
 
@@ -85,6 +94,29 @@ async function requireFresh(req: FastifyRequest) {
  */
 export const gaClientId = (cookie: string | undefined) =>
   cookie?.match(/(?:^|;\s*)_ga=GA\d\.\d+\.(\d+\.\d+)/)?.[1];
+
+/**
+ * Billing step of an organization deletion, done when it is requested: the provider stops
+ * renewing at the end of the paid period (BillingProvider.cancel, docs/billing.md). Cancelling the
+ * deletion does not resume it (the owner subscribes again). The worker's `billing` step checks at
+ * execution that nothing renews any more.
+ */
+async function stopRenewal(req: FastifyRequest) {
+  const [sub] = await withOrg(db, req.tenant.orgId, (tx) => tx.select().from(subscriptions));
+  if (!sub || sub.cancelAtPeriodEnd || !['active', 'past_due'].includes(sub.status)) return;
+  try {
+    await providerFor(sub.contour).cancel(sub);
+  } catch (err) {
+    req.log.error({ err }, 'payment provider cancel failed');
+    throw httpError(502, 'could not cancel the subscription, try again later');
+  }
+  await withTenant(req, (tx) =>
+    tx
+      .update(subscriptions)
+      .set({ cancelAtPeriodEnd: true, updatedAt: new Date() })
+      .where(eq(subscriptions.orgId, sub.orgId)),
+  );
+}
 
 export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
   // The reason matters to the user here (re-auth, sole owner, rate limit): send it as `error`.
@@ -228,6 +260,7 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
             );
           }
         }
+        if (subject === 'org') await stopRenewal(req);
         const executeAfter = new Date(Date.now() + env.PRIVACY_DELETION_GRACE_DAYS * 86_400_000);
         const row = await recorded(req, 'deletion_requested', async (tx) => {
           const [r] = await tx

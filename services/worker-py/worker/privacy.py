@@ -1,4 +1,4 @@
-"""Data-subject rights (docs/privacy.md, docs/adr/0021-data-subject-rights.md).
+"""Data-subject rights (docs/privacy.md, docs/adr/0022-data-subject-rights.md).
 
 Export and deletion of one user's or one organization's data in our database, S3 and every
 configured external tool, plus the retention schedule that enforces recorded expiry dates.
@@ -618,6 +618,7 @@ class PrivacyActivities:
             "webhook_events",
             "webhook_deliveries",
             "webhook_attempts",
+            "subscriptions",
         )
 
         async def q(conn: Conn, _: str) -> dict[str, list[Doc]]:
@@ -781,10 +782,28 @@ class PrivacyActivities:
         return outcome("done", "endpoints disabled", endpoints=int(result.split()[-1]))
 
     async def _billing(self, s: Subject) -> Doc:
-        """Extension point: cancel the organization's subscription with the billing provider.
-        No billing provider exists in this codebase yet; when one is added (ADR 0019), call its
-        cancel here (idempotent: an already cancelled subscription is success)."""
-        return outcome("skipped", "no billing provider configured")
+        """The API told the provider to stop renewing when the deletion was requested
+        (apps/api/src/routes/privacy.ts `stopRenewal`, BillingProvider.cancel). Here: confirm
+        nothing renews any more (e.g. a new subscription during the grace period), then drop our
+        row. Invoices and payments stay with the provider (its own legal retention)."""
+
+        async def q(conn: Conn, _: str) -> asyncpg.Record | None:
+            return await conn.fetchrow("select status, cancel_at_period_end from subscriptions")
+
+        sub = (await self._each_org(s, q))[0]
+        if sub is None:
+            return outcome("skipped", "no subscription")
+        if sub["status"] in ("active", "past_due") and not sub["cancel_at_period_end"]:
+            # ApplicationError, not an outcome: the workflow records it as failed and goes on.
+            raise ApplicationError(
+                "subscription still renews: cancel it in Billing", non_retryable=True
+            )
+
+        async def drop(conn: Conn, _: str) -> str:
+            return await conn.execute("delete from subscriptions")
+
+        await self._each_org(s, drop)
+        return outcome("done", "renewal stopped with the provider; subscription row deleted")
 
     async def _storage(self, s: Subject) -> Doc:
         if s.type == "org":
@@ -960,5 +979,5 @@ class PrivacyActivities:
 
 USER_STEPS = ("sessions", "posthog", "langfuse", "chatwoot", "ga4", "storage", "database")
 ORG_STEPS = ("access", "webhooks", "billing", "langfuse", "storage", "database")
-# Our own steps retry until they succeed; an external tool that keeps failing is reported.
+# Our own steps retry until they succeed (or fail for good); a tool that keeps failing is reported.
 CORE_STEPS = frozenset({"sessions", "access", "webhooks", "billing", "storage", "database"})

@@ -5,6 +5,7 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { genericOAuth, organization, twoFactor } from 'better-auth/plugins';
 import { apiKeys, orgAccess } from './access.ts';
+import { entitlements } from './billing/entitlements.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
@@ -73,6 +74,8 @@ export const auth = betterAuth({
   },
   plugins: [
     organization({
+      // Seats come from the plan (config/plans.json); checked on add-member and invite accept.
+      membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>

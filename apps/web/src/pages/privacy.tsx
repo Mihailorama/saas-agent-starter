@@ -190,7 +190,7 @@ function SubjectCard({ subject }: { subject: Subject }) {
               The deletion starts after a grace period, during which you can cancel it. Then{' '}
               {subject === 'user'
                 ? 'your account, sign-ins and personal data'
-                : 'all projects, files, webhooks, API keys and memberships'}{' '}
+                : 'all projects, files, webhooks, API keys and memberships (the subscription stops renewing now)'}{' '}
               are deleted here and in the connected tools. Records the law requires us to keep
               (audit and AI logs) stay, without personal identifiers where allowed.
             </DialogDescription>

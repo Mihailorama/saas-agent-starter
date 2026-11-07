@@ -1,7 +1,7 @@
 // Data-subject rights API (docs/privacy.md): requests, rate limit, re-auth, owner rules, cancel,
 // download and audit rows. The workflows themselves run in services/worker-py/tests/test_privacy.py.
 import { randomUUID } from 'node:crypto';
-import { auditLog, privacyRequests, session, user as users, withOrg } from '@app/db';
+import { auditLog, privacyRequests, session, subscriptions, user as users, withOrg } from '@app/db';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -243,6 +243,28 @@ describe('privacy: organization', () => {
     const cancel = await req(owner, 'POST', `/api/privacy/org/requests/${row!.id}/cancel`);
     expect(cancel.json().status).toBe('cancelled');
     expect(await audits(orgId, row!.id)).toHaveLength(2);
+  });
+});
+
+describe('privacy: organization billing', () => {
+  it('stops the subscription renewing with the provider when deletion is requested', async () => {
+    const owner = await signUp();
+    const orgId = await createOrg(owner);
+    await withOrg(db, orgId, (tx) =>
+      tx.insert(subscriptions).values({
+        orgId,
+        planId: 'pro',
+        status: 'active',
+        contour: 'en',
+        provider: 'stripe',
+        currency: 'USD',
+        customerId: 'cus_123',
+        providerSubscriptionId: 'sub_123', // stripe-mock accepts any id
+      }),
+    );
+    expect((await request(owner, 'org/deletion')).statusCode).toBe(202);
+    const [sub] = await withOrg(db, orgId, (tx) => tx.select().from(subscriptions));
+    expect(sub?.cancelAtPeriodEnd).toBe(true);
   });
 });
 

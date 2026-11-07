@@ -131,3 +131,6 @@ CHATWOOT_ADMIN_API_TOKEN = os.environ.get("CHATWOOT_ADMIN_API_TOKEN", "")
 # and the key JSON (one line) of a service account with Editor access to the property.
 GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID", "")
 GA4_SERVICE_ACCOUNT_JSON = os.environ.get("GA4_SERVICE_ACCOUNT_JSON", "")
+
+# Billing (docs/billing.md): plans and limits, shared with the API.
+PLANS_FILE = Path(os.environ.get("PLANS_FILE", _ROOT / "config" / "plans.json"))

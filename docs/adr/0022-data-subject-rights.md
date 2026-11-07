@@ -1,4 +1,4 @@
-# 0021. Data-subject rights: export, deletion and retention as Temporal workflows
+# 0022. Data-subject rights: export, deletion and retention as Temporal workflows
 
 Status: accepted (owner decision, 2026-11-07: one workflow exports or deletes a person's data
 everywhere, in our database and storage and in the external tools; AI content retention is
@@ -69,5 +69,7 @@ of what was done. At the same time some records must outlive a deletion: the `ai
   it; unconfigured tools are reported as `skipped`, not silently ignored.
 - `audit_log` must stay updatable for `ip` (docs/TODO.md suggests making it append-only; that
   change would need a column-level grant or a different anonymisation).
-- No billing provider exists on main yet: the `billing` step is a named extension point that
-  reports `skipped` until one is wired in.
+- Billing: the provider is called from the API (the worker has no provider adapters), so the
+  owner's deletion request stops renewal right away (`BillingProvider.cancel`, ADR 0019); the
+  worker's `billing` step only confirms nothing renews any more and drops our row. Cancelling the
+  deletion does not resume the subscription.

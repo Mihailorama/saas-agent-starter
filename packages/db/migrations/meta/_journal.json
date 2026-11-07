@@ -33,8 +33,15 @@
     {
       "idx": 4,
       "version": "7",
-      "when": 1794055884563,
-      "tag": "0004_equal_doctor_octopus",
+      "when": 1794054673699,
+      "tag": "0004_billing_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794058999861,
+      "tag": "0005_privacy_requests",
       "breakpoints": true
     }
   ]
