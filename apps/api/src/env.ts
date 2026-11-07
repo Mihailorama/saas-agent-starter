@@ -114,7 +114,7 @@ const schema = z
     PLANE_WEBHOOK_SECRET: z.string().optional(),
     PLANE_PROJECT_ID: z.string().optional(),
     /** Secret of the Cal.com webhook (booking -> CRM activity, docs/crm.md); empty = off (401). */
-    CALCOM_WEBHOOK_SECRET: z.string().optional(),
+    BOOKING_WEBHOOK_SECRET: z.string().optional(),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
@@ -142,7 +142,7 @@ const schema = z
         e.CHATWOOT_WEBHOOK_SECRET,
         e.CHATWOOT_HMAC_TOKEN,
         e.GITHUB_WEBHOOK_SECRET,
-        e.CALCOM_WEBHOOK_SECRET,
+        e.BOOKING_WEBHOOK_SECRET,
       ].some((v) => v?.startsWith('local-dev')),
     { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   )

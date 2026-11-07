@@ -1,4 +1,11 @@
 {
   "$comment": "Feature flag catalog (docs/feature-flags.md). Every isEnabled('<name>') / useFlag('<name>') / is_enabled(\"<name>\") call in apps/web, apps/api and services/worker-py must use a name listed here; `pnpm check:flags` enforces it and warns once `expires` has passed. Entry: description (what the flag gates, user-visible terms), owner (GitHub handle or team that removes it), default (value when PostHog is not configured or does not know the flag), expires (YYYY-MM-DD: full rollout done and flag removed from code and catalog by then). Example: \"new-project-form\": { \"description\": \"Two-step project creation form.\", \"owner\": \"@example\", \"default\": false, \"expires\": \"2027-03-31\" }",
-  "flags": {}
+  "flags": {
+    "booking": {
+      "description": "Booking a call with the team: \"Talk to us\" in the app sidebar and \"Book a demo\" on the marketing site (docs/crm.md). Needs VITE_BOOKING_ORIGIN and VITE_BOOKING_LINK as well.",
+      "owner": "@Mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    }
+  }
 }

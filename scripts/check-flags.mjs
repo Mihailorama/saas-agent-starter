@@ -60,6 +60,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     );
   const sources = [
     ...files('apps/web/src', /\.tsx?$/),
+    ...files('apps/site/src', /\.(ts|astro)$/),
     ...files('apps/api/src', /\.ts$/),
     ...files('services/worker-py/worker', /\.py$/),
   ].map((f) => [f, readFileSync(join(root, f), 'utf8')]);

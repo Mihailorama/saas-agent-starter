@@ -195,23 +195,21 @@
   each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
   task queues this server does not poll) listing the networks you do not use; measure before and
   after in docs/STACK.md, and never exclude a network you post to.
-- **Booking host is an open owner decision** (ADR 0026, docs/crm.md "Booking"). Cal.com went
-  closed source on 2026-04-14; the approved "Cal.com" is now Cal.com Cloud (US SaaS, team
-  scheduling paid) or Cal.diy (MIT, no published image, no teams, "non-production"). The code
-  speaks the shared protocol and the docs default to Cloud. Decide; if Cal.diy, add a CI job that
-  builds and scans its image (6 GB Node heap) and a `booking` profile, then measure its RAM.
+- **Data-subject rights do not reach Cal.diy's bookings** (2026-11-07; docs/privacy.md, docs/crm.md
+  "Privacy"). Attendee name, email and answers live in Cal.diy's database; its web container has
+  no API for them (API v2 is a separate server we do not run), so an operator deletes them in
+  Cal.diy's UI. Options: run Cal.diy's API v2 in the `booking` profile and add a privacy `Tool`
+  (bookings by attendee email: export, cancel + delete), or a reviewed SQL step against the
+  `caldiy` database (couples us to its Prisma schema; pin to the commit). Same gap for Cal.com
+  Cloud (its own deletion process).
+- **Cal.diy image build on every CI run** (`caldiy-image`, 20-40 minutes). Add a layer cache
+  (buildx + GHA cache) or run the job only when `infra/caldiy/` or the compose files change, if
+  the runner minutes matter.
+- **Twenty leftovers after a deletion** (docs/privacy.md "Twenty"): notes people wrote on the
+  person stay (unlinked) and Twenty's record history (timeline activities) was not checked on a
+  live Twenty; verify, and if it keeps the email, delete those entries through the REST API too.
 - **Permissive CRM twin.** `compose.permissive.yaml` only disables Twenty (AGPL); the sync then
   dry-runs. Evaluate Krayin (MIT, Laravel) or Atomic CRM (MIT) behind the `Crm` protocol
   (`services/worker-py/worker/crm.py`) if an AGPL-free delivery needs a CRM.
-- **Ids-only checks on Temporal history are vacuous.** `apps/api/test/api.test.ts` asserts
-  `JSON.stringify(await handle.fetchHistory())` does not contain the customer text, but payloads
-  are base64 there, so the check always passes. Decode the start event's input as
-  `apps/api/test/crm.test.ts` (`started()`) does.
 - **Twenty attachments are not backed up** (`twenty-data` volume, `STORAGE_TYPE=local`,
   docs/backups.md). Point Twenty at a bucket in `BACKUP_APP_BUCKETS` once attachments matter.
-- **Data-subject rights do not reach the CRM yet** (docs/privacy.md, docs/crm.md). Twenty keeps a
-  person per user and a company per organization. Add a `Tool` for Twenty in the privacy module
-  (`services/worker-py/worker/privacy.py`, step `crm` in USER_STEPS/ORG_STEPS): export = person
-  by `appUserId` (+ its notes), company/deal by `appOrgId`; delete = verify on a live Twenty
-  whether REST `DELETE /rest/people/:id` is a soft delete (`deletedAt`) and use the hard-destroy
-  path if so. Mind workflow determinism when adding a step to `DataDeletionWorkflow`.

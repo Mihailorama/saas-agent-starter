@@ -173,6 +173,7 @@ async def main() -> None:
         tools=privacy_tools,
         export_ttl_days=settings.PRIVACY_EXPORT_TTL_DAYS,
         org_records_days=settings.PRIVACY_ORG_RECORDS_DAYS,
+        booking_days=settings.BOOKING_PAYLOAD_DAYS,
     )
     chatwoot = (
         Chatwoot(
@@ -203,7 +204,8 @@ async def main() -> None:
         config=load_config(settings.CRM_FILE),
         plans=plans,
         chatwoot=chatwoot,
-        calcom_url=settings.CALCOM_PUBLIC_URL,
+        files=files,
+        booking_url=settings.BOOKING_PUBLIC_URL,
     )
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -242,6 +244,7 @@ async def main() -> None:
             privacy.purge_ai_content,
             privacy.purge_exports,
             privacy.purge_deleted_orgs,
+            privacy.purge_booking_payloads,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],

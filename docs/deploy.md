@@ -148,11 +148,25 @@ needs ~1.45 GiB (docs/STACK.md), so run `docker compose --profile crm up -d` fro
 `docker-compose.yml` on a separate host behind HTTPS (set `TWENTY_PUBLIC_URL`,
 `TWENTY_ENCRYPTION_KEY` and real database credentials; keep its database on the backed-up Postgres
 server if you can), or use Twenty Cloud. The app side is in `compose.prod.yaml`: the worker reads
-`TWENTY_API_URL`, `TWENTY_API_KEY` (and optionally `CRM_FILE`, `CALCOM_PUBLIC_URL`), the API
-`CALCOM_WEBHOOK_SECRET`, the web `BOOKING_ORIGINS`; the web image takes `VITE_CALCOM_ORIGIN` /
-`VITE_CALCOM_LINK` as build arguments (GitHub variables of the same name in `release.yml`). Run
-`pnpm crm:sync` once against the production Twenty. Booking runs on Cal.com Cloud or a Cal.diy you
-host yourself; there is no booking container.
+`TWENTY_API_URL`, `TWENTY_API_KEY` (and optionally `CRM_FILE`, `BOOKING_PUBLIC_URL`), the API
+`BOOKING_WEBHOOK_SECRET`, the web `BOOKING_ORIGINS`; the web image takes `VITE_BOOKING_ORIGIN` /
+`VITE_BOOKING_LINK` as build arguments (GitHub variables of the same name in `release.yml`; the
+entry points also need the `booking` flag on). Run `pnpm crm:sync` once against the production
+Twenty, or against a Twenty you connect instead (any Twenty v2 or Twenty Cloud: only
+`TWENTY_API_URL` and the key change).
+
+Booking (Cal.diy, [docs/crm.md](crm.md#booking)) is in `compose.prod.yaml` as the `booking`
+profile. Enable it with `COMPOSE_PROFILES=booking` (plus your other profiles) in the env file;
+`scripts/deploy.mjs` then pins `IMAGE_CALDIY` to the `caldiy` image the `Release images` workflow
+built for that version (job `caldiy`, from the commit pinned in `infra/caldiy/build.sh`). Once per
+server, create its database on the app's Postgres server (so the backups cover it), e.g.
+`psql "$MIGRATION_DATABASE_URL" -c "create role caldiy login password '<pw>'" -c "create database
+caldiy owner caldiy"`, and set `CALDIY_DATABASE_URL`, `CALDIY_PUBLIC_URL` (its own domain:
+uncomment the booking site in `deploy/Caddyfile`), `CALDIY_NEXTAUTH_SECRET`,
+`CALDIY_ENCRYPTION_KEY`, `CALDIY_CRON_API_KEY`, `CALDIY_EMAIL_FROM` and `CALDIY_SMTP_*`. It needs
+~TODO_CALDIY_RAM (docs/STACK.md). Using a Cal.diy you already run, or Cal.com Cloud: leave the
+profile off and set only `BOOKING_PUBLIC_URL`, `BOOKING_WEBHOOK_SECRET`, `BOOKING_ORIGINS` and the
+`VITE_BOOKING_*` build variables to it.
 
 ### GitHub Actions (optional)
 

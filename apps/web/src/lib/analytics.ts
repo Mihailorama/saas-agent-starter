@@ -7,6 +7,7 @@
 // Rage/dead clicks, web vitals and exceptions come from PostHog autocapture, not from here.
 // Catalog, tiers and replacement criteria: docs/product-analytics.md.
 import catalog from '../../../../config/events.json';
+import flags from '../../../../config/flags.json';
 
 export type EventName = keyof typeof catalog.events;
 export type Props = Record<string, string | number | boolean>;
@@ -36,8 +37,14 @@ type Win = Window & {
 const w = window as Win;
 
 const analyticsNeedsConsent = Boolean(config.posthog.key || config.ga4 || config.ym.id);
-/** Cal.com's booking embed (lib/booking.ts) loads a third party into the page: ask first. */
-const bookingNeedsConsent = Boolean(env.VITE_CALCOM_LINK);
+/** The booking embed (lib/booking.ts) loads a third party into the page: ask first, when it can
+ * show at all: configured, and its `booking` flag not off for everyone (same order as lib/flags). */
+const listed = (names: string | undefined) =>
+  (names ?? '').split(',').some((n) => n.trim() === 'booking');
+const bookingNeedsConsent =
+  Boolean(env.VITE_BOOKING_ORIGIN && env.VITE_BOOKING_LINK) &&
+  (listed(env.VITE_FLAGS_ON) ||
+    (!listed(env.VITE_FLAGS_OFF) && (flags.flags.booking.default || Boolean(config.posthog.key))));
 /** True when the consent banner has something to ask. */
 const consentNeeded = analyticsNeedsConsent || bookingNeedsConsent;
 // Regime per request: nginx writes the meta tag from CONSENT_MODE or the edge's country header

@@ -3,7 +3,8 @@
 # writes .env (decrypted deploy/env/<env>.enc.env + the IMAGE_* digests of the release) and runs
 # `docker compose up -d --wait`. Nothing is built here: api, worker and web are the images CI
 # pushed on a `v*` tag, pinned by digest. Optional on-box services are profiles, enabled with
-# COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback).
+# COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback),
+# booking (Cal.diy, image built by CI from a pinned upstream commit, IMAGE_CALDIY).
 # Licenses of every image: docs/LICENSES.md.
 
 x-logging: &logging
@@ -98,7 +99,7 @@ services:
       - PLANE_WEBHOOK_SECRET
       - PLANE_PROJECT_ID
       # booking webhook -> CRM (docs/crm.md)
-      - CALCOM_WEBHOOK_SECRET
+      - BOOKING_WEBHOOK_SECRET
       # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
       - AI_CONTOUR=${AI_CONTOUR:-}
       - BILLING_CONTOUR
@@ -175,7 +176,7 @@ services:
       - TWENTY_API_URL
       - TWENTY_API_KEY
       - CRM_FILE
-      - CALCOM_PUBLIC_URL
+      - BOOKING_PUBLIC_URL
       - FLAGS_ON
       - FLAGS_OFF
       - POSTHOG_KEY
@@ -334,6 +335,42 @@ services:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz >/dev/null"]
       interval: 2s
       retries: 30
+
+  # --- profile booking: Cal.diy (MIT) on this host (docs/crm.md "Booking", ADR 0026). The image
+  # is the one release.yml built from the pinned upstream commit (infra/caldiy/build.sh);
+  # scripts/deploy.mjs pins it by digest when COMPOSE_PROFILES contains booking. Its database
+  # lives on the app's Postgres server (create role + database `caldiy` once, docs/deploy.md), so
+  # the backups cover it. Reachable through Caddy: add the booking site in deploy/Caddyfile.
+  # Using Cal.com Cloud or a Cal.diy you already run elsewhere: leave the profile off.
+  caldiy:
+    profiles: [booking]
+    image: ${IMAGE_CALDIY:-set-IMAGE_CALDIY-by-deploying-with-scripts-deploy.mjs}
+    logging: *logging
+    mem_limit: 1g
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${CALDIY_DATABASE_URL:-}
+      - DATABASE_DIRECT_URL=${CALDIY_DATABASE_URL:-}
+      - DATABASE_HOST=${CALDIY_DATABASE_HOST:-postgres:5432}
+      - NEXT_PUBLIC_WEBAPP_URL=${CALDIY_PUBLIC_URL:-}
+      - NEXT_PUBLIC_WEBSITE_URL=${CALDIY_PUBLIC_URL:-}
+      - NEXTAUTH_URL=${CALDIY_PUBLIC_URL:-}/api/auth
+      - NEXTAUTH_SECRET=${CALDIY_NEXTAUTH_SECRET:-}
+      - CALENDSO_ENCRYPTION_KEY=${CALDIY_ENCRYPTION_KEY:-}
+      - CRON_API_KEY=${CALDIY_CRON_API_KEY:-}
+      - CALCOM_TELEMETRY_DISABLED=1
+      - EMAIL_FROM=${CALDIY_EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${CALDIY_EMAIL_FROM_NAME:-}
+      - EMAIL_SERVER_HOST=${CALDIY_SMTP_HOST:-}
+      - EMAIL_SERVER_PORT=${CALDIY_SMTP_PORT:-587}
+      - EMAIL_SERVER_USER=${CALDIY_SMTP_USER:-}
+      - EMAIL_SERVER_PASSWORD=${CALDIY_SMTP_PASSWORD:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 10s
+      start_period: 5m
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
 
 volumes:
   caddy_data:

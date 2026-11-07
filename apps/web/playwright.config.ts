@@ -9,6 +9,9 @@ for (const file of ['../../.env', '../../.env.example']) {
 // Override when 5173 is taken (e.g. agents running in parallel).
 const webPort = process.env.PLAYWRIGHT_PORT ?? '5173';
 const consentPort = process.env.PLAYWRIGHT_CONSENT_PORT ?? '5174';
+const bookingPort = process.env.PLAYWRIGHT_BOOKING_PORT ?? '5175';
+// Booking configured everywhere (docs/crm.md); only the build on bookingPort turns its flag on.
+const booking = { VITE_BOOKING_ORIGIN: 'https://cal.example.com', VITE_BOOKING_LINK: 'acme/demo' };
 
 export default defineConfig({
   testDir: 'e2e',
@@ -24,6 +27,7 @@ export default defineConfig({
     },
     {
       command: `pnpm dev --port ${webPort} --strictPort`,
+      env: booking,
       url: `http://localhost:${webPort}`,
       reuseExistingServer: !process.env.CI,
     },
@@ -32,6 +36,13 @@ export default defineConfig({
       command: `pnpm dev --port ${consentPort} --strictPort`,
       env: { VITE_GA4_ID: 'G-E2ETEST' },
       url: `http://localhost:${consentPort}`,
+      reuseExistingServer: !process.env.CI,
+    },
+    // The same app with the `booking` flag on, for e2e/booking.spec.ts.
+    {
+      command: `pnpm dev --port ${bookingPort} --strictPort`,
+      env: { ...booking, VITE_FLAGS_ON: 'booking' },
+      url: `http://localhost:${bookingPort}`,
       reuseExistingServer: !process.env.CI,
     },
   ],

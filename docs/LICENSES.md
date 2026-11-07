@@ -38,6 +38,7 @@ on an image that is not. Their primary software licenses:
 | `ghcr.io/gitroomhq/postiz-app`         | social post scheduling (`marketing` profile)       | AGPL-3.0                    |
 | `towfiqi/serpbear`                     | keyword rank tracking (`marketing` profile)        | MIT                         |
 | `twentycrm/twenty`                     | CRM: people, companies, deals (`crm` profile)      | AGPL-3.0 + app exception    |
+| `caldiy` (built from calcom/cal.diy)   | booking: "Book a demo" (`booking` profile)         | MIT                         |
 | `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 | `saas-agent-starter-pgbackup`          | Postgres + backup tools (`compose.backup.yaml`)    | PostgreSQL + MIT            |
 | `prom/pushgateway`                     | backup metrics for Prometheus (backup overlay)     | Apache-2.0                  |
@@ -179,14 +180,20 @@ Notes:
     talks to Twenty only through its published APIs and webhooks is not governed by the AGPL. The
     worker does exactly that (REST). Run unmodified, not distributed with the app; the permissive
     twin disables it. Its `twenty-db` one-shot reuses the `postgres` image.
-  - Booking has no container. Cal.com is closed source since 2026-04-14
-    ([announcement](https://cal.com/blog/cal-com-goes-closed-source-why)); Cal.com Cloud is an
-    external service, not shipped software. Its open-source successor Cal.diy is MIT
-    ([LICENSE](https://github.com/calcom/cal.diy/blob/main/LICENSE)) with all enterprise code
-    removed, but publishes no image (Docker Hub `calcom/cal.diy`: no tags); the last
-    `calcom/cal.com` image, v6.2.0 (2026-03-02, AGPL-3.0 with a commercial `ee/`), is
-    unmaintained. A self-hosted Cal.diy is built from its own repository, outside this stack.
-    The web and the site load Cal.com's `embed.js` by URL after consent: no npm dependency.
+  - `caldiy` (Cal.diy, `booking` profile): Cal.com is closed source since 2026-04-14
+    ([announcement](https://cal.com/blog/cal-com-goes-closed-source-why)); its open-source
+    successor Cal.diy is MIT. Verified at the pinned commit `2eb48ecc` (infra/caldiy/build.sh):
+    the root [LICENSE](https://github.com/calcom/cal.diy/blob/main/LICENSE) is MIT ("Copyright (c)
+    2020-present Cal.com, Inc."), and so is every other LICENSE file in the tree
+    (`apps/api/v2/src/platform`, `packages/app-store/hitpay`, `packages/app-store/stripepayment`,
+    `packages/embeds/*`); there is no `ee/` directory and no license key. Upstream publishes no
+    image, so CI builds it from that commit with upstream's own Dockerfile (on `node:22`, Debian)
+    and pushes it with our release; we change no source. The image is an infrastructure container
+    like the others, not distributed with the app; its npm dependencies are upstream's and are
+    not part of our code gate (Trivy scans the image for vulnerabilities). The last
+    `calcom/cal.com` image, v6.2.0 (2026-03-02, AGPL-3.0 with a commercial `ee/`), is unmaintained
+    and not used. Cal.com Cloud, the documented alternative, is an external service. The web and
+    the site load the booking host's `embed.js` by URL after consent: no npm dependency.
 
 ## Permissive twin (replacement map)
 

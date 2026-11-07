@@ -49,7 +49,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts + CRM signals, support.ts = Chatwoot/GitHub/Plane
-                      hooks, crm.ts = Cal.com booking hook (docs/crm.md),
+                      hooks, crm.ts = booking hook, Cal.diy (docs/crm.md),
                       privacy.ts = data export/deletion requests (docs/privacy.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
@@ -99,6 +99,7 @@ compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy 
 deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
 compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
 infra/backup/       backup image (postgres + pgBackRest/rclone) and its scripts (ADR 0015)
+infra/caldiy/       build.sh: Cal.diy image from a pinned upstream commit (`booking` profile)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
                     crm.mjs (`pnpm crm:sync`: Twenty fields, PostHog signal destinations),
@@ -109,7 +110,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
-docs/crm.md         CRM (Twenty) and booking (Cal.com): setup, sync flows, mapping, swapping
+docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync flows, mapping
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
@@ -156,9 +157,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items in GitHub Issues or
   Plane Intake; triage is a Temporal workflow in the worker, no own ticket table (ADR 0013).
 - Twenty (AGPL-3.0 + app exception, unmodified container, `crm` profile) for customer records;
-  booking over Cal.com's embed and signed webhooks (Cal.com Cloud or Cal.diy). Sync is one
-  Temporal workflow per source event, cross-links in Twenty custom fields, no own CRM tables
-  (ADR 0026).
+  booking on self-hosted Cal.diy (MIT, `booking` profile, image built by CI from a pinned upstream
+  commit; Cal.com Cloud connects the same way). Sync is one Temporal workflow per source event,
+  cross-links in Twenty custom fields, no own CRM tables (ADR 0026).
 
 ## Where code goes (TS vs Python vs Rust)
 

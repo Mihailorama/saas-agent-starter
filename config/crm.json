@@ -1,11 +1,10 @@
 {
-  "$comment": "CRM sync (docs/crm.md). Read by the worker (worker/crm.py) and by `pnpm crm:sync`, which creates the custom fields, the extra deal stages and the PostHog destinations below. stages: billing event type (worker/billing.py) -> deal stage value; an event type not listed leaves the deal alone. stageOptions: stages crm:sync adds to the CRM's stage field if missing (Twenty ships NEW, SCREENING, MEETING, PROPOSAL, CUSTOMER). signals: a PostHog event that, for a user whose organization has at least minMembers members and is on one of `plans` (empty = any), tags the company with `name` (a value of the company's productSignals field).",
+  "$comment": "CRM sync (docs/crm.md). Read by the worker (worker/crm.py) and by `pnpm crm:sync`, which creates the custom fields, the extra deal stages and the PostHog destinations below. stages: our subscription status (subscriptions.status, read when a billing event changed it) -> deal stage value; a status not listed (incomplete) leaves the deal alone. stageOptions: stages crm:sync adds to the CRM's stage field if missing (Twenty ships NEW, SCREENING, MEETING, PROPOSAL, CUSTOMER). signals: a PostHog event that, for a user whose organization has at least minMembers members and is on one of `plans` (empty = any), tags the company with `name` (a value of the company's productSignals field).",
   "dealName": "Subscription",
   "stages": {
-    "subscription.activated": "CUSTOMER",
-    "subscription.renewed": "CUSTOMER",
-    "subscription.past_due": "PAST_DUE",
-    "subscription.canceled": "CHURNED"
+    "active": "CUSTOMER",
+    "past_due": "PAST_DUE",
+    "canceled": "CHURNED"
   },
   "stageOptions": [
     { "value": "PAST_DUE", "label": "Past due", "color": "orange" },

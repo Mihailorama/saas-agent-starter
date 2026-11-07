@@ -1,20 +1,27 @@
 import { createHmac, randomUUID } from 'node:crypto';
+import { WorkflowNotFoundError } from '@temporalio/client';
+import { createEmailVerificationToken } from 'better-auth/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
 import { pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
+import { ensureBucket, getJson } from '../src/s3.ts';
 import { closeTemporal, crmWorkflowId, temporal } from '../src/temporal.ts';
+import { historyText } from './history.ts';
 
 // CRM sync starts (docs/crm.md): the API verifies the webhook and starts CrmSyncWorkflow with ids
-// (plus the attendee for bookings); the worker's side is services/worker-py/tests/test_crm.py.
+// only (a booking's attendee goes to S3); the worker's side is services/worker-py/tests/test_crm.py.
 const app = await buildApp();
 const secrets = {
-  CALCOM_WEBHOOK_SECRET: 'test-calcom-secret',
+  BOOKING_WEBHOOK_SECRET: 'test-calcom-secret',
   POSTHOG_WEBHOOK_SECRET: 'test-posthog-secret',
   CHATWOOT_WEBHOOK_SECRET: 'test-chatwoot-secret',
 };
-beforeAll(() => Object.assign(env, secrets));
+beforeAll(async () => {
+  Object.assign(env, secrets);
+  await ensureBucket();
+});
 afterAll(async () => {
   Object.assign(env, Object.fromEntries(Object.keys(secrets).map((k) => [k, undefined])));
   await app.close();
@@ -32,17 +39,22 @@ const post = (url: string, body: string, headers: Record<string, string>) =>
     headers: { 'content-type': 'application/json', ...headers },
     payload: body,
   });
-/** Type and decoded input of the workflow, then terminates it (no work left for a worker). */
+/** Type, decoded input and decoded history of the workflow, then terminates it. */
 async function started(eventId: string) {
   const handle = (await temporal()).workflow.getHandle(crmWorkflowId(eventId));
   const run = await handle.describe();
   const first = (await handle.fetchHistory()).events?.[0];
   const data = first?.workflowExecutionStartedEventAttributes?.input?.payloads?.[0]?.data;
+  const history = await historyText(handle);
   await handle.terminate('test cleanup');
-  return { type: run.type, input: Buffer.from(data ?? []).toString('utf8') };
+  return { type: run.type, input: Buffer.from(data ?? []).toString('utf8'), history };
 }
+const notStarted = async (eventId: string) =>
+  expect(
+    (await temporal()).workflow.getHandle(crmWorkflowId(eventId)).describe(),
+  ).rejects.toBeInstanceOf(WorkflowNotFoundError);
 
-describe('Cal.com webhook -> CRM', () => {
+describe('booking webhook (Cal.diy / Cal.com) -> CRM', () => {
   const booking = (trigger: string, uid = randomUUID()) => ({
     triggerEvent: trigger,
     createdAt: '2026-11-07T10:00:00Z',
@@ -56,7 +68,7 @@ describe('Cal.com webhook -> CRM', () => {
       responses: { notes: 'free text the CRM does not need' },
     },
   });
-  const calcom = (event: object, secret = secrets.CALCOM_WEBHOOK_SECRET) => {
+  const calcom = (event: object, secret = secrets.BOOKING_WEBHOOK_SECRET) => {
     const body = JSON.stringify(event);
     return post('/api/hooks/calcom', body, { 'x-cal-signature-256': hex(secret, body) });
   };
@@ -65,18 +77,18 @@ describe('Cal.com webhook -> CRM', () => {
     expect((await calcom(booking('BOOKING_CREATED'), 'wrong')).statusCode).toBe(401);
     const body = JSON.stringify(booking('BOOKING_CREATED'));
     const forged = await post('/api/hooks/calcom', body.replace('Grace', 'Mallory'), {
-      'x-cal-signature-256': hex(secrets.CALCOM_WEBHOOK_SECRET, body),
+      'x-cal-signature-256': hex(secrets.BOOKING_WEBHOOK_SECRET, body),
     });
     expect(forged.statusCode).toBe(401);
     const unsigned = await post('/api/hooks/calcom', body, {
       'x-cal-signature-256': 'no-secret-provided', // what Cal.com sends without a secret
     });
     expect(unsigned.statusCode).toBe(401);
-    env.CALCOM_WEBHOOK_SECRET = undefined;
+    env.BOOKING_WEBHOOK_SECRET = undefined;
     try {
       expect((await calcom(booking('BOOKING_CREATED'))).statusCode).toBe(401);
     } finally {
-      env.CALCOM_WEBHOOK_SECRET = secrets.CALCOM_WEBHOOK_SECRET;
+      env.BOOKING_WEBHOOK_SECRET = secrets.BOOKING_WEBHOOK_SECRET;
     }
   });
 
@@ -89,10 +101,25 @@ describe('Cal.com webhook -> CRM', () => {
       const event = booking(trigger);
       expect((await calcom(event)).json()).toEqual({ action: 'started' });
       expect((await calcom(event)).json()).toEqual({ action: 'duplicate' }); // redelivery
-      const run = await started(`cal:${trigger}:${event.payload.uid}:2026-11-10T10:00:00Z`);
+      const eventId = `cal:${trigger}:${event.payload.uid}:2026-11-10T10:00:00Z`;
+      const run = await started(eventId);
       expect(run.type).toBe('CrmSyncWorkflow');
-      expect(JSON.parse(run.input).booking.attendeeEmail).toBe('grace@example.com');
-      expect(run.input).not.toContain('free text'); // only what the note needs
+      // Ids only in Temporal (decoded history): the attendee waits in S3 for the worker.
+      const input = JSON.parse(run.input);
+      expect(Object.keys(input).sort()).toEqual(['bookingKey', 'eventId', 'kind']);
+      expect(run.history).toContain(input.bookingKey);
+      for (const text of ['grace@example.com', 'Grace Hopper', 'Demo between', 'free text']) {
+        expect(run.history).not.toContain(text);
+      }
+      expect(await getJson(input.bookingKey)).toEqual({
+        trigger,
+        uid: event.payload.uid,
+        title: 'Demo between Acme and Grace',
+        startTime: '2026-11-10T10:00:00Z',
+        attendeeEmail: 'grace@example.com',
+        attendeeName: 'Grace Hopper',
+        rescheduleUid: '',
+      }); // only what the note needs: no free-text answers
     }
   });
 });
@@ -130,21 +157,28 @@ describe('Chatwoot conversation -> CRM', () => {
   });
 });
 
-describe('sign-up and new organization -> CRM', () => {
-  it('starts a person sync on sign-up and a company sync on organization create', async () => {
+describe('verified sign-up and new organization -> CRM', () => {
+  it('syncs the person only once the email is verified, the company on create', async () => {
+    const email = `${randomUUID()}@example.com`;
     const res = await app.inject({
       method: 'POST',
       url: '/api/auth/sign-up/email',
       remoteAddress: ip(),
       headers: { origin: allowedOrigins[0]! },
-      payload: {
-        email: `${randomUUID()}@example.com`,
-        password: 'correct-horse-battery',
-        name: 'T',
-      },
+      payload: { email, password: 'correct-horse-battery', name: 'T' },
     });
     expect(res.statusCode).toBe(200);
     const userId: string = res.json().user.id;
+    // Unverified: the address is not proven, so it must not match a CRM person yet.
+    await notStarted(`user:${userId}`);
+
+    const token = await createEmailVerificationToken(env.BETTER_AUTH_SECRET, email);
+    const verified = await app.inject({
+      method: 'GET',
+      url: `/api/auth/verify-email?token=${token}`,
+      remoteAddress: ip(),
+    });
+    expect(verified.statusCode).toBeLessThan(400);
     const run = await started(`user:${userId}`);
     expect(run.type).toBe('CrmSyncWorkflow');
     expect(JSON.parse(run.input)).toEqual({
@@ -152,6 +186,7 @@ describe('sign-up and new organization -> CRM', () => {
       eventId: `user:${userId}`,
       userId,
     }); // ids only
+    expect(run.history).not.toContain(email);
 
     const org = await auth.api.createOrganization({
       body: { name: 'Acme', slug: randomUUID(), userId },

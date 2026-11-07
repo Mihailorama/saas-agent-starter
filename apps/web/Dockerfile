@@ -15,8 +15,8 @@ ARG VITE_RELEASE=dev VITE_POSTHOG_KEY= VITE_POSTHOG_HOST= VITE_POSTHOG_AI_FEEDBA
     VITE_GA4_ID= VITE_YM_ID= VITE_YM_WEBVISOR= VITE_LANGFUSE_PUBLIC_KEY= VITE_LANGFUSE_HOST=
 # In-app help widget (Chatwoot); both empty = no Help entry, no request (docs/support.md).
 ARG VITE_CHATWOOT_BASE_URL= VITE_CHATWOOT_WEBSITE_TOKEN=
-# "Talk to us" booking link (Cal.com, docs/crm.md); empty link = no entry.
-ARG VITE_CALCOM_ORIGIN= VITE_CALCOM_LINK=
+# "Talk to us" booking link (Cal.diy / Cal.com, docs/crm.md); empty = no entry; flag `booking`.
+ARG VITE_BOOKING_ORIGIN= VITE_BOOKING_LINK=
 # Feature flag overrides (docs/feature-flags.md), comma-separated names.
 ARG VITE_FLAGS_ON= VITE_FLAGS_OFF=
 RUN pnpm --filter web build
@@ -31,7 +31,7 @@ ENV ANALYTICS_ORIGINS=""
 ENV CONSENT_MODE=opt-in CONSENT_COUNTRY_HEADER=cf_ipcountry CONSENT_OPT_OUT_COUNTRIES=""
 # Origin of the Chatwoot widget (script + iframe), e.g. https://support.example.com (empty = none).
 ENV SUPPORT_ORIGINS=""
-# Origin of the Cal.com booking embed (script + iframe), e.g. https://app.cal.com (empty = none).
+# Origin of the booking embed (script + iframe), e.g. https://cal.example.com (empty = none).
 ENV BOOKING_ORIGINS=""
 COPY apps/web/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html

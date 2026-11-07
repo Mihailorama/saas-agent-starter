@@ -35,6 +35,7 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | serpbear          | marketing     |                71 |         512 |       0.0% |
 | twenty            | crm           |               650 |        1536 |       0.9% |
 | twenty-worker     | crm           |               792 |        1024 |       0.8% |
+| caldiy            | booking       |   TODO_CALDIY_ROW |
 
 Totals (used / limit): default stack ~612 / 2304 MiB, observability ~670 / 2432 MiB,
 GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.1 GiB. Jaeger keeps traces in memory, so its
@@ -60,8 +61,9 @@ notes through the worker's client) server 750 MiB, worker 702 MiB; Postgres grew
 limit), more than twice the default stack: run it on another host or use Twenty Cloud on a small
 server. The worker needs `NODE_OPTIONS=--max-old-space-size=768`: with Node's default heap for a
 1 GiB container it died of heap exhaustion during start-up. First start ~11 minutes (migrations) on
-this loaded host. Booking has no container (Cal.com Cloud or a separately built Cal.diy), so it
-adds nothing here.
+this loaded host.
+
+Booking profile (Cal.diy at the commit pinned in `infra/caldiy/build.sh`, docs/crm.md): TODO_CALDIY_STACK
 
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then

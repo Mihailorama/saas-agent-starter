@@ -72,16 +72,7 @@ export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) 
   `support-closed-${e.tracker}-${e.issueId}-${closeId}`;
 export const startSupportIssueClosed = (e: SupportIssueClosed, closeId: string) =>
   startOnce('SupportIssueClosedWorkflow', supportClosedWorkflowId(e, closeId), e);
-/** CRM sync (docs/crm.md). Contract with services/worker-py (worker/crm.py, CrmEvent). */
-export type CrmBooking = {
-  trigger: string;
-  uid: string;
-  title: string;
-  startTime: string;
-  attendeeEmail: string;
-  attendeeName: string;
-  rescheduleUid: string;
-};
+/** CRM sync (docs/crm.md). Contract with services/worker-py (worker/crm.py, CrmEvent). Ids only. */
 export type CrmEvent = {
   kind: 'user.created' | 'org.created' | 'signal' | 'support.conversation' | 'booking';
   /** Source event id: the workflow id and the CRM note's appEventId, so it is applied once. */
@@ -91,8 +82,8 @@ export type CrmEvent = {
   signal?: string;
   accountId?: number;
   conversationId?: number;
-  /** Cal.com has no API on every tier, so the attendee travels with the event (ids otherwise). */
-  booking?: CrmBooking;
+  /** Booking: the S3 key of the webhook's booking fields, written by the API (routes/crm.ts). */
+  bookingKey?: string;
 };
 export const crmWorkflowId = (eventId: string) => `crm-${eventId}`;
 /** The worker writes to the CRM, or only logs without TWENTY_API_URL/KEY (dry run). */

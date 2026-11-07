@@ -34,6 +34,8 @@ async function sendEmail(
 const crmSync = async (e: CrmEvent) => {
   await startCrmSync(e).catch((err) => Sentry.captureException(err));
 };
+const personSync = (userId: string) =>
+  crmSync({ kind: 'user.created', eventId: `user:${userId}`, userId });
 
 // Optional SSO: set OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET to enable "Sign in with SSO".
 // Callback (register it at the IdP): ${BETTER_AUTH_URL}/api/auth/callback/oidc. PKCE is on.
@@ -62,11 +64,14 @@ export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: allowedOrigins,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
+  // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
+  // vouches for): an unverified sign-up must not claim a CRM person who has that email.
   databaseHooks: {
     user: {
       create: {
-        after: (user) =>
-          crmSync({ kind: 'user.created', eventId: `user:${user.id}`, userId: user.id }),
+        after: async (user) => {
+          if (user.emailVerified) await personSync(user.id);
+        },
       },
     },
   },
@@ -82,6 +87,7 @@ export const auth = betterAuth({
     sendOnSignUp: true,
     sendOnSignIn: true, // an unverified sign-in attempt mails a fresh link
     autoSignInAfterVerification: true,
+    afterEmailVerification: (user) => personSync(user.id),
     sendVerificationEmail: ({ user, url, token }, request) =>
       sendEmail('verify-email', user.email, url, token, request, { name: user.name }),
   },

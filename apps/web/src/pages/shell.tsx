@@ -50,6 +50,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { bookingUrl, onBookingClick } from '@/lib/booking';
+import { useFlag } from '@/lib/flags';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -230,7 +231,7 @@ function HelpMenu({ className }: { className?: string }) {
   );
 }
 
-/** Books a call with the team (Cal.com, docs/crm.md); prefilled with the signed-in user. */
+/** Books a call with the team (Cal.diy / Cal.com, docs/crm.md); prefilled with the user. */
 function TalkToUs({ className, label = true }: { className?: string; label?: boolean }) {
   const { data: session } = authClient.useSession();
   const user = session?.user;
@@ -260,6 +261,8 @@ export function Shell() {
   useEffect(() => {
     if (userId) identify(userId);
   }, [userId]);
+  // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
+  const booking = useFlag('booking') && Boolean(bookingUrl);
   const onProjects = useLocation({
     select: (l) => l.pathname === '/' || l.pathname.startsWith('/projects'),
   });
@@ -339,7 +342,7 @@ export function Shell() {
             </>
           )}
         </nav>
-        {bookingUrl && <TalkToUs className={cn(navLink, 'mx-2 mb-1')} />}
+        {booking && <TalkToUs className={cn(navLink, 'mx-2 mb-1')} />}
         {supportEnabled && (
           <HelpMenu className="mx-2 mb-1 h-auto py-2 text-sm font-normal text-muted-foreground" />
         )}
@@ -358,7 +361,7 @@ export function Shell() {
           <div className="min-w-0 flex-1">
             <OrgSwitcher />
           </div>
-          {bookingUrl && <TalkToUs label={false} className="rounded-md p-2 hover:bg-accent" />}
+          {booking && <TalkToUs label={false} className="rounded-md p-2 hover:bg-accent" />}
           {supportEnabled && <HelpMenu />}
           <div className="w-44">
             <UserMenu />

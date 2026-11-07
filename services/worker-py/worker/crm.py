@@ -3,8 +3,8 @@
 No CRM tables of our own: people, companies, deals and notes live in the CRM (Twenty by default).
 The cross-links live there too, in custom fields that `pnpm crm:sync` creates: `appUserId` on
 people, `appOrgId` on companies and deals, `appEventId` on notes. Every write is keyed by the id
-of the source event (signup, billing event, PostHog event, Chatwoot conversation, Cal.com
-booking), and the unique fields make a retried activity change nothing twice.
+of the source event (signup, billing event, PostHog event, Chatwoot conversation, booking), and
+the unique fields make a retried activity change nothing twice.
 
 Another CRM: implement `Crm` (below) for it and construct it in `__main__.py`; the activity, the
 workflow and the API stay as they are.
@@ -23,14 +23,20 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from worker.billing import Plans
+from worker.s3 import S3
 from worker.support import Chatwoot, SupportConversation, obj
 
 log = logging.getLogger(__name__)
 
 
+# Booking payloads in S3_BUCKET, written by apps/api/src/routes/crm.ts (BOOKING_PREFIX there).
+BOOKING_PREFIX = "crm-bookings/"
+
+
 @dataclass(frozen=True)
 class Booking:
-    """A Cal.com booking webhook, reduced to what the note needs. Contract with temporal.ts."""
+    """A booking webhook (Cal.diy / Cal.com), reduced to what the note needs: the S3 object the
+    API writes (routes/crm.ts). Never a workflow argument: it holds the attendee's email."""
 
     trigger: str  # BOOKING_CREATED | BOOKING_RESCHEDULED | BOOKING_CANCELLED
     uid: str
@@ -43,20 +49,18 @@ class Booking:
 
 @dataclass(frozen=True)
 class CrmEvent:
-    """Workflow input. Contract with apps/api/src/temporal.ts (CrmEvent) and BillingEventWorkflow.
-
-    Ids only, except `booking`: Cal.com has no API on every tier we support, so the API passes the
-    attendee's name and email (like SendEmail passes the recipient)."""
+    """Workflow input, ids only. Contract with apps/api/src/temporal.ts (CrmEvent) and
+    BillingEventWorkflow."""
 
     kind: str  # user.created | org.created | billing | signal | support.conversation | booking
     eventId: str  # source event id: the workflow id and the note's appEventId
     userId: str = ""
     orgId: str = ""
-    billingType: str = ""  # subscription.activated ... (worker/billing.py STATUS)
+    billingType: str = ""  # subscription.activated ...: informational, the stage comes from our row
     signal: str = ""  # a signal name from config/crm.json
     accountId: int = 0  # Chatwoot
     conversationId: int = 0
-    booking: Booking | None = None
+    bookingKey: str = ""  # S3 key of the Booking (deleted once the note is written)
 
 
 @dataclass(frozen=True)
@@ -71,7 +75,7 @@ class Signal:
 class CrmConfig:
     """config/crm.json, the same file `pnpm crm:sync` reads."""
 
-    stages: dict[str, str]  # billing event type -> deal stage value
+    stages: dict[str, str]  # subscriptions.status -> deal stage value
     deal_name: str
     signals: dict[str, Signal]
 
@@ -270,10 +274,11 @@ class CrmActivities:
         config: CrmConfig,
         plans: Plans,
         chatwoot: Chatwoot | None,
-        calcom_url: str,
+        files: S3,
+        booking_url: str,
     ) -> None:
         self.pool, self.crm, self.config, self.plans = pool, crm, config, plans
-        self.chatwoot, self.calcom_url = chatwoot, calcom_url.rstrip("/")
+        self.chatwoot, self.files, self.booking_url = chatwoot, files, booking_url.rstrip("/")
 
     @activity.defn(name="crm_sync")
     async def sync(self, e: CrmEvent) -> str:
@@ -296,13 +301,18 @@ class CrmActivities:
         activity.logger.info("crm %s %s: %s", e.kind, e.eventId, result)
         return result
 
-    async def _app_person(self, crm: Crm, user_id: str) -> Contact:
-        row = await self.pool.fetchrow('select name, email from "user" where id = $1', user_id)
+    async def _app_person(self, crm: Crm, user_id: str) -> Contact | None:
+        """The user's person; None while their email is unverified: matching by an address
+        nobody proved to own would hand them a CRM person (a lead) who has it. The API syncs the
+        person on verification (apps/api/src/auth.ts)."""
+        row = await self.pool.fetchrow(
+            'select name, email, email_verified from "user" where id = $1', user_id
+        )
         if row is None:
             raise Retry(f"user {user_id} not found")
-        contact = await crm.person(app_user_id=user_id, email=row["email"], name=row["name"])
-        assert contact is not None
-        return contact
+        if not row["email_verified"]:
+            return None
+        return await crm.person(app_user_id=user_id, email=row["email"], name=row["name"])
 
     async def _company(self, crm: Crm, org_id: str) -> str:
         name = await self.pool.fetchval("select name from organization where id = $1", org_id)
@@ -311,17 +321,32 @@ class CrmActivities:
         return await crm.company(org_id, name)
 
     async def _user(self, crm: Crm, e: CrmEvent) -> str:
-        await self._app_person(crm, e.userId)
+        person = await self._app_person(crm, e.userId)
+        if person is None:
+            return "unverified"
+        # Organizations created before the email was verified did not join the person.
+        first = await self.pool.fetchval(
+            "select organization_id from member where user_id = $1 order by created_at limit 1",
+            e.userId,
+        )
+        if first:
+            await crm.join(person, await self._company(crm, first))
         return "person"
 
     async def _org(self, crm: Crm, e: CrmEvent) -> str:
         company = await self._company(crm, e.orgId)
-        if e.userId:
-            await crm.join(await self._app_person(crm, e.userId), company)
+        person = await self._app_person(crm, e.userId) if e.userId else None
+        if person is not None:
+            await crm.join(person, company)
         return "company"
 
     async def _billing(self, crm: Crm, e: CrmEvent) -> str:
-        stage = self.config.stages.get(e.billingType)
+        """The stage follows our subscription row as it is now, not the event that triggered the
+        sync: a retried, older event can then never move the deal back."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute("select set_config('app.org_id', $1, true)", e.orgId)
+            status = await conn.fetchval("select status from subscriptions")
+        stage = self.config.stages.get(status or "")
         if not stage:
             return "ignored"
         company = await self._company(crm, e.orgId)
@@ -387,18 +412,23 @@ class CrmActivities:
         return "note"
 
     async def _booking(self, crm: Crm, e: CrmEvent) -> str:
-        b = e.booking
-        if b is None or b.trigger not in BOOKING_TITLES:
+        try:
+            doc = json.loads(await self.files.get(e.bookingKey))
+        except httpx2.HTTPStatusError as err:
+            if err.response.status_code != 404:
+                raise
+            return "gone"  # deleted after an earlier attempt wrote the note, or by retention
+        b = Booking(**doc)
+        if b.trigger not in BOOKING_TITLES:
             return "ignored"
         person = await crm.person(app_user_id="", email=b.attendeeEmail, name=b.attendeeName)
-        if person is None:
-            return "anonymous"
-        lines = [
-            f"{BOOKING_TITLES[b.trigger]}: {b.title}, {b.startTime}",
-            f"Booking: {self.calcom_url}/booking/{b.uid}",
-        ]
-        if b.rescheduleUid:
-            lines.append(f"Earlier booking: {self.calcom_url}/booking/{b.rescheduleUid}")
-        title = f"{BOOKING_TITLES[b.trigger]}: {b.title}"
-        await crm.note(e.eventId, title, "\n\n".join(lines), person.id, person.company_id)
-        return "note"
+        if person is not None:
+            lines = [f"{BOOKING_TITLES[b.trigger]}: {b.title}, {b.startTime}"]
+            if self.booking_url:
+                lines.append(f"Booking: {self.booking_url}/booking/{b.uid}")
+                if b.rescheduleUid:
+                    lines.append(f"Earlier booking: {self.booking_url}/booking/{b.rescheduleUid}")
+            title = f"{BOOKING_TITLES[b.trigger]}: {b.title}"
+            await crm.note(e.eventId, title, "\n\n".join(lines), person.id, person.company_id)
+        await self.files.delete(e.bookingKey)
+        return "note" if person else "anonymous"

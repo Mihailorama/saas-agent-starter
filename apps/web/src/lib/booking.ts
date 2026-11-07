@@ -1,18 +1,16 @@
 // "Book a demo" (site) and "Talk to us" (app), docs/crm.md. Booking links are plain links to the
-// Cal.com booking page; when the visitor has allowed the booking calendar in the consent banner,
-// a click opens Cal.com's embed in a modal instead. Off while VITE_CALCOM_LINK is empty.
-// Shared with apps/site like analytics.ts, hence the relative import.
+// booking page of the self-hosted Cal.diy (or Cal.com Cloud); when the visitor has allowed the
+// booking calendar in the consent banner, a click opens its embed in a modal instead. Off while
+// VITE_BOOKING_ORIGIN or VITE_BOOKING_LINK is empty; shown only with the `booking` flag on (the
+// callers check it). Shared with apps/site like analytics.ts, hence the relative import.
 import { allowed, track } from './analytics';
 
 const env = import.meta.env;
-/** Cal.com Cloud by default; a self-hosted Cal.diy sets its own origin. */
-const origin = ((env.VITE_CALCOM_ORIGIN as string | undefined) || 'https://app.cal.com').replace(
-  /\/+$/,
-  '',
-);
+/** The booking host: your Cal.diy (e.g. https://cal.example.com) or https://app.cal.com. */
+const origin = ((env.VITE_BOOKING_ORIGIN as string | undefined) ?? '').replace(/\/+$/, '');
 /** `<user>/<event type>`, e.g. `acme/demo`. */
-const calLink = env.VITE_CALCOM_LINK as string | undefined;
-export const bookingUrl = calLink ? `${origin}/${calLink}` : undefined;
+const calLink = env.VITE_BOOKING_LINK as string | undefined;
+export const bookingUrl = origin && calLink ? `${origin}/${calLink}` : undefined;
 
 type Cal = ((...args: unknown[]) => void) & { q?: unknown[]; ns?: object; loaded?: boolean };
 type Win = Window & { Cal?: Cal };

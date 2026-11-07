@@ -4,11 +4,13 @@ Every product gets customer records and a way to book a call from day one, in ex
 their own UI, webhooks and integrations. There are no CRM tables in our database (owner decision
 2026-11-07, [ADR 0026](adr/0026-crm-and-booking.md)):
 
-- **CRM: [Twenty](https://twenty.com)** (AGPL-3.0, unmodified container, `crm` compose profile).
-  People, companies, deals and notes live there.
-- **Booking: Cal.com's protocol** (embed + signed webhooks), served by **Cal.com Cloud** by
-  default or a self-hosted **Cal.diy**. See [Booking](#booking) for why there is no booking
-  container: Cal.com went closed source in April 2026.
+- **CRM: [Twenty](https://twenty.com)** (AGPL-3.0, unmodified container). Install it with the
+  `crm` compose profile, or connect a Twenty you already run or Twenty Cloud. People, companies,
+  deals and notes live there.
+- **Booking: self-hosted [Cal.diy](https://github.com/calcom/cal.diy)** (MIT, the open-source
+  successor of Cal.com; owner decision 2026-11-07). Install it with the `booking` profile (image
+  built by our CI from a pinned upstream commit), or connect a Cal.diy you already run. Cal.com
+  Cloud speaks the same protocol and stays an alternative: only URLs change.
 - **Sync: one Temporal workflow per source event** in the Python worker (`worker/crm.py`,
   `CrmSyncWorkflow`); the API only verifies webhooks and starts workflows.
 
@@ -19,31 +21,47 @@ their own UI, webhooks and integrations. There are no CRM tables in our database
  organization created ──┤  Better Auth hook            (ids)
  PostHog event ─────────┤  destination -> POST /api/hooks/posthog {signal}   (event uuid, user id)
  Chatwoot conversation ─┤  webhook -> POST /api/hooks/chatwoot               (account, conversation)
- Cal.com booking ───────┘  webhook -> POST /api/hooks/calcom (signature)     (booking + attendee)
+ Cal.diy booking ───────┘  webhook -> POST /api/hooks/calcom (signature)     (event id + S3 key)
                            │
                            ▼  startCrmSync(): workflow id crm-<source event id>, REJECT_DUPLICATE
  Stripe/billing webhook -> BillingEventWorkflow ──(state changed)──> child CrmSyncWorkflow
                            │
-                           ▼  worker: CrmActivities.sync (reads names/emails from Postgres or
-                              Chatwoot, plan and team size from our tables)
+                           ▼  worker: CrmActivities.sync (reads names/emails from Postgres,
+                              Chatwoot or the booking's S3 object, plan and team size from our tables)
                         Twenty REST API
              person (appUserId) ── company (appOrgId) ── deal "Subscription" (appOrgId, stage)
                      └────────── notes (appEventId) ─────────┘   productSignals tag on company
 ```
 
-Workflow arguments carry ids only, except bookings: Cal.com has no API on every tier we support,
-so the API passes the attendee's name and email with the event (as `SendEmail` passes a
-recipient). Nothing else from the webhook (free-text answers, cancellation reasons) is kept.
+Workflow arguments carry ids only. For a booking the API writes the fields the note needs
+(trigger, booking uid, title, start, attendee name and email, earlier booking) to S3
+(`crm-bookings/<day>/<sha256 of the event id>.json` in `S3_BUCKET`) and passes the key; the
+activity reads it, writes the note and deletes the object. Cal.diy's web container has no API to
+read a booking back (its API v2 is a separate server), so S3 is the hand-over. Leftovers (a sync
+that failed for good, a redelivery after the sync ran) are deleted by the daily privacy retention
+after `BOOKING_PAYLOAD_DAYS` (default 7). Nothing else from the webhook (free-text answers,
+cancellation reasons) is kept.
 
 ## Setup
 
-1. **Start Twenty**: `docker compose --profile crm up -d`. It uses our Postgres (role and
-   database `twenty`, created by the `twenty-db` one-shot) and our Redis (db 4). The first start
-   runs about 580 migration steps: 11 minutes on a loaded 8-core host, ~5 minutes later on.
-   Open `http://localhost:3400`, create the workspace and the first user.
+Every external tool here is either **installed with the template** (a compose profile) or
+**connected** (an instance you already run, or the vendor's cloud). The app side is the same env
+either way; nothing in the code knows which one it talks to.
+
+1. **Twenty**, one of:
+   - **Install** (`crm` profile): `docker compose --profile crm up -d`. It uses our Postgres (role
+     and database `twenty`, created by the `twenty-db` one-shot) and our Redis (db 4). The first
+     start runs about 580 migration steps: 11 minutes on a loaded 8-core host, ~5 minutes later
+     on. Open `http://localhost:3400`, create the workspace and the first user. Worker env:
+     `TWENTY_API_URL=http://twenty:3000` (compose network; `http://localhost:3400` for
+     `pnpm worker` on the host).
+   - **Connect** an existing Twenty (self-hosted v2.x) or [Twenty Cloud](https://twenty.com/pricing):
+     no profile. `TWENTY_API_URL` is its base URL (e.g. `https://crm.example.com`; Twenty Cloud:
+     the API URL shown next to your key, e.g. `https://api.twenty.com`).
 2. **API key**: in Twenty, Settings -> APIs & Webhooks -> create a key with the Admin role (it
-   creates custom fields). Set the worker env: `TWENTY_API_URL=http://twenty:3000` (compose
-   network; `http://localhost:3400` for `pnpm worker` on the host) and `TWENTY_API_KEY`.
+   creates custom fields). Set `TWENTY_API_KEY` for the worker and for `pnpm crm:sync`; both use
+   only `TWENTY_API_URL` + `TWENTY_API_KEY`, so they work the same against an installed or a
+   connected Twenty.
 3. **Fields, stages, signals**: `pnpm crm:sync` (env as above on the machine you run it from;
    `--dry-run` prints the plan). It creates the custom fields below, adds the extra deal stages
    and creates one PostHog webhook destination per product signal (needs the `journeys:sync`
@@ -73,21 +91,22 @@ Custom fields (created by `pnpm crm:sync`, all unique, labelled "Set by the app 
 
 Source events (`config/crm.json` holds the configurable parts):
 
-| Source                 | Workflow id                             | Written to Twenty                                                                  |
-| ---------------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
-| sign-up                | `crm-user:<userId>`                     | person (name, email, `appUserId`); an existing person with that email gets the id  |
-| organization created   | `crm-org:<orgId>`                       | company (name, `appOrgId`); the creator joins it if they have no company yet       |
-| billing event          | `crm-billing:<provider>:<eventId>`      | the organization's "Subscription" deal moved to `stages[<event type>]`             |
-| PostHog signal         | `crm-posthog:<event uuid>`              | `productSignals` tag + one note, for each qualifying organization of the user      |
-| Chatwoot conversation  | `crm-chatwoot:<account>:<conversation>` | note "Support conversation #N" with the conversation link, on the person + company |
-| Cal.com booking change | `crm-cal:<trigger>:<uid>:<start>`       | note "Booked / Rescheduled / Cancelled: <title>" with the booking link             |
+| Source                | Workflow id                             | Written to Twenty                                                                  |
+| --------------------- | --------------------------------------- | ---------------------------------------------------------------------------------- |
+| verified sign-up      | `crm-user:<userId>`                     | person (name, email, `appUserId`); an existing person with that email gets the id  |
+| organization created  | `crm-org:<orgId>`                       | company (name, `appOrgId`); the creator joins it if they have no company yet       |
+| billing event         | `crm-billing:<provider>:<eventId>`      | the organization's "Subscription" deal moved to `stages[<subscription status>]`    |
+| PostHog signal        | `crm-posthog:<event uuid>`              | `productSignals` tag + one note, for each qualifying organization of the user      |
+| Chatwoot conversation | `crm-chatwoot:<account>:<conversation>` | note "Support conversation #N" with the conversation link, on the person + company |
+| booking change        | `crm-cal:<trigger>:<uid>:<start>`       | note "Booked / Rescheduled / Cancelled: <title>" with the booking link             |
 
-Deal stages (`stages`): `subscription.activated` and `subscription.renewed` -> `CUSTOMER`,
-`subscription.past_due` -> `PAST_DUE`, `subscription.canceled` -> `CHURNED`; `payment.*` events
-leave the deal alone. `PAST_DUE` and `CHURNED` are not in Twenty's default stage list
-(`NEW, SCREENING, MEETING, PROPOSAL, CUSTOMER`); `stageOptions` makes `crm:sync` add them. Only
-events that changed our own subscription state reach the CRM, so a late, older webhook cannot move
-a deal back. The deal carries no amount: prices live in `config/plans.json` and Stripe; add an
+Deal stages (`stages`) map our subscription status, read inside the activity under the
+organization's RLS scope: `active` -> `CUSTOMER`, `past_due` -> `PAST_DUE`, `canceled` ->
+`CHURNED`; `incomplete` (or no row) leaves the deal alone. `PAST_DUE` and `CHURNED` are not in
+Twenty's default stage list (`NEW, SCREENING, MEETING, PROPOSAL, CUSTOMER`); `stageOptions` makes
+`crm:sync` add them. Only billing events that changed our subscription state start a sync, and the
+sync maps the row as it is when it runs, not the event that started it: a retried child of an older
+event (activated, retried after canceled) sets the current stage (`CHURNED`), never an old one. The deal carries no amount: prices live in `config/plans.json` and Stripe; add an
 `amount` in `Twenty.deal` if sales wants it.
 
 Product signals (`signals`): PostHog decides "active" (the event fired), our data decides "team on
@@ -96,10 +115,22 @@ user belongs to. The shipped one, `ACTIVE_TEAM_FREE`, fires on `project_created`
 with at least 2 members on `free`. To add one: a new entry (name, label, PostHog event, plans,
 minMembers), `pnpm crm:sync`, done. A tagged company gets one note the first time.
 
-People are matched by `appUserId`, then by email. A Chatwoot contact counts as our user only when
-the widget's identity hash was verified (`meta.hmac_verified`); otherwise the email is used, as for
-Cal.com attendees, and an unknown email becomes a new person (a lead). A user who books a demo and
-signs up later stays one person.
+Limit: `project_created` is sent by the browser with PostHog's public project key, and there is no
+server-side PostHog event to use instead, so the event can be forged: anyone can send it for any
+user id. What a forged event can do is bounded by our own data: the worker tags only organizations
+that really have the members and plan the signal asks for, once per company. Treat the tag as a
+hint for sales, not as a fact; for a signal that must not be spoofable, emit the event from the API
+(`POSTHOG_KEY` is already there for flags) and point the destination at that event.
+
+People are matched by `appUserId`, then by email. Our user's person is synced only once their
+email is verified (Better Auth's `afterEmailVerification`, or at sign-up when the IdP vouches for
+the address): otherwise anyone could sign up with a lead's address and have the CRM hand them that
+lead. A user who books a demo and signs up later stays one person; an organization created before
+the email was verified gets its creator once they verify. A Chatwoot contact counts as our user
+only when the widget's identity hash was verified (`meta.hmac_verified`). Chatwoot and booking
+notes otherwise match people by the email the visitor typed, which nobody verified: such a note
+can land on the person of whoever owns that address, and an unknown address becomes a new person
+(a lead).
 
 ## Idempotency and failure
 
@@ -111,52 +142,92 @@ signs up later stays one person.
 - Twenty down: the activity retries with backoff for a few hours (25 attempts, up to 10 minutes
   apart), then the workflow shows as failed in the Temporal UI; restart it there.
 - A user or organization row not yet visible to the worker is retried, not dropped.
-- Webhook starts are not transactional: if Temporal is down when Cal.com or Chatwoot calls, that
-  event is lost (Cal.com Cloud retries on 5xx, Chatwoot does not). Same gap as the support triage
-  (docs/TODO.md, outbox).
+- Webhook starts are not transactional: if Temporal is down when the booking host or Chatwoot
+  calls, the API answers 5xx and the event is lost unless the sender retries (Chatwoot does not).
+  Same gap as the support triage (docs/TODO.md, outbox). A booking payload already written to S3
+  is then removed by retention.
 
 ## Booking
 
-**What happened to Cal.com** (checked 2026-11-07): on 2026-04-14 Cal.com moved its product to
-closed source ([announcement](https://cal.com/blog/cal-com-goes-closed-source-why)) and relaunched
-the open-source code as **Cal.diy** under MIT ([v6.4 changelog](https://cal.com/blog/calcom-v6-4),
-[github.com/calcom/cal.diy](https://github.com/calcom/cal.diy)). Cal.diy has no enterprise code and
-no license key, but also no Teams, Organizations, Routing Forms, Workflows, Insights, SAML SSO or
-API v1 ([what was removed](https://cal.com/blog/cal-diy-open-source-to-closed-source)); its README
-calls it "strictly recommended for personal, non-production use" and it is maintained by former
-Cal.com interns. Docker Hub has no `calcom/cal.diy` tags; the last `calcom/cal.com` image is
-v6.2.0 (2026-03-02), AGPL, and gets no fixes any more. So:
+**Default: self-hosted Cal.diy** (owner decision 2026-11-07). On 2026-04-14 Cal.com moved its
+product to closed source ([announcement](https://cal.com/blog/cal-com-goes-closed-source-why)) and
+relaunched the open-source code as Cal.diy under MIT ([v6.4 changelog](https://cal.com/blog/calcom-v6-4),
+[github.com/calcom/cal.diy](https://github.com/calcom/cal.diy)). Upstream publishes no image, so CI
+builds one (below). Three ways to run booking, same app code and env:
 
-- **Default: Cal.com Cloud** (hosted, closed source, a processor of your attendees' data). Free
-  for individuals; team scheduling (round robin "Talk to sales") needs the paid Teams plan
-  ([pricing](https://cal.com/pricing)). Nothing to run.
-- **Self-hosted: Cal.diy**, built from its repository on a separate host with its own
-  `docker-compose.yml` (the build needs a 6 GB Node heap; it is a Next.js monorepo). Personal event
-  types only. Point it at our Postgres server if you want it in the backups (below). Not in our
-  compose: an image we would have to build and patch ourselves is not an "unmodified container".
+### Install: the `booking` profile
 
-Both speak the same protocol, so the code does not change:
+```sh
+infra/caldiy/build.sh caldiy:local                  # ~6 GB RAM, ~15 GB disk, 20-40 minutes
+docker compose --profile booking up -d              # Cal.diy on http://localhost:3500
+```
 
-- **Webhook**: Cal.com -> Settings -> Developer -> Webhooks, subscriber URL
+- `infra/caldiy/build.sh` builds upstream's own Dockerfile (repository root) at the commit pinned
+  in the script, with the build args its README lists (`MAX_OLD_SPACE_SIZE`,
+  `CALCOM_TELEMETRY_DISABLED`); no source changes. CI job `caldiy-image` builds the same, scans it
+  with Trivy (fails on fixable critical vulnerabilities) and boots it on our Postgres; on a `v*`
+  tag `release.yml` pushes `ghcr.io/<owner>/<repo>/caldiy:<version>` and deploys pin it by digest
+  (`IMAGE_CALDIY`, [docs/deploy.md](deploy.md)). Locally `CALDIY_IMAGE` can point at that image
+  instead of building.
+- Database: role and database `caldiy` on our Postgres (one-shot `caldiy-db`), so pgBackRest
+  covers it. Upstream's start script runs its Prisma migrations on every start. Mail goes to
+  Mailpit locally (`CALDIY_SMTP_*` for a real server).
+- First start: open `http://localhost:3500`, the setup wizard creates the first user; skip the
+  calendar step via `/event-types` if you do not connect one. Create the event type (e.g. `demo`).
+- Production values: `CALDIY_PUBLIC_URL` (its own domain, deploy/Caddyfile), `CALDIY_NEXTAUTH_SECRET`
+  (`openssl rand -base64 32`), `CALDIY_ENCRYPTION_KEY` (`openssl rand -base64 24`),
+  `CALDIY_CRON_API_KEY`, `CALDIY_DATABASE_URL`, `CALDIY_EMAIL_FROM`, `CALDIY_SMTP_*`.
+- Bumping Cal.diy: change `REF` in `infra/caldiy/build.sh` to a newer upstream commit; CI rebuilds,
+  scans and boots it.
+
+### Connect: a Cal.diy you already run
+
+No profile, no image: set the env below to its URL. Cal.diy has no API key in this setup, the
+webhook carries everything the CRM note needs.
+
+### Alternative: Cal.com Cloud
+
+Hosted, closed source, a processor of your attendees' data; free for individuals, team scheduling
+(round robin "Talk to sales") needs the paid Teams plan ([pricing](https://cal.com/pricing)). Same
+connect path: its URL is `https://app.cal.com`.
+
+### The env (all three)
+
+- **Webhook**: in Cal.diy (or Cal.com), Settings -> Developer -> Webhooks, subscriber URL
   `https://<app domain>/api/hooks/calcom`, triggers Booking Created, Rescheduled, Cancelled, and a
-  secret, which goes into the API's `CALCOM_WEBHOOK_SECRET`. The API checks
-  `X-Cal-Signature-256` = hex(HMAC-SHA256(secret, raw body)) in constant time; there is no
-  timestamp in the scheme, so replay protection is the per-booking workflow id. Without the
-  secret the endpoint answers 401 (Cal.com then sends `no-secret-provided`, also refused).
-- **Links in notes**: the worker's `CALCOM_PUBLIC_URL` (default `https://app.cal.com`).
-- **Entry points**: `VITE_CALCOM_LINK` (`<user>/<event type>`, e.g. `acme/demo`) and, for Cal.diy,
-  `VITE_CALCOM_ORIGIN`. With them set, the site renders "Book a demo" in the hero and the app shows
-  "Talk to us" in the sidebar (prefilled with the user's name and email). Add the origin to
-  `BOOKING_ORIGINS` (CSP `script-src`, `connect-src`, `frame-src` of the web and site
-  containers), e.g. `BOOKING_ORIGINS=https://app.cal.com`.
-- **Consent**: the links are plain links to the Cal.com page (new tab), so nothing from Cal.com
-  loads on our pages by default. The consent banner gets a "Booking calendar" category; once the
-  visitor allows it (opt-in regime) or has not refused it (opt-out regime), a click opens Cal.com's
-  `embed.js` modal instead (`apps/web/src/lib/booking.ts`, shared with the site).
+  secret, which goes into the API's `BOOKING_WEBHOOK_SECRET`. The API checks
+  `X-Cal-Signature-256` = hex(HMAC-SHA256(secret, raw body)) in constant time; that is Cal.diy's
+  scheme (`createWebhookSignature` in `packages/features/webhooks/lib/sendPayload.ts` at the
+  pinned commit), unchanged from Cal.com. There is no timestamp in the scheme, so replay
+  protection is the per-booking workflow id. Without the secret the endpoint answers 401 (Cal.diy
+  then sends `no-secret-provided`, also refused).
+- **Links in notes**: the worker's `BOOKING_PUBLIC_URL` (the Cal.diy URL; empty = no links).
+- **Entry points**: `VITE_BOOKING_ORIGIN` (the Cal.diy URL) and `VITE_BOOKING_LINK`
+  (`<user>/<event type>`, e.g. `acme/demo`), build-time for the web and the site, **and the
+  `booking` feature flag** (`config/flags.json`, default off). With all three, the site renders
+  "Book a demo" next to "Read the blog" in the hero and the app shows "Talk to us" in the sidebar
+  (prefilled with the user's name and email). The app follows the flag per user (PostHog rollout);
+  the static site decides at build time (`VITE_FLAGS_ON=booking`, `apps/site/src/flags.ts`). Add
+  the origin to `BOOKING_ORIGINS` (CSP `script-src`, `connect-src`, `frame-src` of the web and site
+  containers).
+- **Consent**: the links are plain links to the booking page (new tab), so nothing from the
+  booking host loads on our pages by default. The consent banner gets a "Booking calendar"
+  category (only while booking can show: configured and the flag not off for everyone); once the
+  visitor allows it (opt-in regime) or has not refused it (opt-out regime), a click opens the
+  host's `embed.js` modal instead (`apps/web/src/lib/booking.ts`, shared with the site).
 - **Analytics**: `booking_opened` (link clicked, `source` site|app) and `booking_completed` (the
   embed's `bookingSuccessfulV2`) in `config/events.json`, journey `demo-booking`. Bookings made on
-  the Cal.com page itself are not seen by the browser; the CRM note from the webhook is the
+  the booking page itself are not seen by the browser; the CRM note from the webhook is the
   complete record.
+
+**Cal.diy's own limits.** Cal.diy has no enterprise code and no license key, but also no Teams,
+Organizations, Routing Forms, Workflows, Insights, SAML SSO or API v1
+([what was removed](https://cal.com/blog/cal-diy-open-source-to-closed-source)): a "Talk to sales"
+round robin across several people is not possible, each person books on their own event type. Its
+README says "Use at your own risk" and calls it "strictly recommended for personal,
+non-production use"; it is a community fork whose changes do not flow back to Cal.com. Treat it
+as a self-hosted tool you patch yourself (the pinned commit, CI's scan), or use Cal.com Cloud where
+that is not acceptable.
 
 ### Products whose own users book appointments
 
@@ -166,8 +237,9 @@ Not built here; when a product needs it (patients booking a clinic, customers bo
   (calendar accounts your backend creates per customer) and the `@calcom/atoms` React components
   (booker, availability settings) embedded in your UI. Closed-source SaaS with its own pricing and
   data processing terms; check the `@calcom/atoms` license against ADR 0005 before adding it.
-- **Cal.diy's API v2** on your own host: same idea without managed users at scale; note that
-  Cal.diy stopped publishing `@calcom/atoms` (Nov 2026), so the UI is yours to build.
+- **Cal.diy's API v2** on your own host (a separate server, `apps/api/v2` in its repository, not in
+  our profile): same idea without managed users at scale; note that Cal.diy stopped publishing
+  `@calcom/atoms` (2026-11-03), so the UI is yours to build.
 - Either way the integration shape stays: their webhook -> a signed route -> a workflow, never a
   bookings table of our own unless the product's domain needs it.
 
@@ -189,12 +261,24 @@ Measured 2026-11-07 on the shared 8-core host (load ~20), Twenty v2.56.1 on our 
 Postgres grew ~50 MiB, Redis ~10 MiB. **About 1.45 GiB for the profile, more than twice the default
 app stack** (~0.6 GiB). Twenty's own minimum is 2 GB RAM. On a small server run it on a separate
 host or use [Twenty Cloud](https://twenty.com/pricing); the sync only needs `TWENTY_API_URL` and a
-key. Cal.diy was not measured: there is no image to run (see Booking).
+key.
+
+Cal.diy (`booking` profile): TODO_CALDIY_MEM
 
 ## Backups
 
 Twenty's database is on our Postgres server, so pgBackRest covers it ([docs/backups.md](backups.md)).
 Attachments uploaded in Twenty (`twenty-data` volume, `STORAGE_TYPE=local`) are not covered; set
-Twenty's `STORAGE_TYPE=s3` with a bucket listed in `BACKUP_APP_BUCKETS` if they matter. Cal.com
-Cloud data is Cal.com's; a self-hosted Cal.diy is covered only if its database is on our Postgres
-server.
+Twenty's `STORAGE_TYPE=s3` with a bucket listed in `BACKUP_APP_BUCKETS` if they matter. Cal.diy
+from the `booking` profile keeps everything in its `caldiy` database on our Postgres server, so it
+is covered; a connected Cal.diy is covered only if its database is on that server too. Cal.com
+Cloud data is Cal.com's.
+
+## Privacy
+
+Data export and deletion ([docs/privacy.md](privacy.md)) include Twenty: a user's person (by
+`appUserId`) and the notes the sync wrote on it; an organization's company and deal (by
+`appOrgId`) and their sync notes. Deletion is Twenty's hard delete (destroy). Notes people wrote in
+Twenty stay without the link, and leads matched only by a typed email are not found by a user's
+deletion. Cal.diy's bookings (attendee name, email, answers) are not reached: delete them in
+Cal.diy's UI for now (docs/TODO.md).
