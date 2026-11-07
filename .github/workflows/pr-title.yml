@@ -1,0 +1,22 @@
+name: PR title
+
+# PRs are squash-merged and the PR title becomes the commit on main, which release-please turns
+# into CHANGELOG.md (docs/releases.md). So the title must be a Conventional Commit:
+# `type(optional scope): summary`, e.g. `feat: export projects as CSV`, `fix(api): ...`.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional-title:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          # GitHub squash-merges a one-commit PR with the commit message, not the PR title.
+          validateSingleCommit: true
