@@ -20,6 +20,7 @@ import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
+import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
 import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { securityRoutes } from './routes/security.ts';
@@ -194,6 +195,8 @@ export async function buildApp() {
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
   await app.register(hookRoutes, { prefix: '/api/hooks' });
+  await app.register(billingRoutes, { prefix: '/api/billing' });
+  await app.register(billingWebhookRoutes, { prefix: '/api/billing/webhooks' });
   await app.register(apiKeyRoutes, { prefix: '/api/api-keys' });
   await app.register(webhookRoutes, { prefix: '/api/webhooks' });
   await app.register(securityRoutes, { prefix: '/api/security' });

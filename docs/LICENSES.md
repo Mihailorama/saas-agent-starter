@@ -35,6 +35,7 @@ on an image that is not. Their primary software licenses:
 | `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
 | `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
 | `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
+| `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 | `saas-agent-starter-pgbackup`          | Postgres + backup tools (`compose.backup.yaml`)    | PostgreSQL + MIT            |
 | `prom/pushgateway`                     | backup metrics for Prometheus (backup overlay)     | Apache-2.0                  |
 
@@ -139,6 +140,10 @@ Notes:
 - `pgvector/pgvector`: the official Postgres image plus the pgvector extension (PostgreSQL
   License, [LICENSE](https://github.com/pgvector/pgvector/blob/master/LICENSE)). Chatwoot's schema
   enables `vector`, which `postgres:17-alpine` does not ship, so Chatwoot gets this server.
+- `stripe/stripe-mock` ([MIT](https://github.com/stripe/stripe-mock/blob/master/LICENSE),
+  Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
+  never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
+  dependencies). Details in [docs/billing.md](billing.md).
 
 ## Permissive twin (replacement map)
 

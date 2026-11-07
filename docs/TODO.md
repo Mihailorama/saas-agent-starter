@@ -143,6 +143,9 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
+  ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
+  transaction (ADR 0019 "Alternatives").
 - **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.
