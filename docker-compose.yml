@@ -616,7 +616,7 @@ services:
 
   clickhouse:
     profiles: [llmops]
-    image: clickhouse/clickhouse-server:26.3.62.3
+    image: clickhouse/clickhouse-server:26.10.3.7
     user: "101:101"
     mem_limit: 1536m
     environment:
