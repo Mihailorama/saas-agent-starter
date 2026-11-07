@@ -27,6 +27,7 @@ from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
 from worker.posthog import PostHogAi
+from worker.privacy import PrivacyActivities, configured_tools
 from worker.s3 import S3
 from worker.support import (
     Chatwoot,
@@ -40,6 +41,9 @@ from worker.text import backend
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
+    DataDeletionWorkflow,
+    DataExportWorkflow,
+    PrivacyRetentionWorkflow,
     ProjectCreatedWorkflow,
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
@@ -47,6 +51,7 @@ from worker.workflows import (
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
     ensure_maintenance_schedule,
+    ensure_retention_schedule,
 )
 
 log = logging.getLogger("worker")
@@ -149,7 +154,24 @@ async def main() -> None:
         retention_days=settings.WEBHOOK_RETENTION_DAYS,
     )
     await ensure_maintenance_schedule(client, settings.TEMPORAL_TASK_QUEUE)
+    await ensure_retention_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
+    files = S3(
+        endpoint=settings.S3_ENDPOINT,
+        region=settings.S3_REGION,
+        access_key=settings.S3_ACCESS_KEY_ID,
+        secret_key=settings.S3_SECRET_ACCESS_KEY,
+        bucket=settings.S3_BUCKET,
+    )
+    privacy_tools = configured_tools(http)
+    privacy = PrivacyActivities(
+        pool,
+        files=files,
+        ai_content=s3,
+        tools=privacy_tools,
+        export_ttl_days=settings.PRIVACY_EXPORT_TTL_DAYS,
+        org_records_days=settings.PRIVACY_ORG_RECORDS_DAYS,
+    )
     chatwoot = (
         Chatwoot(
             settings.CHATWOOT_URL, settings.CHATWOOT_API_TOKEN, settings.CHATWOOT_PUBLIC_URL, http
@@ -187,6 +209,9 @@ async def main() -> None:
             SupportIssueClosedWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,
+            DataExportWorkflow,
+            DataDeletionWorkflow,
+            PrivacyRetentionWorkflow,
         ],
         activities=[
             activities.fingerprint_project,
@@ -197,6 +222,14 @@ async def main() -> None:
             webhooks.deliver_webhook,
             webhooks.prune_webhooks,
             webhooks.reencrypt_webhook_secrets,
+            privacy.build_export,
+            privacy.mark_failed,
+            privacy.begin_deletion,
+            privacy.deletion_step,
+            privacy.finish_deletion,
+            privacy.purge_ai_content,
+            privacy.purge_exports,
+            privacy.purge_deleted_orgs,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],
@@ -214,19 +247,21 @@ async def main() -> None:
     async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
-            " support: chatwoot %s, tracker %s, triage model %s)",
+            " support: chatwoot %s, tracker %s, triage model %s, privacy tools: %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
             "on" if chatwoot else "dry run",
             tracker.name,
             triage_model or "off",
+            ",".join(t.name for t in privacy_tools.all) or "none",
         )
         await stop.wait()
         log.info("shutting down")
     await webhooks.close()
     await http.aclose()
     await s3.close()
+    await files.close()
     if posthog:
         await posthog.close()
     flags.close()

@@ -19,6 +19,7 @@ import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { ApiKeysPage } from '@/pages/api-keys';
 import { BillingPage } from '@/pages/billing';
+import { PrivacyPage } from '@/pages/privacy';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { ResetPasswordPage } from '@/pages/reset-password';
@@ -140,6 +141,12 @@ const securityRoute = createRoute({
   component: SecurityPage,
 });
 
+const privacyRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/privacy',
+  component: PrivacyPage,
+});
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
@@ -152,6 +159,7 @@ const router = createRouter({
       projectRoute,
       aiCallsRoute,
       securityRoute,
+      privacyRoute,
       apiKeysRoute,
       webhooksRoute,
       billingRoute,

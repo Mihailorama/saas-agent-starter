@@ -27,7 +27,10 @@ export async function ensureBucket() {
   try {
     await s3.send(new HeadBucketCommand({ Bucket: env.S3_BUCKET }));
   } catch {
-    await s3.send(new CreateBucketCommand({ Bucket: env.S3_BUCKET }));
+    // Concurrent callers (test files, replicas) may create it first: that is success too.
+    await s3.send(new CreateBucketCommand({ Bucket: env.S3_BUCKET })).catch((err) => {
+      if ((err as { name?: string }).name !== 'BucketAlreadyOwnedByYou') throw err;
+    });
   }
 }
 

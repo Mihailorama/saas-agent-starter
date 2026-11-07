@@ -15,6 +15,8 @@ AGENTS.md exactly, using `projects` as the reference implementation:
 3. `apps/api/test/`: success, 400, 401/403 and cross-tenant 404 cases.
 4. `apps/web/src/pages/`: page with TanStack Query + shadcn/ui, route in `main.tsx`, nav link
    in `pages/shell.tsx`.
-5. Run `pnpm check`. Done means it is green; report the tail of its output.
+5. Personal data in the rows: add the table to export and deletion in
+   `services/worker-py/worker/privacy.py` and to the data map in `docs/privacy.md`.
+6. Run `pnpm check`. Done means it is green; report the tail of its output.
 
 Ask before adding any dependency. Never weaken RLS, tests or the license gate to get green.
