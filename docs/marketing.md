@@ -162,8 +162,9 @@ prints the raw responses.
 
 1. Google Cloud: create a project, enable the "Google Search Console API", create a service
    account and a JSON key.
-2. Search Console: Settings, Users and permissions, add the service account's e-mail (Restricted
-   is enough: the script only uses the `webmasters.readonly` scope).
+2. Search Console: Settings, Users and permissions, add the service account's e-mail (its
+   `client_email`) as a user with Full permission. The script only requests the
+   `webmasters.readonly` scope, so it cannot change anything.
 3. Env: `GSC_SITE_URL` = the property exactly as in Search Console (`sc-domain:example.com` for a
    domain property, `https://example.com/` for a URL-prefix one) and `GSC_CREDENTIALS` = the key
    file path (or its JSON). Without them it prints the planned requests. Keep the key out of git
