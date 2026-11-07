@@ -103,7 +103,7 @@ for (const p of py) {
 
 // Images: each must be documented with its license.
 const licensesDoc = readFileSync('docs/LICENSES.md', 'utf8');
-const dockerfiles = ['apps/api', 'apps/web', 'services/worker-py', 'infra/backup'].map(
+const dockerfiles = ['apps/api', 'apps/web', 'apps/site', 'services/worker-py', 'infra/backup'].map(
   (d) => `${d}/Dockerfile`,
 );
 const images = new Set(

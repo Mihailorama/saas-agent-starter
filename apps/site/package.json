@@ -1,0 +1,25 @@
+{
+  "name": "site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "tsc -p .",
+    "typecheck:fast": "tsrs --noEmit -p .",
+    "test": "echo 'site: covered by Lighthouse CI (.github/workflows/site.yml)'",
+    "lhci": "pnpm dlx @lhci/cli@0.16.0 autorun"
+  },
+  "dependencies": {
+    "@astrojs/mdx": "^8.1.3",
+    "@astrojs/rss": "^4.0.19",
+    "@astrojs/sitemap": "^3.7.4",
+    "astro": "^7.4.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.4",
+    "@types/node": "^22.19.0",
+    "tailwindcss": "^4.3.4"
+  }
+}

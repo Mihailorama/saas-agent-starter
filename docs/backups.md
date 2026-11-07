@@ -62,6 +62,10 @@ restore check within a minute, then the schedule below. Watch it with
   attachments in the `chatwoot-storage` volume and its queue in Redis db 2. Conversations with
   customers live there: until it has its own backup (docs/TODO.md), take `pg_dump` of
   `chatwoot-postgres` and a copy of `chatwoot-storage` on your own schedule.
+- **Marketing profile files**: Postiz uploads (`postiz-uploads` volume, `STORAGE_PROVIDER=local`)
+  and SerpBear's SQLite data (`serpbear-data` volume). Postiz's database is covered (above).
+  Copy those two volumes yourself if they matter, or point Postiz storage at a bucket listed in
+  `BACKUP_APP_BUCKETS`.
 - Container images, `.env` and secrets: rebuild from git; secrets belong in your password manager.
 - The backup bucket itself: protect it with the provider's versioning / object lock and keep it
   in another account or region if you need to survive a compromised server.

@@ -5,6 +5,7 @@ import {
   Building2,
   Check,
   ChevronsUpDown,
+  Cookie,
   CreditCard,
   FolderKanban,
   KeyRound,
@@ -44,7 +45,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { identify, track } from '@/lib/analytics';
+import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
@@ -175,6 +176,11 @@ function UserMenu() {
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/security' })}>
           <ShieldCheck className="size-4" /> Security
         </DropdownMenuItem>
+        {privacyChoicesLabel && (
+          <DropdownMenuItem onSelect={showPrivacyChoices}>
+            <Cookie className="size-4" /> {privacyChoicesLabel}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={async () => {

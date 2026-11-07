@@ -24,6 +24,9 @@ FROM nginxinc/nginx-unprivileged:1.29-alpine
 ENV S3_PUBLIC_ORIGIN=http://localhost:8333 SENTRY_PUBLIC_ORIGIN=""
 # Space-separated origins of the enabled analytics sinks, added to the CSP (empty = none).
 ENV ANALYTICS_ORIGINS=""
+# Consent regime (docs/product-analytics.md#consent): opt-in | opt-out, plus the edge's country
+# header (nginx variable name) and the countries that get opt-out.
+ENV CONSENT_MODE=opt-in CONSENT_COUNTRY_HEADER=cf_ipcountry CONSENT_OPT_OUT_COUNTRIES=""
 # Origin of the Chatwoot widget (script + iframe), e.g. https://support.example.com (empty = none).
 ENV SUPPORT_ORIGINS=""
 COPY apps/web/nginx.conf.template /etc/nginx/templates/default.conf.template

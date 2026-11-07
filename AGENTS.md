@@ -62,6 +62,8 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail
   src/components/ui/  shadcn/ui components (copied source; edit freely)
   e2e/                Playwright smoke
+apps/site           Astro static marketing site + blog (docs/marketing.md): reuses web's index.css
+                    and analytics.ts; SEO head in src/components/Seo.astro, posts in src/content/blog
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
@@ -137,6 +139,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   customer portal (ADR 0018, docs/public-api.md).
 - PostHog feature flags for gradual rollouts (posthog-js/-node/Python), catalog in the repo, no
   own flag store; release-please + Conventional PR titles for changelogs and `v*` tags (ADR 0020).
+- Astro (static) for the public site and blog; Postiz (social posting) and SerpBear (rank
+  tracking) as unmodified containers in the `marketing` profile; Search Console, IndexNow and the
+  GEO check are small scripts, no SDKs (ADR 0021).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
 - Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items in GitHub Issues or
@@ -375,6 +380,18 @@ Details: docs/feature-flags.md, ADR 0020.
 - After full rollout, a follow-up PR deletes the old path, every check of the flag and its
   catalog entry, and archives it in PostHog. Expired or unused flags show as `check:flags`
   warnings: treat them as work.
+
+## Marketing rules
+
+Details: docs/marketing.md, ADR 0021.
+
+- Public pages and posts live in `apps/site`, never in the SPA. Posts are Markdown/MDX in
+  `apps/site/src/content/blog/`; the front matter schema enforces title/description limits.
+- Every page renders `<Base>` (it carries the SEO head); add JSON-LD through its `jsonLd` prop.
+  CTAs are links with `data-cta="<id>"` (event `site_cta_clicked`); no other tracking code.
+- No media in git: images by absolute URL. Keep the Lighthouse budgets green; do not lower them.
+- `pnpm geo:check` is manual and uses the claude CLI on a subscription with the model from
+  `config/geo.json`; never add an API key or a CI job for it.
 
 ## PRs and releases
 

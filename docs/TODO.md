@@ -143,6 +143,19 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **PII redaction with Microsoft Presidio: needs an ADR 0005 decision.** The support triage's
+  LLM output (`services/worker-py/worker/support.py` `scrub`), the feedback-to-issue hook
+  (`apps/api/src/routes/hooks.ts`) and the browser `track()` mask only emails (and UUIDs) with a
+  bounded regex. Presidio (MIT, `en_core_web_sm`) would also catch names, phones, cards, IBANs and
+  IPs, measured 2026-11-07 at ~165-200 MiB RSS for English (~360 MiB with a second language), but
+  `pnpm check:licenses` rejects 6 of its transitive packages: `numpy` (has a `Zlib` part), `regex`
+  (`CNRI-Python`), and `Jinja2`, `blis`, `requests-file`, `shellingham`, whose metadata strings
+  ("BSD License", "Apache 2.0", "ISC License") the gate does not map. The official
+  `mcr.microsoft.com/presidio-analyzer` image avoids the code gate but uses `en_core_web_lg`:
+  ~740 MiB RSS idle. Unblock: the owner adds `Zlib` and `CNRI-Python` to the allowlist and the
+  three strings as aliases (ADR 0005), then call Presidio in-process in the worker for
+  `support.py`, and from the API hook through an opt-in sidecar of the worker image (compose
+  profile `pii`) that fails closed. The browser keeps its regex (no Python there).
 - **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
   ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
   transaction (ADR 0019 "Alternatives").
@@ -152,3 +165,15 @@
 - **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.
+- **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
+  (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
+  site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`
+  service in `compose.prod.yaml` behind Caddy), run it after a successful deploy with the
+  previously deployed sha and `INDEXNOW_KEY`.
+- **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
+  others, add a runner per assistant CLI the team is logged in to (same config, same report),
+  never an API key in CI.
+- **Postiz idle cost.** ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
+  each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
+  task queues this server does not poll) listing the networks you do not use; measure before and
+  after in docs/STACK.md, and never exclude a network you post to.

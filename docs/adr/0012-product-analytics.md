@@ -13,7 +13,8 @@ open-source tools and give agents and humans a worse UI than those tools have.
 
 - No first-party event store. Events, funnels, replay, heatmaps, surveys and alerts live in
   external tools; the repo keeps the contract: `config/events.json` (catalog),
-  `config/journeys.json` (journeys as code), one `track()` wrapper, a consent banner and the
+  `config/journeys.json` (journeys as code), one `track()` wrapper, a consent banner
+  (vanilla-cookieconsent, MIT; opt-in or opt-out per region, GPC, Google Consent Mode v2) and the
   `pnpm check:events` CI rule ([docs/product-analytics.md](../product-analytics.md)).
 - **PostHog Cloud is the default** for every tier and delivery, region (EU or US) by env:
   the most complete open-source product-analytics suite (funnels with threshold alerts, replay,
@@ -47,8 +48,9 @@ open-source tools and give agents and humans a worse UI than those tools have.
 
 ## Consequences
 
-- Code dependencies added to the web: `posthog-js` (`Apache-2.0 AND MIT`) and
-  `@langfuse/browser` (MIT), both loaded lazily and only when configured. Umami runs as an
+- Code dependencies added to the web: `posthog-js` (`Apache-2.0 AND MIT`),
+  `@langfuse/browser` (MIT) and `vanilla-cookieconsent` (MIT), all loaded lazily and only when
+  configured. Umami runs as an
   unmodified container (MIT), listed in docs/LICENSES.md.
 - The CSP gets the enabled sinks' origins from `ANALYTICS_ORIGINS`; empty by default.
 - Umami has no alerting: on the Umami tier alerts are meant to come from Grafana (observability
