@@ -4,9 +4,10 @@ import { and, desc, eq, getTableColumns } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { publishEvent } from '../events.ts';
 import { presignDownload, presignUpload } from '../s3.ts';
 import { startProjectCreated } from '../temporal.ts';
-import { httpError, requireRole, withTenant } from '../tenant.ts';
+import { access, httpError, withTenant } from '../tenant.ts';
 
 const Project = z.object({
   id: z.uuid(),
@@ -67,10 +68,11 @@ const objectKey = (a: { orgId: string; projectId: string; id: string }) =>
   `${a.orgId}/${a.projectId}/${a.id}`;
 
 export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
-  const member = { preHandler: requireRole('member') };
+  const read = access('projects:read');
+  const write = access('projects:write');
   const tags = ['projects'];
 
-  app.get('/', { ...member, schema: { tags, response: { 200: z.array(Project) } } }, async (req) =>
+  app.get('/', { ...read, schema: { tags, response: { 200: z.array(Project) } } }, async (req) =>
     withTenant(req, async (tx) =>
       (await selectProjects(tx).orderBy(desc(projects.createdAt))).map(projectDto),
     ),
@@ -78,7 +80,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.post(
     '/',
-    { ...member, schema: { tags, body: ProjectInput, response: { 201: Project } } },
+    { ...write, schema: { tags, body: ProjectInput, response: { 201: Project } } },
     async (req, reply) => {
       const project = await withTenant(
         req,
@@ -91,6 +93,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
               description: req.body.description || null,
             })
             .returning();
+          await publishEvent(req, tx, 'project.created', projectDto(row!));
           return row!;
         },
         (p) => p.id,
@@ -109,7 +112,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/:id',
-    { ...member, schema: { tags, params: Id, response: { 200: Project, 404: ErrorBody } } },
+    { ...read, schema: { tags, params: Id, response: { 200: Project, 404: ErrorBody } } },
     async (req) =>
       withTenant(req, async (tx) => {
         const row = await loadProject(tx, req.params.id);
@@ -120,7 +123,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.patch(
     '/:id',
-    { ...member, schema: { tags, params: Id, body: ProjectInput, response: { 200: Project } } },
+    { ...write, schema: { tags, params: Id, body: ProjectInput, response: { 200: Project } } },
     async (req) =>
       withTenant(req, async (tx) => {
         const [row] = await tx
@@ -134,7 +137,9 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
           .where(eq(projects.id, req.params.id))
           .returning({ id: projects.id });
         if (!row) throw httpError(404, 'not found');
-        return projectDto((await loadProject(tx, row.id))!);
+        const project = projectDto((await loadProject(tx, row.id))!);
+        await publishEvent(req, tx, 'project.updated', project);
+        return project;
       }),
   );
 
@@ -157,29 +162,32 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
           ...(summary !== undefined && { aiSummary: summary }),
         })
         .where(eq(projects.id, id));
-      return projectDto((await loadProject(tx, id))!);
+      const project = projectDto((await loadProject(tx, id))!);
+      await publishEvent(req, tx, 'project.summary_reviewed', project);
+      return project;
     });
   const reviewResponses = { 200: Project, 404: ErrorBody, 409: ErrorBody };
 
   app.post(
     '/:id/ai-summary/confirm',
-    { ...member, schema: { tags, params: Id, response: reviewResponses } },
+    { ...write, schema: { tags, params: Id, response: reviewResponses } },
     async (req) => reviewSummary(req, req.params.id),
   );
 
   app.post(
     '/:id/ai-summary/correct',
-    { ...member, schema: { tags, params: Id, body: SummaryCorrection, response: reviewResponses } },
+    { ...write, schema: { tags, params: Id, body: SummaryCorrection, response: reviewResponses } },
     async (req) => reviewSummary(req, req.params.id, req.body.summary),
   );
 
   app.delete(
     '/:id',
-    { preHandler: requireRole('admin'), schema: { tags, params: Id } },
+    { ...access('projects:delete'), schema: { tags, params: Id } },
     async (req, reply) => {
       await withTenant(req, async (tx) => {
         const [row] = await tx.delete(projects).where(eq(projects.id, req.params.id)).returning();
         if (!row) throw httpError(404, 'not found');
+        await publishEvent(req, tx, 'project.deleted', { id: row.id });
       });
       return reply.code(204).send();
     },
@@ -187,7 +195,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
 
   app.get(
     '/:id/attachments',
-    { ...member, schema: { tags, params: Id, response: { 200: z.array(Attachment) } } },
+    { ...read, schema: { tags, params: Id, response: { 200: z.array(Attachment) } } },
     async (req) =>
       withTenant(req, async (tx) =>
         (
@@ -203,7 +211,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/:id/attachments',
     {
-      ...member,
+      ...write,
       schema: {
         tags,
         params: Id,
@@ -241,7 +249,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     '/:id/attachments/:attachmentId/download',
     {
-      ...member,
+      ...read,
       schema: {
         tags,
         params: Id.extend({ attachmentId: z.uuid() }),

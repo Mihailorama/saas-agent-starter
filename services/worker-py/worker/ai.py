@@ -27,15 +27,24 @@ from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
 )
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
 from worker import settings
+from worker.posthog import PostHogAi
 from worker.s3 import S3
 
 log = logging.getLogger(__name__)
 tracer = trace.get_tracer("worker.ai")
+meter = metrics.get_meter("worker.ai")
+# Names and labels agreed with the Grafana "LLM" dashboard and alerts (AGENTS.md "Observability").
+# Labels are low-cardinality only, never ids or content.
+calls_counter = meter.create_counter("ai_calls", description="LLM calls by outcome")
+latency_histogram = meter.create_histogram(
+    "ai_call_latency_seconds", description="LLM call latency in seconds"
+)
+cost_counter = meter.create_counter("ai_cost_usd", description="LLM cost in USD")
 
 
 @dataclass(frozen=True)
@@ -116,8 +125,9 @@ class Gateway:
         registry: Registry,
         providers: dict[str, Provider],
         retention_days: int,
+        posthog: PostHogAi | None = None,
     ) -> None:
-        self.pool, self.s3, self.contour = pool, s3, contour
+        self.pool, self.s3, self.contour, self.posthog = pool, s3, contour, posthog
         self.registry, self.providers = registry, providers
         self.retention = timedelta(days=retention_days)
 
@@ -213,6 +223,8 @@ class Gateway:
                     "error_class": type(err).__qualname__,
                 }
                 await self._insert(row)
+                if self.posthog:
+                    await self.posthog.capture_generation(row, messages, None)
                 raise
             row["latency_ms"] = _ms(started)
 
@@ -253,9 +265,16 @@ class Gateway:
                 ) / 1000
                 row["cost_currency"] = allowed.price.currency
             await self._insert(row)
+        if self.posthog:
+            await self.posthog.capture_generation(row, messages, completion.text)
         return LlmResult(call_id, completion.text)
 
     async def _insert(self, row: dict[str, Any]) -> None:
+        model = {"purpose": row["purpose"], "model": row["request_model"]}
+        calls_counter.add(1, {**model, "provider": row["provider"], "status": row["status"]})
+        latency_histogram.record(row["latency_ms"] / 1000, model)
+        if row.get("cost") is not None and row.get("cost_currency") == "USD":
+            cost_counter.add(float(row["cost"]), model)
         columns = list(row)
         async with self.pool.acquire() as conn, conn.transaction():
             await conn.execute("select set_config('app.org_id', $1, true)", row["org_id"])

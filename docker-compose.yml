@@ -2,6 +2,7 @@
 # Everything:                docker compose up -d --build
 # With logs/traces/metrics:  docker compose --profile observability up -d   (Grafana :3001)
 # Permissive-only twin:      add -f docker-compose.yml -f compose.permissive.yaml (ADR 0010)
+# With LLM-ops Full (Langfuse, ADR 0009): docker compose --profile llmops up -d
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
 
 # Every service: the json-file log driver stamps compose project + service into each line,
@@ -26,6 +27,8 @@ x-app-env: &app-env
   POSTHOG_KEY: ${POSTHOG_KEY:-}
   POSTHOG_HOST: ${POSTHOG_HOST:-}
   POSTHOG_SECRET_KEY: ${POSTHOG_SECRET_KEY:-}
+  # Encrypts webhook signing secrets at rest; API and worker need the same keys (docs/public-api.md).
+  WEBHOOK_ENCRYPTION_KEYS: ${WEBHOOK_ENCRYPTION_KEYS:-local-dev:change-me-local-dev-webhook-encryption-key}
 
 services:
   postgres:
@@ -161,6 +164,12 @@ services:
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-}
+      # Service desk webhooks + widget identity (docs/support.md); empty = endpoint off.
+      CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:-}
+      CHATWOOT_HMAC_TOKEN: ${CHATWOOT_HMAC_TOKEN:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      PLANE_WEBHOOK_SECRET: ${PLANE_WEBHOOK_SECRET:-}
+      PLANE_PROJECT_ID: ${PLANE_PROJECT_ID:-}
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
       # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1
@@ -186,6 +195,11 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
       SENTRY_DSN: ${WORKER_SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
+      # LLM observability (ADR 0009): each call as a PostHog $ai_generation when set.
+      POSTHOG_PRIVACY_MODE: ${POSTHOG_PRIVACY_MODE:-true}
+      # With --profile llmops: spans to Langfuse (see .env.example, "LLM-ops Full").
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${WORKER_OTEL_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${WORKER_OTEL_TRACES_HEADERS:-}
       SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025?tls=none}
       MAIL_FROM: ${MAIL_FROM:-Workspace <no-reply@example.com>}
       AI_CONTOUR: ${AI_CONTOUR:-eu}
@@ -194,6 +208,22 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # Service desk triage (docs/support.md). Tokens empty = dry run (logs only).
+      CHATWOOT_URL: ${CHATWOOT_URL:-} # with --profile support: http://chatwoot:3000
+      CHATWOOT_PUBLIC_URL: ${CHATWOOT_PUBLIC_URL:-}
+      CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN:-}
+      SUPPORT_TRACKER: ${SUPPORT_TRACKER:-github}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO: ${GITHUB_REPO:-}
+      PLANE_API_URL: ${PLANE_API_URL:-}
+      PLANE_APP_URL: ${PLANE_APP_URL:-}
+      PLANE_WORKSPACE: ${PLANE_WORKSPACE:-}
+      PLANE_PROJECT_ID: ${PLANE_PROJECT_ID:-}
+      PLANE_API_TOKEN: ${PLANE_API_TOKEN:-}
+      AI_SUPPORT_TRIAGE_PROVIDER: ${AI_SUPPORT_TRIAGE_PROVIDER:-}
+      AI_SUPPORT_TRIAGE_MODEL: ${AI_SUPPORT_TRIAGE_MODEL:-}
+      SUPPORT_AI_ORG_ID: ${SUPPORT_AI_ORG_ID:-}
+      SUPPORT_NOTIFY_ON_CLOSE: ${SUPPORT_NOTIFY_ON_CLOSE:-false}
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }
@@ -222,6 +252,9 @@ services:
         VITE_YM_WEBVISOR: ${VITE_YM_WEBVISOR:-}
         VITE_LANGFUSE_PUBLIC_KEY: ${VITE_LANGFUSE_PUBLIC_KEY:-}
         VITE_LANGFUSE_HOST: ${VITE_LANGFUSE_HOST:-}
+        # in-app help widget (Chatwoot); empty = no Help entry (docs/support.md)
+        VITE_CHATWOOT_BASE_URL: ${VITE_CHATWOOT_BASE_URL:-}
+        VITE_CHATWOOT_WEBSITE_TOKEN: ${VITE_CHATWOOT_WEBSITE_TOKEN:-}
     environment:
       S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}"
       SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
@@ -231,6 +264,8 @@ services:
       CONSENT_MODE: ${CONSENT_MODE:-opt-in}
       CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
       CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
+      # Chatwoot widget origin for the CSP, e.g. "http://localhost:3300"
+      SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
     depends_on: [api]
     ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
 
@@ -370,7 +405,196 @@ services:
       start_period: 60s
       retries: 30
 
+  # --- support profile: Chatwoot CE (MIT; `-ce` images are built with enterprise/ removed) as
+  # the service desk. docker compose --profile support up -d ; docs/support.md, ADR 0013.
+  # Own Postgres: Chatwoot's schema needs the pgvector extension, which postgres:17-alpine lacks.
+  # Redis is the stack's (db 2; GlitchTip has db 1); the permissive twin swaps in Valkey.
+  chatwoot-postgres:
+    profiles: [support]
+    image: pgvector/pgvector:0.8.7-pg16
+    logging: *logging
+    mem_limit: 512m
+    environment: { POSTGRES_USER: chatwoot, POSTGRES_PASSWORD: chatwoot, POSTGRES_DB: chatwoot }
+    volumes: [chatwoot-pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatwoot -d chatwoot"]
+      interval: 2s
+      retries: 30
+
+  chatwoot-prepare: # one-shot: create or migrate the schema (Chatwoot's db:chatwoot_prepare)
+    profiles: [support]
+    <<: &chatwoot
+      image: chatwoot/chatwoot:v4.19.1-ce
+      logging: *logging
+      environment: &chatwoot-env
+        RAILS_ENV: production
+        NODE_ENV: production
+        INSTALLATION_ENV: docker
+        SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE:-local-dev-chatwoot-secret-key-base}
+        FRONTEND_URL: ${CHATWOOT_FRONTEND_URL:-http://localhost:${CHATWOOT_PORT:-3300}}
+        POSTGRES_HOST: chatwoot-postgres
+        POSTGRES_USERNAME: chatwoot
+        POSTGRES_PASSWORD: chatwoot
+        POSTGRES_DATABASE: chatwoot
+        REDIS_URL: redis://redis:6379/2
+        RAILS_LOG_TO_STDOUT: "true"
+        ENABLE_ACCOUNT_SIGNUP: "false" # first admin via the onboarding page, then invite agents
+        ACTIVE_STORAGE_SERVICE: local
+        DISABLE_TELEMETRY: "true" # no instance metrics to Chatwoot's hub (a version check remains)
+        ENABLE_PUSH_RELAY_SERVER: "false" # no mobile push relay through chatwoot.com
+        # Webhooks go to the API on the compose network (http://api:3000), a private address.
+        SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
+        # Email channel (SMTP out; inbound via IMAP is set per inbox in the UI). docs/support.md
+        # Local default: the stack's Mailpit (UI :8025). Production: a real provider.
+        MAILER_SENDER_EMAIL: ${CHATWOOT_MAILER_SENDER:-Support <support@example.com>}
+        SMTP_ADDRESS: ${CHATWOOT_SMTP_ADDRESS:-mailpit}
+        SMTP_PORT: ${CHATWOOT_SMTP_PORT:-1025}
+        SMTP_ENABLE_STARTTLS_AUTO: ${CHATWOOT_SMTP_STARTTLS:-false}
+        SMTP_USERNAME: ${CHATWOOT_SMTP_USERNAME:-}
+        SMTP_PASSWORD: ${CHATWOOT_SMTP_PASSWORD:-}
+      volumes: [chatwoot-storage:/app/storage]
+    mem_limit: 768m
+    depends_on:
+      chatwoot-postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    command: ["bundle", "exec", "rails", "db:chatwoot_prepare"]
+
+  chatwoot:
+    profiles: [support]
+    <<: *chatwoot
+    mem_limit: 1g # measured in docs/support.md
+    depends_on: { chatwoot-prepare: { condition: service_completed_successfully } }
+    entrypoint: docker/entrypoints/rails.sh
+    command: ["bundle", "exec", "rails", "s", "-p", "3000", "-b", "0.0.0.0"]
+    ports: ["127.0.0.1:${CHATWOOT_PORT:-3300}:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api >/dev/null"]
+      interval: 5s
+      start_period: 90s
+      retries: 30
+
+  chatwoot-sidekiq:
+    profiles: [support]
+    <<: *chatwoot
+    mem_limit: 1g
+    depends_on: { chatwoot-prepare: { condition: service_completed_successfully } }
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+  # Full LLM-ops profile: Langfuse v4 (MIT core) on our Postgres server (own database), our
+  # Redis (own db index) and our S3 (own bucket), plus ClickHouse. Langfuse's optional AI
+  # gateway container is left out. Memory limits are the measured working set plus headroom
+  # (docs/STACK.md). Example credentials are for local dev only (CHANGEME in production).
+  langfuse-db:
+    profiles: [llmops]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        psql -h postgres -U postgres -tAc "select 1 from pg_database where datname = 'langfuse'"
+        | grep -q 1 || createdb -h postgres -U postgres langfuse
+
+  clickhouse:
+    profiles: [llmops]
+    image: clickhouse/clickhouse-server:26.3.62.3
+    user: "101:101"
+    mem_limit: 1536m
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: local-dev-clickhouse
+    volumes:
+      - clickhousedata:/var/lib/clickhouse
+      - ./infra/langfuse/clickhouse-low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+      - ./infra/langfuse/clickhouse-low-memory-users.xml:/etc/clickhouse-server/users.d/low-memory.xml:ro
+    healthcheck:
+      test:
+        ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 3s
+      retries: 30
+
+  langfuse-worker:
+    profiles: [llmops]
+    image: langfuse/langfuse-worker:4.76.0
+    mem_limit: 1g
+    depends_on: &langfuse-deps
+      langfuse-db: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      s3: { condition: service_healthy }
+    environment: &langfuse-env
+      NODE_OPTIONS: --max-old-space-size=768
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3200}
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
+      SALT: local-dev-langfuse-salt
+      ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: local-dev-clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      # Our Redis keeps the default maxmemory-policy noeviction, which Langfuse requires.
+      REDIS_CONNECTION_STRING: redis://redis:6379/1
+      # SeaweedFS creates the bucket on first write; on AWS/R2 create it beforehand.
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://s3:8333
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: local-dev-access-key
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: local-dev-secret-key
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://s3:8333
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: local-dev-access-key
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: local-dev-secret-key
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+  langfuse-web:
+    profiles: [llmops]
+    image: langfuse/langfuse:4.76.0
+    mem_limit: 1536m
+    depends_on: *langfuse-deps
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: local-dev-langfuse-nextauth-secret
+      # Headless init: one org, project, API key pair and admin user (no quotes in values).
+      LANGFUSE_INIT_ORG_ID: local-dev-org
+      LANGFUSE_INIT_ORG_NAME: Local dev
+      LANGFUSE_INIT_PROJECT_ID: local-dev-project
+      LANGFUSE_INIT_PROJECT_NAME: saas-agent-starter
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local-dev}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local-dev}
+      LANGFUSE_INIT_USER_EMAIL: admin@example.com
+      LANGFUSE_INIT_USER_NAME: Admin
+      LANGFUSE_INIT_USER_PASSWORD: local-dev-password
+    ports: ["127.0.0.1:${LANGFUSE_PORT:-3200}:3000"]
+    healthcheck:
+      # Next.js binds to the container hostname, not localhost.
+      test: ["CMD-SHELL", "wget -qO- http://$${HOSTNAME}:3000/api/public/health >/dev/null"]
+      interval: 5s
+      start_period: 60s
+      retries: 60
+
+  # Eval engine for `pnpm eval` (scripts/eval.mjs). A container, not an npm dependency: the
+  # promptfoo npm tree fails the code-dependency license gate (docs/adr/0009-llm-ops.md).
+  promptfoo:
+    profiles: [eval]
+    image: ghcr.io/promptfoo/promptfoo:0.125.1
+    entrypoint: ["promptfoo"]
+    working_dir: /work
+    volumes: [".:/work"]
+    environment:
+      HOME: /tmp
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_UPDATE: "1"
+
 volumes:
   pgdata:
   s3data:
   lokidata:
+  chatwoot-pgdata:
+  chatwoot-storage:
+  clickhousedata:

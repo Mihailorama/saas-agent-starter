@@ -114,7 +114,8 @@ Third-party sinks sit behind [vanilla-cookieconsent](https://github.com/orestbid
   "Cookie settings" (user menu, and under the sign-in card) reopens the choices; withdrawing
   clears the sinks' cookies and reloads the page, so no sink keeps running.
 - **opt-out** (US state privacy laws such as CCPA/CPRA): sinks start on the first visit, the
-  banner informs, and the link reads "Do Not Sell or Share My Personal Information". A Global
+  banner informs, and the link reads "Do Not Sell or Share My Personal Information" (the CCPA
+  regulations allow dropping it only under the frictionless-processing conditions). A Global
   Privacy Control signal (`navigator.globalPrivacyControl`, `respectGpc`) counts as opting out
   until the user decides otherwise; a saved choice always wins over the signal.
 - **Google Consent Mode v2**, basic mode: gtag.js loads only after consent and first sets
@@ -149,8 +150,8 @@ writes `<meta name="consent-mode">` into `index.html`:
 - Replacement criteria: replace if releases stop (v3.1.0 in 2025-02 was followed by a 20-month
   gap before v3.2.0-v3.3.0 in 2026-10/11; one maintainer) or if a client needs the IAB TCF,
   consent records or Google's ad products; then use a certified CMP. Checked 2026-11-07: Klaro
-  (BSD-3-Clause, last npm release 0.7.21 on 2024-03-26, last commit 2025-03-27) and Osano's
-  `cookieconsent` (MIT, last npm release 3.1.1 on 2019-05-23) were less maintained.
+  (BSD-3-Clause, last npm releases 0.7.21 and 0.7.22 on 2024-03-26, last commit 2025-03-27)
+  and Osano's `cookieconsent` (MIT, last npm release 3.1.1 on 2019-05-23) were less maintained.
 
 ### AI-answer feedback (thumbs up/down)
 
@@ -225,6 +226,10 @@ PostHog's own GitHub destination exists but creates issues from error-tracking e
 a GitHub App, not from alerts or surveys, so the receiver above is the smallest working path.
 User feedback text goes to GitHub (a US processor): keep `GITHUB_TOKEN` empty where that is
 not allowed and read the responses in PostHog instead.
+
+With the service desk configured ([docs/support.md](support.md)), "report a problem / suggest an
+improvement" moves into the Chatwoot widget's Help menu (one entry point for users, works on every
+tier including Umami-only) and `journeys:sync` skips the feedback survey. Without it:
 
 Feedback on the Umami-only tier: Umami has no surveys. GlitchTip implements Sentry's
 crash-report dialog (user reports attached to an error), not a standalone "suggest an

@@ -1,0 +1,11 @@
+<!-- Small-host server tuning, from ClickHouse "Using less than 16GB of RAM"
+     (https://clickhouse.com/docs/operations/tips): smaller mark cache, no background log
+     tables. Query settings are in clickhouse-low-memory-users.xml. The container memory limit
+     is in docker-compose.yml; ClickHouse sizes itself from the cgroup limit. -->
+<clickhouse>
+  <mark_cache_size>536870912</mark_cache_size>
+  <asynchronous_metric_log remove="1"/>
+  <metric_log remove="1"/>
+  <text_log remove="1"/>
+  <trace_log remove="1"/>
+</clickhouse>

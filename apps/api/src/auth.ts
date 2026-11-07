@@ -1,11 +1,14 @@
 import { schema } from '@app/db';
+import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { genericOAuth, organization } from 'better-auth/plugins';
+import { genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { apiKeys, orgAccess } from './access.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
+import { mfaGuard } from './mfa.ts';
 import { startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
@@ -70,6 +73,7 @@ export const auth = betterAuth({
   },
   plugins: [
     organization({
+      ...orgAccess,
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>
         sendEmail(
@@ -81,6 +85,17 @@ export const auth = betterAuth({
           { org: data.organization.name, inviter: data.inviter.user.name },
         ),
     }),
+    apiKeys,
+    // 2FA and passkeys (ADR 0017). TOTP + backup codes + trusted devices; passwordless = SSO
+    // users may enrol too (a password is still asked whenever the account has one).
+    twoFactor({ issuer: env.APP_NAME, allowPasswordless: true }),
+    // A passkey sign-in is multi-factor on its own (device + PIN/biometric): no TOTP step.
+    passkey({
+      rpID: env.PASSKEY_RP_ID ?? new URL(env.BETTER_AUTH_URL).hostname,
+      rpName: env.APP_NAME,
+      origin: env.PASSKEY_ORIGIN.length ? env.PASSKEY_ORIGIN : new URL(env.BETTER_AUTH_URL).origin,
+    }),
+    mfaGuard(),
     ...oidc,
   ],
   // Rate limiting is done by @fastify/rate-limit backed by Redis (shared across replicas).

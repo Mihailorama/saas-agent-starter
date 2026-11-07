@@ -1,22 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
-
-// The worker delivers every mail to the compose Mailpit; read it like the user's inbox would.
-const mailpit = process.env.MAILPIT_URL ?? 'http://localhost:8025';
-async function mailedLink(to: string, subject: RegExp): Promise<string> {
-  for (let i = 0; i < 100; i++) {
-    const query = new URLSearchParams({ query: `to:${to}` });
-    const { messages } = await (await fetch(`${mailpit}/api/v1/search?${query}`)).json();
-    const hit = messages.find((m: { Subject: string }) => subject.test(m.Subject));
-    if (hit) {
-      const mail = await (await fetch(`${mailpit}/api/v1/message/${hit.ID}`)).json();
-      const link = new URL(mail.Text.match(/https?:\/\/[^\s\]]+/)[0]);
-      return link.pathname + link.search; // same app, whatever port the test server runs on
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`no mail to ${to} in Mailpit: are Mailpit and the worker (pnpm worker) up?`);
-}
+import { mailedLink } from './mail';
 
 async function signUp(page: Page, email: string) {
   await page.goto('/');
@@ -55,6 +39,8 @@ test('sign up, create an organization and a project', async ({ page }) => {
 
   // No third-party sink configured in tests: nothing to consent to, no foreign hosts.
   await expect(page.locator('#cc-main')).toHaveCount(0);
+  // No Chatwoot configured: no Help entry and no widget request (docs/support.md).
+  await expect(page.getByRole('button', { name: 'Help' })).toHaveCount(0);
   expect([...hosts]).toEqual(['localhost']);
 });
 
@@ -79,7 +65,7 @@ test('forgotten password: reset through the mailed link', async ({ page, context
 
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill('a-brand-new-passphrase');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByLabel('Organization name')).toBeVisible();
 });
 
@@ -87,5 +73,34 @@ test('AI transparency page is public', async ({ page }) => {
   await page.goto('/ai-transparency');
   await expect(page.getByRole('heading', { name: 'How we use AI' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Project summaries' })).toBeVisible();
-  await expect(page.getByText('claude-haiku-5-5', { exact: false })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Support request triage' })).toBeVisible();
+  // One model list per purpose.
+  await expect(page.getByText('claude-haiku-5-5', { exact: false })).toHaveCount(2);
+});
+
+test('org admin creates an API key and a webhook endpoint', async ({ page }) => {
+  await signUp(page, `${randomUUID()}@example.com`);
+  await page.getByLabel('Organization name').fill('Compilers');
+  await page.getByRole('button', { name: 'Create organization' }).click();
+
+  await page.getByRole('link', { name: 'API keys' }).click();
+  await expect(page.getByText('No API keys yet')).toBeVisible();
+  await page.getByRole('button', { name: 'New API key' }).click();
+  await page.getByLabel('Name').fill('CI');
+  await page.getByLabel('projects:read').check();
+  await page.getByRole('button', { name: 'Create key' }).click();
+  // Shown once, then only its prefix.
+  await expect(page.getByRole('textbox', { name: 'Your new API key' })).toHaveValue(/^sk_/);
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('cell', { name: 'CI', exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Webhooks' }).click();
+  await page.getByRole('button', { name: 'Add endpoint' }).click();
+  await page.getByLabel('URL').fill('https://hooks.example.com/in');
+  await page.getByLabel('project.created').check();
+  await page.getByRole('button', { name: 'Add endpoint' }).last().click();
+  await expect(page.getByRole('textbox', { name: 'Signing secret' })).toHaveValue(/^whsec_/);
+  await page.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByText('https://hooks.example.com/in')).toBeVisible();
+  await expect(page.getByText('No deliveries yet.')).toBeVisible();
 });
