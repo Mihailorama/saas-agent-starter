@@ -50,6 +50,20 @@ AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
 # OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
 
+# Outbound webhooks (worker/webhooks.py). Non-global addresses (private, loopback, link-local...)
+# are refused; list CIDRs here to allow some anyway (e.g. an on-prem receiver). Dev/tests only
+# for 127.0.0.0/8.
+WEBHOOK_ALLOWED_CIDRS = [
+    c.strip() for c in os.environ.get("WEBHOOK_ALLOWED_CIDRS", "").split(",") if c.strip()
+]
+WEBHOOK_MAX_PAYLOAD_BYTES = int(os.environ.get("WEBHOOK_MAX_PAYLOAD_BYTES", "65536"))
+# Same value as the API's: `id:secret,...`, first one active (worker.webhooks.parse_keys).
+WEBHOOK_ENCRYPTION_KEYS = os.environ.get("WEBHOOK_ENCRYPTION_KEYS", "")
+# Disable an endpoint after this many failed deliveries in a row (0 = never); 410 disables at once.
+WEBHOOK_DISABLE_AFTER_FAILURES = int(os.environ.get("WEBHOOK_DISABLE_AFTER_FAILURES", "5"))
+# Daily schedule deletes webhook events and attempts older than this (0 = keep forever).
+WEBHOOK_RETENTION_DAYS = int(os.environ.get("WEBHOOK_RETENTION_DAYS", "30"))
+
 # Service desk (docs/support.md). Chatwoot holds the tickets, the tracker holds the backlog items;
 # every token empty = that side only logs what it would do (dry run).
 CHATWOOT_URL = os.environ.get("CHATWOOT_URL", "")  # how the worker reaches Chatwoot

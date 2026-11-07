@@ -1,0 +1,21 @@
+{
+  "$comment": "Outbound webhook event catalog (docs/public-api.md). Every publishEvent(req, tx, '<type>', data) call in apps/api uses a type listed here (TypeScript enforces it) and every type listed here is published somewhere (`pnpm check:events`). Customers subscribe to these types; renaming or removing one, or changing the shape of its `data`, is a breaking change (versioning rule in docs/public-api.md). `data` names the OpenAPI schema of the payload's data field.",
+  "events": {
+    "project.created": {
+      "description": "A project was created.",
+      "data": "Project"
+    },
+    "project.updated": {
+      "description": "A project's name or description changed.",
+      "data": "Project"
+    },
+    "project.deleted": {
+      "description": "A project and its attachments were deleted. `data` carries only its id.",
+      "data": "ProjectRef"
+    },
+    "project.summary_reviewed": {
+      "description": "A member confirmed or corrected the AI summary of a project (`aiStatus` tells which).",
+      "data": "Project"
+    }
+  }
+}

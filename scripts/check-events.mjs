@@ -87,6 +87,34 @@ for (const file of files(join(root, 'apps/web/src'))) {
   }
 }
 
+// Outbound webhook events (docs/public-api.md): every publishEvent() call names a catalogued type
+// (TypeScript checks that too) and every catalogued type is published somewhere, because the
+// catalog is what customers subscribe to.
+const webhooks = JSON.parse(readFileSync(join(root, 'config/webhook-events.json'), 'utf8')).events;
+const published = new Set();
+for (const [type, e] of Object.entries(webhooks)) {
+  if (!/^[a-z][a-z_]*(\.[a-z][a-z_]*)+$/.test(type)) errors.push(`webhooks: bad type "${type}"`);
+  if (typeof e.description !== 'string' || !e.description)
+    errors.push(`webhooks: ${type} lacks a description`);
+}
+for (const file of files(join(root, 'apps/api/src'))) {
+  const text = readFileSync(file, 'utf8');
+  // Calls look like publishEvent(req, tx, 'type', data); the definition and prose do not match.
+  for (const m of text.matchAll(/(?<![.\w])publishEvent\(\s*\w+\s*,\s*\w+\s*,\s*/g)) {
+    const at = m.index + m[0].length;
+    const line = text.slice(0, at).split('\n').length;
+    const type = text.slice(at).match(/^(['"])([^'"]+)\1/)?.[2];
+    const rel = file.slice(root.length);
+    if (!type) errors.push(`${rel}:${line}: publishEvent() needs a literal event type`);
+    else if (!webhooks[type])
+      errors.push(`${rel}:${line}: "${type}" is not in config/webhook-events.json`);
+    else published.add(type);
+  }
+}
+for (const type of Object.keys(webhooks)) {
+  if (!published.has(type)) errors.push(`webhooks: ${type} is catalogued but never published`);
+}
+
 const unused = Object.keys(events).filter((n) => !used.has(n));
 if (unused.length) console.warn(`events declared but never tracked: ${unused.join(', ')}`);
 if (errors.length) {
@@ -94,5 +122,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  `check:events: ${used.size} events tracked, ${Object.keys(events).length} catalogued, ${journeys.length} journeys`,
+  `check:events: ${used.size} events tracked, ${Object.keys(events).length} catalogued, ${journeys.length} journeys, ${published.size} webhook events`,
 );
