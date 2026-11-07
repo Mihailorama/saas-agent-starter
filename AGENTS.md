@@ -36,7 +36,7 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP) and passkey plugins
-  src/mfa.ts          re-auth window + audit_log rows for 2FA/passkey changes (ADR 0017)
+  src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
   src/tenant.ts       requireRole() + withTenant(): RBAC, org 2FA policy, RLS transaction, audit log
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
   src/temporal.ts     Temporal client + workflow contracts with the worker

@@ -1,9 +1,18 @@
-// Re-auth and audit trail for 2FA and passkey changes (ADR 0017). A Better Auth plugin, so
-// auth.ts only lists it; the twoFactor and passkey plugins do the actual work.
-import { auditLog, member, withOrg } from '@app/db';
+// Re-auth, audit trail, TOTP replay protection and the org 2FA policy on Better Auth's own
+// organization endpoints (ADR 0017). A Better Auth plugin, so auth.ts only lists it; the
+// twoFactor and passkey plugins do the actual work.
+import { createHmac } from 'node:crypto';
+import { auditLog, invitation, member, organization, twoFactor, withOrg } from '@app/db';
 import type { BetterAuthPlugin } from 'better-auth';
-import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api';
-import { eq } from 'drizzle-orm';
+import {
+  APIError,
+  type AuthMiddleware,
+  createAuthMiddleware,
+  getSessionFromCtx,
+  isAPIError,
+} from 'better-auth/api';
+import { symmetricDecrypt } from 'better-auth/crypto';
+import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { db } from './db.ts';
 
 /** Sensitive changes need a sign-in (password + 2FA, or passkey) at most this old. */
@@ -42,11 +51,107 @@ async function audit(actorId: string, action: string, target: string, ip: string
   }
 }
 
+/** RFC 6238 code for one 30 s step, as the twoFactor plugin computes it (SHA-1, 6 digits). */
+function totpAt(secret: string, step: number) {
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(step));
+  const h = createHmac('sha1', secret).update(counter).digest();
+  return ((h.readUInt32BE(h[h.length - 1]! & 15) & 0x7fffffff) % 1e6).toString().padStart(6, '0');
+}
+
+/**
+ * The plugin accepts a code for the current step +-1 and does not remember used ones. Before
+ * it runs, find the step this code belongs to and claim it atomically: a code (or an older
+ * one) that was already accepted is refused, also across concurrent requests.
+ */
+const rejectReplayedTotp: AuthMiddleware = createAuthMiddleware(async (ctx) => {
+  const session = await getSessionFromCtx(ctx);
+  let userId = session?.user.id;
+  if (!userId) {
+    const cookie = ctx.context.createAuthCookie('two_factor').name;
+    const challenge = await ctx.getSignedCookie(cookie, ctx.context.secret);
+    if (!challenge) return; // the plugin answers 401
+    userId = (await ctx.context.internalAdapter.findVerificationValue(challenge))?.value;
+  }
+  const [row] = userId ? await db.select().from(twoFactor).where(eq(twoFactor.userId, userId)) : [];
+  if (!row) return;
+  // ponytail: legacy "base32:" secrets (pre-1.7 plugin rows) never match here and stay unprotected.
+  const secret = await symmetricDecrypt({ key: ctx.context.secretConfig, data: row.secret });
+  const code = String((ctx.body as { code?: unknown })?.code ?? '');
+  const now = Math.floor(Date.now() / 30_000);
+  const step = [now - 1, now, now + 1].find((s) => totpAt(secret, s) === code);
+  if (step === undefined) return; // wrong code: the plugin rejects and counts it
+  const claimed = await db
+    .update(twoFactor)
+    .set({ lastTotpStep: step })
+    .where(
+      and(
+        eq(twoFactor.id, row.id),
+        or(isNull(twoFactor.lastTotpStep), lt(twoFactor.lastTotpStep, step)),
+      ),
+    )
+    .returning({ id: twoFactor.id });
+  if (!claimed.length) {
+    throw new APIError('UNAUTHORIZED', { message: 'Invalid code', code: 'INVALID_CODE' });
+  }
+});
+
+// Organization endpoints a member without 2FA may still call (join, leave, switch, create).
+const ORG_OPEN = new Set([
+  '/organization/create',
+  '/organization/check-slug',
+  '/organization/set-active',
+  '/organization/accept-invitation',
+  '/organization/reject-invitation',
+  '/organization/leave',
+]);
+
+/**
+ * requireRole enforces the org 2FA policy on our routes; this does the same for Better Auth's
+ * mutating organization endpoints (invite, roles, remove member, update, delete...). Reads stay
+ * open so the shell can render and send the user to enrolment.
+ */
+const enforceOrgPolicy: AuthMiddleware = createAuthMiddleware(async (ctx) => {
+  const session = await getSessionFromCtx(ctx);
+  if (!session) return;
+  if ((session.user as { twoFactorEnabled?: boolean | null }).twoFactorEnabled) return;
+  const body = (ctx.body ?? {}) as { organizationId?: unknown; invitationId?: unknown };
+  // Same target Better Auth picks: explicit org, the invitation's org, else the active org.
+  let orgId = typeof body.organizationId === 'string' ? body.organizationId : undefined;
+  if (!orgId && typeof body.invitationId === 'string') {
+    [{ orgId } = { orgId: undefined }] = await db
+      .select({ orgId: invitation.organizationId })
+      .from(invitation)
+      .where(eq(invitation.id, body.invitationId));
+  }
+  orgId ??=
+    (session.session as { activeOrganizationId?: string | null }).activeOrganizationId ?? undefined;
+  if (!orgId) return;
+  const [org] = await db
+    .select({ required: organization.requireTwoFactor })
+    .from(organization)
+    .where(eq(organization.id, orgId));
+  if (org?.required) {
+    throw new APIError('FORBIDDEN', {
+      message: 'two-factor authentication required',
+      code: 'TWO_FACTOR_REQUIRED',
+    });
+  }
+});
+
 export const mfaGuard = () =>
   ({
     id: 'mfa-guard',
     hooks: {
       before: [
+        { matcher: (ctx) => ctx.path === '/two-factor/verify-totp', handler: rejectReplayedTotp },
+        {
+          matcher: (ctx) =>
+            ctx.request?.method === 'POST' &&
+            (ctx.path ?? '').startsWith('/organization/') &&
+            !ORG_OPEN.has(ctx.path ?? ''),
+          handler: enforceOrgPolicy,
+        },
         {
           matcher: (ctx) => (ctx.path ?? '') in EVENTS,
           handler: createAuthMiddleware(async (ctx) => {

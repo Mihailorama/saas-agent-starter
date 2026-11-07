@@ -25,8 +25,16 @@ our own tables, not from another service.
   through `PUT /api/security/policy` (audited like every tenant mutation). An admin can turn it on
   only with 2FA on their own account. `requireRole` (`apps/api/src/tenant.ts`) answers
   `403 two-factor authentication required` to members without TOTP; the web sends them to
-  Settings -> Security to enrol. Compliance means TOTP enabled: a passkey alone does not count,
+  Settings -> Security to enrol. A `before` hook in `apps/api/src/mfa.ts` applies the same rule
+  to Better Auth's mutating `/api/auth/organization/*` endpoints (invite, roles, remove member,
+  update, delete; code `TWO_FACTOR_REQUIRED`), except create, set-active, accept/reject
+  invitation and leave. Compliance means TOTP enabled: a passkey alone does not count,
   because the same account could still sign in with the password only.
+- **A TOTP code works once.** Better Auth 1.7.17 accepts the current step +-1 and does not
+  remember used codes (the enrolment code also passed the next sign-in). `mfa.ts` finds the step
+  the submitted code belongs to and claims it with one conditional `UPDATE` on
+  `two_factor.last_totp_step` before the plugin verifies: a code at or below the last accepted
+  step gets `401 INVALID_CODE`, also for concurrent requests.
 - **Sensitive changes need a recent sign-in** ("sudo mode", `apps/api/src/mfa.ts`): disabling
   2FA, regenerating backup codes and deleting a passkey are refused with `SESSION_NOT_FRESH`
   when the session is older than 10 minutes; the password is asked as well where the account
@@ -48,10 +56,9 @@ our own tables, not from another service.
 
 ## Limitations
 
-- Better Auth's own organization endpoints (`/api/auth/organization/*`: invite, roles) are not
-  gated by the org 2FA policy; only our tenant routes are (docs/TODO.md).
-- Better Auth does not reject a TOTP code that was already used inside its validity window
-  (checked with 1.7.17: the enrolment code also passes the next sign-in). Lockout and the
-  per-IP limit bound guessing; replay of an observed code within ~30-60 s remains possible.
+- Reads on Better Auth's organization endpoints (list members, full organization) stay open to
+  members without 2FA, so the shell can render and send them to enrolment.
+- Audit rows are written after Better Auth commits the change, not in its transaction
+  (docs/TODO.md).
 - The passkey flow is tested end to end only with Chrome's virtual authenticator (CDP); real
   platform authenticators (Touch ID, Windows Hello, security keys) are checked by hand.

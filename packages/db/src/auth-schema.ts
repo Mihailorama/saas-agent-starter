@@ -114,6 +114,8 @@ export const twoFactor = pgTable(
     verified: boolean('verified').default(true),
     failedVerificationCount: integer('failed_verification_count').default(0),
     lockedUntil: timestamp('locked_until'),
+    /** Ours, not the plugin's: last accepted TOTP time step, so a code works once (mfa.ts). */
+    lastTotpStep: integer('last_totp_step'),
   },
   (t) => [index().on(t.secret), index().on(t.userId)],
 );

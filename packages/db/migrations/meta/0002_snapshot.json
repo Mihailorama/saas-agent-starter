@@ -1,5 +1,5 @@
 {
-  "id": "602f5f07-66dd-46ea-a0dd-72ec72b2e70c",
+  "id": "8fa85439-f981-4b35-8d76-7fffbbcc7087",
   "prevId": "04759e37-e10a-4c33-9c11-316aa3649e60",
   "version": "7",
   "dialect": "postgresql",
@@ -1162,6 +1162,12 @@
         "locked_until": {
           "name": "locked_until",
           "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_totp_step": {
+          "name": "last_totp_step",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         }

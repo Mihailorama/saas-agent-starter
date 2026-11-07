@@ -19,7 +19,8 @@ CREATE TABLE "two_factor" (
 	"user_id" text NOT NULL,
 	"verified" boolean DEFAULT true,
 	"failed_verification_count" integer DEFAULT 0,
-	"locked_until" timestamp
+	"locked_until" timestamp,
+	"last_totp_step" integer
 );
 --> statement-breakpoint
 ALTER TABLE "organization" ADD COLUMN "require_two_factor" boolean DEFAULT false NOT NULL;--> statement-breakpoint

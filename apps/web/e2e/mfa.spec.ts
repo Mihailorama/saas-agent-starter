@@ -65,7 +65,10 @@ test('set up TOTP, then sign in with a code', async ({ page }) => {
   await page.getByLabel('Authentication code').fill('000000');
   await page.getByRole('button', { name: 'Verify' }).click();
   await expect(page.getByRole('alert').filter({ hasText: /invalid/i })).toBeVisible();
-  await page.getByLabel('Authentication code').fill(totp.generate());
+  // A code works once: use the next step's code, not the one just used for enrolment.
+  await page
+    .getByLabel('Authentication code')
+    .fill(totp.generate({ timestamp: Date.now() + 30_000 }));
   await page.getByLabel('Trust this device for 30 days').check();
   await page.getByRole('button', { name: 'Verify' }).click();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();

@@ -37,7 +37,16 @@ function jar(res: LightMyRequestResponse, prev = '') {
   return [...map].map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
-type User = { id: string; email: string; cookie: string; totp?: OTPAuth.TOTP; codes?: string[] };
+type User = {
+  id: string;
+  email: string;
+  cookie: string;
+  totp?: OTPAuth.TOTP;
+  codes?: string[];
+  enrolCode?: string;
+};
+/** Code of the next 30 s step: still inside the plugin's +-1 window, never used before. */
+const nextCode = (totp: OTPAuth.TOTP) => totp.generate({ timestamp: Date.now() + 30_000 });
 
 async function post(user: { cookie: string } | null, url: string, payload: object = {}) {
   const res = await app.inject({
@@ -84,14 +93,15 @@ async function enrol(user: User) {
   const { totpURI, backupCodes } = enabled.json();
   expect(backupCodes).toHaveLength(10);
   const totp = OTPAuth.URI.parse(totpURI) as OTPAuth.TOTP;
+  const enrolCode = totp.generate();
   expect(totp.issuer).toBe('Workspace');
   // Not enabled until a code from the authenticator app proves the scan worked.
   expect((await get(user, '/api/auth/get-session')).json().user.twoFactorEnabled).toBe(false);
   expect(
-    (await post(user, '/api/auth/two-factor/verify-totp', { code: totp.generate() })).statusCode,
+    (await post(user, '/api/auth/two-factor/verify-totp', { code: enrolCode })).statusCode,
   ).toBe(200);
   expect((await get(user, '/api/auth/get-session')).json().user.twoFactorEnabled).toBe(true);
-  Object.assign(user, { totp, codes: backupCodes });
+  Object.assign(user, { totp, codes: backupCodes, enrolCode });
 }
 
 /** Password step of sign-in: with 2FA on it returns a challenge cookie, not a session. */
@@ -122,8 +132,13 @@ describe('two-factor (TOTP)', () => {
     expect(
       (await post(browser, '/api/auth/two-factor/verify-totp', { code: '000000' })).statusCode,
     ).toBe(401);
+    // A code works once: the enrolment code (same 30 s step) is refused at the next sign-in.
+    const replay = await post(browser, '/api/auth/two-factor/verify-totp', {
+      code: user.enrolCode,
+    });
+    expect(replay.statusCode).toBe(401);
     const ok = await post(browser, '/api/auth/two-factor/verify-totp', {
-      code: user.totp!.generate(),
+      code: nextCode(user.totp!),
       trustDevice: true,
     });
     expect(ok.statusCode).toBe(200);
@@ -232,19 +247,40 @@ describe('org policy: require 2FA for all members', () => {
 
     const member = await signUp();
     await auth.api.addMember({
-      body: { userId: member.id, organizationId: orgId, role: 'member' },
+      body: { userId: member.id, organizationId: orgId, role: 'admin' },
     });
-    await post(member, '/api/auth/organization/set-active', { organizationId: orgId });
+    expect(
+      (await post(member, '/api/auth/organization/set-active', { organizationId: orgId }))
+        .statusCode,
+    ).toBe(200);
+    const invite = (u: User) =>
+      post(u, '/api/auth/organization/invite-member', {
+        email: `${randomUUID()}@example.com`,
+        role: 'member',
+      });
 
     for (const url of ['/api/projects', '/api/security/policy']) {
       const blocked = await get(member, url);
       expect(blocked.statusCode).toBe(403);
       expect(blocked.json().error).toBe('two-factor authentication required');
     }
+    // Better Auth's own organization endpoints follow the same policy (mfa.ts).
+    const blockedInvite = await invite(member);
+    expect(blockedInvite.statusCode).toBe(403);
+    expect(blockedInvite.json().code).toBe('TWO_FACTOR_REQUIRED');
+    const blockedRole = await post(member, '/api/auth/organization/update-member-role', {
+      memberId: 'any',
+      role: 'member',
+      organizationId: orgId,
+    });
+    expect(blockedRole.json().code).toBe('TWO_FACTOR_REQUIRED');
+    expect((await invite(owner)).statusCode).toBe(200);
+
     await enrol(member);
     expect((await get(member, '/api/projects')).statusCode).toBe(200);
+    expect((await invite(member)).statusCode).toBe(200);
     expect(
       (await put(member, '/api/security/policy', { requireTwoFactor: false })).statusCode,
-    ).toBe(403);
+    ).toBe(200); // admins with 2FA may change it
   });
 });
