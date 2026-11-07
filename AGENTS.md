@@ -22,6 +22,7 @@ tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do no
 
 ```sh
 docker compose up -d --wait postgres redis s3 temporal-ui mailpit   # infra only
+docker compose --profile billing up -d stripe-mock                  # Stripe API mock (API tests)
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
 pnpm worker     # Python Temporal worker (also delivers mail; Mailpit UI :8025)
@@ -49,6 +50,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
+  src/billing/        plans config, entitlements() + requireEntitlement, payment providers
+                      (Stripe) behind one interface (docs/billing.md)
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -72,7 +75,9 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
+  worker/billing.py   LLM spend limit, provider events -> subscriptions
 config/             ai-models.json (allowed models per contour/purpose, prices),
+                    plans.json (plans, limits, prices per currency, billing contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
                     flags.json (feature flag catalog),
@@ -198,7 +203,8 @@ without a default go into a later release's migration marked `-- contract: <reas
 ## Recipe: add an AI purpose (example: `project.summary`)
 
 1. Registry: add the purpose to the allowed models in `config/ai-models.json` for every
-   contour that should offer it (with `pricePer1kTokens`, or `null` if unknown). Add a `uses`
+   contour that should offer it (with `pricePer1kTokens`; `null` only together with
+   `"unmetered": true`, otherwise the gateway refuses the model). Add a `uses`
    entry with the same `purpose` to `config/ai-transparency.json`.
 2. Prompt: write `prompts/<purpose>/<name>.v1.md` and add its hash to `prompts/lock.json`
    (the failing test prints the line). Activity: in `services/worker-py/worker/activities.py`,

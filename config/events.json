@@ -68,6 +68,16 @@
       "pii": false,
       "props": {}
     },
+    "billing_checkout_started": {
+      "description": "An admin started checkout for a paid plan on the billing page. `plan` is the plan id from config/plans.json.",
+      "pii": false,
+      "props": { "plan": "string" }
+    },
+    "billing_canceled": {
+      "description": "An admin canceled the paid plan (it ends at the period end).",
+      "pii": false,
+      "props": {}
+    },
     "project_created": {
       "description": "A project was created.",
       "pii": false,

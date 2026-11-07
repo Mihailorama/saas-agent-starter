@@ -37,6 +37,7 @@ on an image that is not. Their primary software licenses:
 | `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
 | `ghcr.io/gitroomhq/postiz-app`         | social post scheduling (`marketing` profile)       | AGPL-3.0                    |
 | `towfiqi/serpbear`                     | keyword rank tracking (`marketing` profile)        | MIT                         |
+| `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -133,6 +134,10 @@ Notes:
 - `pgvector/pgvector`: the official Postgres image plus the pgvector extension (PostgreSQL
   License, [LICENSE](https://github.com/pgvector/pgvector/blob/master/LICENSE)). Chatwoot's schema
   enables `vector`, which `postgres:17-alpine` does not ship, so Chatwoot gets this server.
+- `stripe/stripe-mock` ([MIT](https://github.com/stripe/stripe-mock/blob/master/LICENSE),
+  Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
+  never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
+  dependencies). Details in [docs/billing.md](billing.md).
 
 - Marketing layer ([docs/marketing.md](marketing.md), [ADR 0021](adr/0021-marketing-layer.md)),
   `marketing` profile, all run unmodified:

@@ -37,6 +37,15 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'AI calls' })).toBeVisible();
   await expect(page.getByText('No AI calls match these filters.')).toBeVisible();
 
+  // Billing: plan, usage and prices read from config/plans.json through the API.
+  await page.getByRole('link', { name: 'Billing' }).click();
+  await expect(page.getByRole('heading', { name: 'Billing' })).toBeVisible();
+  await expect(page.getByRole('progressbar', { name: 'Projects' })).toHaveAttribute(
+    'aria-valuenow',
+    '1',
+  );
+  await expect(page.getByRole('button', { name: 'Upgrade to Pro' })).toBeVisible();
+
   // No third-party sink configured in tests: nothing to consent to, no foreign hosts.
   await expect(page.getByRole('region', { name: 'Analytics consent' })).toHaveCount(0);
   // No Chatwoot configured: no Help entry and no widget request (docs/support.md).

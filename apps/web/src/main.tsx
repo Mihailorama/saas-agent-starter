@@ -19,6 +19,7 @@ import { AcceptInvitationPage } from '@/pages/accept-invitation';
 import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { ApiKeysPage } from '@/pages/api-keys';
+import { BillingPage } from '@/pages/billing';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { ResetPasswordPage } from '@/pages/reset-password';
@@ -117,6 +118,12 @@ const aiCallsRoute = createRoute({
   component: AiCallsPage,
 });
 
+const billingRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/billing',
+  component: BillingPage,
+});
+
 const apiKeysRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/api-keys',
@@ -149,6 +156,7 @@ const router = createRouter({
       securityRoute,
       apiKeysRoute,
       webhooksRoute,
+      billingRoute,
     ]),
   ]),
 });

@@ -5,6 +5,7 @@ import {
   Building2,
   Check,
   ChevronsUpDown,
+  CreditCard,
   FolderKanban,
   KeyRound,
   Layers,
@@ -285,6 +286,9 @@ export function Shell() {
               <ScrollText className="size-4" /> AI calls
             </Link>
           )}
+          <Link to="/settings/billing" className={navLink} activeProps={{ className: navActive }}>
+            <CreditCard className="size-4" /> Billing
+          </Link>
           {isAdmin && (
             <>
               <p className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground">Settings</p>
