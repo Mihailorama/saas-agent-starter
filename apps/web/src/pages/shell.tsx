@@ -13,6 +13,7 @@ import {
   Layers,
   LifeBuoy,
   Lightbulb,
+  Lock,
   LogOut,
   MessageCircle,
   Moon,
@@ -180,6 +181,9 @@ function UserMenu() {
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/security' })}>
           <ShieldCheck className="size-4" /> Security
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate({ to: '/settings/privacy' })}>
+          <Lock className="size-4" /> Privacy
         </DropdownMenuItem>
         {user?.role === 'operator' && !session?.session.impersonatedBy && (
           <DropdownMenuItem onSelect={() => navigate({ to: '/admin' })}>

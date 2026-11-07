@@ -47,6 +47,7 @@ type UserDetail = UserRow & {
     action: string;
     actorEmail: string | null;
     reason: string | null;
+    expiresAt: string | null;
     createdAt: string;
   }[];
 };
@@ -360,7 +361,10 @@ export function AdminUserPage() {
               u.operatorActions.map((a) => (
                 <TableRow key={`${a.createdAt}-${a.action}`}>
                   <TableCell className="whitespace-nowrap">{dateTime(a.createdAt)}</TableCell>
-                  <TableCell className="font-mono text-xs">{a.action}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {a.action}
+                    {a.expiresAt && ` (until ${dateTime(a.expiresAt)})`}
+                  </TableCell>
                   <TableCell className="text-xs">{a.actorEmail ?? '–'}</TableCell>
                   <TableCell className="text-xs">{a.reason}</TableCell>
                 </TableRow>

@@ -39,7 +39,7 @@ const actors = new WeakMap<Request, string>();
  * admins see their members' security changes. Written after Better Auth commits the change
  * (separate transaction): a crash in between loses the row, never the other way round.
  */
-async function audit(actorId: string, action: string, target: string, ip: string | null) {
+export async function audit(actorId: string, action: string, target: string, ip: string | null) {
   const orgs = await db
     .select({ orgId: member.organizationId })
     .from(member)

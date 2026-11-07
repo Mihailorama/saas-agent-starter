@@ -10,6 +10,7 @@ import {
   projects,
   withOperatorRead,
   withOrg,
+  withPlatformAudit,
 } from '../src/index.ts';
 
 // Connects as the restricted app role, exactly like the API.
@@ -143,13 +144,29 @@ describe('operator read path (docs/admin.md)', () => {
     expect(await db.select().from(projects).where(eq(projects.orgId, a))).toEqual([]);
   });
 
-  it('org-less audit rows: only operator actions, invisible to tenants', async () => {
+  it('org-less audit rows: only operator actions through the audit role, invisible to tenants', async () => {
     const a = await newOrg();
     const target = randomUUID();
-    await db.insert(auditLog).values({ orgId: null, action: 'operator.user.x', target });
+    const rls = { cause: { message: expect.stringMatching(/row-level security/) } };
+    const insert = (action: string) => db.insert(auditLog).values({ orgId: null, action, target });
+    // The app role itself cannot write them, not even operator.* ones.
+    await expect(insert('operator.user.x')).rejects.toMatchObject(rls);
+    await db.transaction((tx) =>
+      withPlatformAudit(tx, () =>
+        tx.insert(auditLog).values({ orgId: null, action: 'operator.user.x', target }),
+      ),
+    );
     await expect(
-      db.insert(auditLog).values({ orgId: null, action: 'POST /api/projects', target }),
-    ).rejects.toMatchObject({ cause: { message: expect.stringMatching(/row-level security/) } });
+      db.transaction((tx) =>
+        withPlatformAudit(tx, () =>
+          tx.insert(auditLog).values({ orgId: null, action: 'POST /api/projects', target }),
+        ),
+      ),
+    ).rejects.toMatchObject(rls);
+    // INSERT only: the audit role reads and changes nothing.
+    await expect(
+      db.transaction((tx) => withPlatformAudit(tx, () => tx.select().from(projects))),
+    ).rejects.toMatchObject({ cause: { message: expect.stringMatching(/permission denied/) } });
     expect(
       await withOrg(db, a, (tx) => tx.select().from(auditLog).where(eq(auditLog.target, target))),
     ).toEqual([]);

@@ -40,8 +40,15 @@
     {
       "idx": 5,
       "version": "7",
-      "when": 1794058603850,
-      "tag": "0005_operator_admin",
+      "when": 1794058999861,
+      "tag": "0005_privacy_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794073449698,
+      "tag": "0006_operator_admin",
       "breakpoints": true
     }
   ]

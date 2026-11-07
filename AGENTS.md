@@ -53,6 +53,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks,
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
+                      privacy.ts = data export/deletion requests (docs/privacy.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md)
@@ -78,9 +79,12 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log,
                       secret decryption, auto-disable, retention (daily Temporal Schedule)
   worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
-  worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
+  worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts (posthog SDK)
+  worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
+  worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
+                      GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     plans.json (plans, limits, prices per currency, billing contours),
                     ai-transparency.json (public /ai-transparency page),
@@ -97,7 +101,8 @@ compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
 compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy (docs/deploy.md)
 deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
 compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
-infra/backup/       backup image (postgres + pgBackRest/rclone) and its scripts (ADR 0015)
+infra/backup/       Postgres image (+ pgvector) and backup image (+ pgBackRest/rclone), scripts (ADR 0015)
+infra/chatwoot/     Chatwoot initializer: attachments served through Chatwoot (docs/support.md)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
@@ -108,6 +113,7 @@ docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
+docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
 
@@ -176,7 +182,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
    cross-tenant 404.
 5. Web: add a page in `apps/web/src/pages/`, a route in `src/main.tsx`, a nav link in
    `pages/shell.tsx`. Use TanStack Query for data and shadcn/ui components.
-6. `pnpm check`.
+6. Privacy: if rows can hold personal data, add the table to the export and the deletion in
+   `services/worker-py/worker/privacy.py` and its decision to the data map in docs/privacy.md.
+7. `pnpm check`.
 
 A Claude Code command with the same steps: `/add-resource <name>`.
 
@@ -421,8 +429,8 @@ Details: docs/releases.md.
   `deny.toml`): permissive licenses plus MPL-2.0 (file-level copyleft, no obligations on our
   code while unmodified). GPL/LGPL/AGPL/EUPL/SSPL/BUSL and other copyleft or source-available
   licenses stay banned for code dependencies (infrastructure containers are separate, see
-  docs/LICENSES.md). Never add an exception to make the gate pass; ask a human
-  (docs/adr/0005-license-policy.md).
+  docs/LICENSES.md). Never add an exception, a license or an `ALIASES` entry to make the gate
+  pass; ask a human (docs/adr/0005-license-policy.md).
 - We never modify dependency files: no `pnpm patch`/`patch-package`, no edits in
   `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
   go upstream (issue or PR); until a release lands, work around it in our own code.
@@ -432,8 +440,9 @@ Details: docs/releases.md.
 ## Never
 
 - Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`. The one
-  exception is `withOperatorRead` (read-only, operator console only, docs/admin.md): never call it
-  elsewhere or add another role switch.
+  exceptions are `withOperatorRead` (read-only) and `withPlatformAudit` (org-less `operator.*`
+  audit rows only), both operator console only (docs/admin.md): never call them elsewhere or add
+  another role switch.
 - Commit `.env`, credentials, a decrypted `deploy/env/*.env`, media/binary files, or generated
   `dist/`, `target/`, `.venv/`.
 - Add Next.js/Vercel-specific code, or GPL/LGPL/AGPL/SSPL/BSL code dependencies (infra

@@ -18,11 +18,13 @@ import { Redis } from 'ioredis';
 import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
+import { READ_ONLY } from './operator-guard.ts';
 import { adminRoutes, impersonationRoutes } from './routes/admin.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
 import { hookRoutes } from './routes/hooks.ts';
+import { privacyRoutes } from './routes/privacy.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { securityRoutes } from './routes/security.ts';
 import { supportHookRoutes, supportRoutes } from './routes/support.ts';
@@ -127,6 +129,17 @@ export async function buildApp() {
     }
   });
 
+  // "View as user" is read-only on every route, also ones added later (docs/admin.md): one guard
+  // for all mutating requests with a session. Better Auth's endpoints have their own (/api/auth/*,
+  // operator-guard.ts), and leaving the view must work.
+  app.addHook('onRequest', async (req, reply) => {
+    const url = req.routeOptions.url ?? '';
+    if (!UNSAFE.has(req.method) || !req.headers.cookie || bearerToken(req)) return;
+    if (url.startsWith('/api/auth/') || url === '/api/impersonation/stop') return;
+    const s = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (s?.session.impersonatedBy) return reply.code(403).send({ error: READ_ONLY });
+  });
+
   // Lets the web attach the trace id to analytics error events (docs/product-analytics.md).
   app.addHook('onSend', async (_req, reply) => {
     const ctx = trace.getActiveSpan()?.spanContext();
@@ -210,6 +223,7 @@ export async function buildApp() {
   await app.register(supportRoutes, { prefix: '/api/support' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(impersonationRoutes, { prefix: '/api/impersonation' });
+  await app.register(privacyRoutes, { prefix: '/api/privacy' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.
   app.get('/api/openapi.json', { schema: { hide: true } }, async () => app.swagger());

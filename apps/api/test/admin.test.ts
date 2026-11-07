@@ -107,7 +107,7 @@ beforeAll(async () => {
   op = await signUp(opEmail);
   owner = await signUp();
   org = await createOrg(owner);
-});
+}, 20_000); // sign-ups hash passwords: slow while the other test files run in parallel
 
 describe('operator access', () => {
   it('needs the listed account, synced role, TOTP and a fresh session', async () => {
@@ -160,6 +160,34 @@ describe('operator access', () => {
       (await post(op, '/api/auth/admin/set-role', { userId: owner.id, role: 'operator' }))
         .statusCode,
     ).toBe(404);
+  });
+
+  it('the admin plugin endpoints stay closed for any URL spelling', async () => {
+    const body = { userId: owner.id, role: 'operator' };
+    for (const url of [
+      '/api/auth/admin/list-users',
+      '//api/auth/admin/list-users',
+      '/api//auth/admin/list-users',
+      '/api/auth//admin/list-users',
+      '/api/auth/%61dmin/list-users',
+      '/api/auth/admin%2Flist-users',
+      '/api/auth/admin/list%2Dusers',
+      '/api/%61uth/admin/list-users',
+      '/api/auth/./admin/list-users',
+      '/api/auth/x/../admin/list-users',
+      '/api/auth/admin/set-role',
+      '/api/auth/%61dmin/set-role',
+      '/api/auth/api-key/list',
+      '/api/auth/%61pi-key/list',
+    ]) {
+      for (const method of ['GET', 'POST'] as const) {
+        const res = await call(op, method, url, method === 'POST' ? body : undefined);
+        expect(res.statusCode, `${method} ${url}`).toBe(404);
+      }
+    }
+    expect((await db.select().from(users).where(eq(users.id, owner.id)))[0]?.role).not.toBe(
+      'operator',
+    );
   });
 });
 
@@ -217,6 +245,17 @@ describe('organizations', () => {
     expect(enter.json()).toMatchObject({ code: 'ORG_SUSPENDED' });
     // The reason is internal: the organization never sees it.
     expect(JSON.stringify((await get(owner, '/api/projects')).json())).not.toContain('chargeback');
+
+    // Data-subject rights outlive the suspension (docs/admin.md): export and deletion still work.
+    const exported = await post(owner, '/api/privacy/org/export');
+    expect(exported.statusCode, exported.body).toBe(202);
+    expect((await post(owner, '/api/privacy/user/export')).statusCode).toBe(202);
+    const deletion = await post(owner, '/api/privacy/org/deletion');
+    expect(deletion.statusCode, deletion.body).toBe(202);
+    expect(
+      (await post(owner, `/api/privacy/org/requests/${deletion.json().id}/cancel`)).statusCode,
+    ).toBe(200);
+    expect((await get(owner, '/api/privacy/org/requests')).statusCode).toBe(200);
 
     const [row] = await operatorRows(org.id, 'operator.org.suspended');
     expect(row).toMatchObject({ actorId: op.id, reason: 'chargeback fraud', target: org.id });
@@ -342,13 +381,34 @@ describe('view as user (impersonation)', () => {
       expect(res.statusCode, url).toBe(403);
       expect(res.json()).toMatchObject({ code: 'READ_ONLY' });
     }
+    // Main's privacy routes too: no export or deletion in the user's name (one shared guard).
+    const requests = async () =>
+      (await get(browser, '/api/privacy/user/requests')).json().length +
+      (await get(browser, '/api/privacy/org/requests')).json().length;
+    const before = await requests();
+    for (const url of [
+      '/api/privacy/user/export',
+      '/api/privacy/user/deletion',
+      '/api/privacy/org/export',
+      '/api/privacy/org/deletion',
+    ]) {
+      const res = await post(browser, url);
+      expect(res.statusCode, url).toBe(403);
+      expect(res.json(), url).toEqual({ error: readOnly });
+    }
+    expect(await requests()).toBe(before);
     // Not an operator while viewing as someone else, and no support identity in their name.
     expect((await get(browser, '/api/admin/me')).statusCode).toBe(403);
     expect((await get(browser, '/api/support/identity')).statusCode).toBe(403);
 
-    expect(await operatorRows(org.id, 'operator.impersonation.started')).toMatchObject([
-      { actorId: op.id, target: owner.id, reason: 'ticket 42: projects page empty' },
-    ]);
+    const [startRow] = await operatorRows(org.id, 'operator.impersonation.started');
+    expect(startRow).toMatchObject({
+      actorId: op.id,
+      target: owner.id,
+      reason: 'ticket 42: projects page empty',
+    });
+    // The end is on record from the start: no cleanup job needed when the session just expires.
+    expect(startRow?.expiresAt?.toISOString()).toBe(started.json().expiresAt);
 
     const stopped = await post(browser, '/api/impersonation/stop');
     expect(stopped.json()).toEqual({ userId: owner.id });
@@ -385,13 +445,24 @@ describe('the RLS exception is limited to the operator console', () => {
   it('nothing else switches roles or names the operator role', () => {
     const hits = sources
       .filter(([, src]) =>
-        /app_operator_read|OPERATOR_READ_ROLE|\bset\s+(local\s+)?role\b/i.test(src),
+        /app_operator_(read|audit)|OPERATOR_READ_ROLE|PLATFORM_AUDIT_ROLE|\bset\s+(local\s+)?role\b/i.test(
+          src,
+        ),
       )
       .map(([p]) => p);
     expect(hits.sort()).toEqual([
       'apps/api/src/db.ts',
       'packages/db/src/index.ts',
       'packages/db/src/migrate.ts',
+      'packages/db/src/schema.ts', // the platform_audit policy's role
+    ]);
+  });
+
+  it('only the console writes org-less audit rows (withPlatformAudit)', () => {
+    const callers = sources.filter(([, src]) => /withPlatformAudit\(/.test(src)).map(([p]) => p);
+    expect(callers.sort()).toEqual([
+      'apps/api/src/routes/admin-common.ts',
+      'packages/db/src/index.ts', // its definition
     ]);
   });
 });

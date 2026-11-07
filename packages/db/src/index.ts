@@ -46,3 +46,19 @@ export function withOperatorRead<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise
     return fn(tx);
   });
 }
+
+/**
+ * Role that alone may insert org-less audit rows (policy `platform_audit`), INSERT on audit_log
+ * only. The app role is a member without inheriting it, like OPERATOR_READ_ROLE.
+ */
+export const PLATFORM_AUDIT_ROLE = 'app_operator_audit';
+
+/**
+ * Switches the rest of transaction `tx` to PLATFORM_AUDIT_ROLE for an operator action on a user
+ * without organization (apps/api/src/routes/admin-common.ts, the only caller). Call it last: every
+ * later statement in `tx` runs as that role.
+ */
+export async function withPlatformAudit(tx: Tx, insert: () => Promise<unknown>) {
+  await tx.execute(sql.raw(`set local role ${PLATFORM_AUDIT_ROLE}`));
+  await insert();
+}

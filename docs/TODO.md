@@ -1,15 +1,17 @@
 # Known limitations / backlog
 
-- **Operator console: user-level audit rows are not atomic with the change**
-  (`apps/api/src/routes/admin-common.ts`, `auditUser`): sessions revoked, verification resent and
-  impersonation start/end are written after Better Auth acts, like the 2FA rows below. Same fix.
 - **Operator console: no Chatwoot link per user/organization** (docs/admin.md). The integration
   stores none (ADR 0013). If support wants one: read the contact by `identifier` (user id) through
   the Chatwoot API in the worker or API and link `/app/accounts/<id>/contacts/<contact id>`; verify
   the URL scheme against the deployed Chatwoot version first.
-- **Operator console: suspension does not stop work already queued** (webhook deliveries,
-  started workflows). Fix if needed: check `organization.suspended_at` in the worker activities
-  that call out (webhooks, LLM gateway) and skip with a logged reason.
+- **Operator console: a suspended org's owner who switched away cannot request its export/deletion**
+  (`apps/api/src/operator-guard.ts` blocks `organization/set-active` into a suspended org;
+  `/api/privacy/org/*` needs it active). Fix: let set-active into a suspended org through (every
+  tenant route still answers 403) or give the privacy org routes an explicit org id checked
+  against owner membership. Test in `apps/api/test/admin.test.ts`.
+- **Operator console: the app DB login can `SET ROLE app_operator_read` / `app_operator_audit`**
+  (ADR 0025): a SQL injection in the API could read every tenant or write org-less audit rows.
+  Fix if the risk matters: a separate login for the console (`OPERATOR_DATABASE_URL`).
 
 - **2FA/passkey audit rows are not atomic with the change** (`apps/api/src/mfa.ts`): written
   after Better Auth commits, so a crash in between loses the row. Fix if it matters: Better Auth
@@ -23,10 +25,6 @@
   from a `POST .../attachments/:id/complete` that HEADs the object, and hide/expire rows without it.
 - **osv-scanner ignore for `@opentelemetry/core` 1.x** expires 2027-02-01 (`osv-scanner.toml`).
   Remove it once `@temporalio/interceptors-opentelemetry` depends on OpenTelemetry 2.x.
-- **AI content retention is recorded, not enforced.** `ai_calls.content_expires_at` is set from
-  `AI_CONTENT_RETENTION_DAYS`, but nothing deletes the S3 objects. Fix: apply an S3 lifecycle
-  expiration rule to `AI_CONTENT_BUCKET` at deploy time (or a scheduled Temporal workflow that
-  deletes expired objects); keep the rows, which hold no content.
 - **AI calls export loads all rows in memory** (`apps/api/src/routes/ai-calls.ts`). Fine for
   thousands of rows; stream with a server-side cursor before orgs reach ~100k calls.
 - **`audit_log` is not append-only** for the app role, unlike `ai_calls`. Consider adding it
@@ -79,13 +77,11 @@
   not survive losing that host. Each deployment must set `BACKUP_S3_*` to another provider or
   region, store `BACKUP_ENCRYPTION_PASSPHRASE` off the server, and route the `backups` alerts
   (Alertmanager, see "Alert notifications" above).
-- **Backups: Chatwoot is not backed up.** The `support` profile runs its own Postgres
-  (`chatwoot-postgres`, `pgvector/pgvector`, volume `chatwoot-pgdata`) and keeps attachments in
-  the `chatwoot-storage` volume, so pgBackRest and the bucket copy (compose.backup.yaml) do not
-  reach customer conversations. Options: move Chatwoot's database onto the main Postgres server
-  (needs the pgvector extension in `infra/backup/Dockerfile` and the base image) so it is covered
-  automatically, or a second pgBackRest stanza for `chatwoot-postgres`; and switch Chatwoot's
-  `ACTIVE_STORAGE_SERVICE` to S3 with its bucket in `BACKUP_APP_BUCKETS`.
+- **Production SeaweedFS fits only two buckets.** `s3` in `compose.prod.yaml` (profile `s3`)
+  runs with SeaweedFS's default `-volume.max` (14 volume slots); each bucket takes 7, so a third
+  bucket (e.g. Chatwoot's or Langfuse's, if run there) gets HTTP 500 on its first upload. The
+  dev `s3` in `docker-compose.yml` sets `-volume.max=64`; do the same in production, sized to
+  the disk (`-master.volumeSizeLimitMB` caps each volume, default 30 GB).
 - **Backups: a second repository.** pgBackRest supports `repo2` (e.g. a second provider or
   object-locked bucket). Add `PGBACKREST_REPO2_*` to `compose.backup.yaml` if one off-site copy is
   not enough; the restore check would then also need a run per repository.
@@ -132,12 +128,6 @@
   `--settings`/env option if Claude Code adds one that skips memory with OAuth.
 - **Open owner decision: does the small single-server tier run Langfuse?** (ADR 0009). PostHog
   Cloud is the default; Langfuse costs about 1.9 GiB RAM measured (docs/STACK.md).
-- **Worker feature flags use PostHog's HTTP `/flags` API instead of the `posthog` SDK.** The SDK
-  depends on `distro` (Apache-2.0), whose metadata string "Apache License, Version 2.0" the
-  license gate does not map to `Apache-2.0`, and ADR 0005 forbids gate changes without a human.
-  Consequence: the worker has no local evaluation and sends no `$feature_flag_called` exposure
-  events (`services/worker-py/worker/flags.py`). Fix once approved: add the alias to `ALIASES` in
-  `scripts/license-check.mjs`, `uv add posthog`, and use `Posthog(...).evaluate_flags(...)`.
 - **Mailed links live in Temporal history.** `SendEmailWorkflow` gets the rendered mail, link
   included, as its argument (`apps/api/src/temporal.ts`), kept until the namespace retention
   drops it. Same trust boundary as Better Auth's `verification` table while Temporal runs on our
@@ -154,19 +144,6 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
-- **PII redaction with Microsoft Presidio: needs an ADR 0005 decision.** The support triage's
-  LLM output (`services/worker-py/worker/support.py` `scrub`), the feedback-to-issue hook
-  (`apps/api/src/routes/hooks.ts`) and the browser `track()` mask only emails (and UUIDs) with a
-  bounded regex. Presidio (MIT, `en_core_web_sm`) would also catch names, phones, cards, IBANs and
-  IPs, measured 2026-11-07 at ~165-200 MiB RSS for English (~360 MiB with a second language), but
-  `pnpm check:licenses` rejects 6 of its transitive packages: `numpy` (has a `Zlib` part), `regex`
-  (`CNRI-Python`), and `Jinja2`, `blis`, `requests-file`, `shellingham`, whose metadata strings
-  ("BSD License", "Apache 2.0", "ISC License") the gate does not map. The official
-  `mcr.microsoft.com/presidio-analyzer` image avoids the code gate but uses `en_core_web_lg`:
-  ~740 MiB RSS idle. Unblock: the owner adds `Zlib` and `CNRI-Python` to the allowlist and the
-  three strings as aliases (ADR 0005), then call Presidio in-process in the worker for
-  `support.py`, and from the API hook through an opt-in sidecar of the worker image (compose
-  profile `pii`) that fails closed. The browser keeps its regex (no Python there).
 - **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
   ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
   transaction (ADR 0019 "Alternatives").
@@ -176,6 +153,28 @@
 - **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.
+- **PostHog personless `$ai_generation` events may survive a user deletion.** The worker sends
+  them with `distinct_id` = user id and `$process_person_profile: false`
+  (`services/worker-py/worker/posthog.py`). `persons/bulk_delete` deletes the events of persons it
+  finds; for a user who never consented in the web there is no person, and PostHog documents no
+  event deletion by distinct id. Verify against a real project; if they remain, send these events
+  with `distinct_id = org:<orgId>` (the trace id still links feedback) or a per-call id.
+- **GA4 deletion covers only the requesting browser.** The web sends no user id to GA4, so
+  `submitUserDeletion` gets the client id of the browser the deletion was requested from
+  (`apps/web/src/lib/analytics.ts` `gaClientId`). Other browsers of the same person keep their
+  events until GA4's retention. Fix if needed: set GA4 `user_id` to a pseudonymous id after
+  consent and delete by `userId` (docs/privacy.md, "Per-tool support").
+- **GA4 has no per-user export.** The export README lists it as not supported; a BigQuery export
+  filtered by `user_pseudo_id` is the only route. Add it only if a deployment uses BigQuery export.
+- **Privacy tool adapters are unverified against live tools** (`services/worker-py/worker/privacy.py`):
+  they follow the vendor docs and source (docs/privacy.md, checked 2026-11-07) and are tested with
+  HTTP mocks only. Run one export and one deletion against a real PostHog, Langfuse, Chatwoot and
+  GA4 property once the owner has keys, and note the result in docs/privacy.md.
+- **Export ZIP is built in memory** (`build_export`): fine for exports up to a few hundred MB.
+  Stream to a temporary file and use multipart upload when organizations store more files.
+- **Every organization is visited for a user's export/deletion and the AI-content retention**
+  (`PrivacyActivities._org_ids`, one RLS transaction each). Fine for thousands of organizations;
+  for more, keep a per-user list of organizations they ever acted in, or batch by org.
 - **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
   (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
   site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`

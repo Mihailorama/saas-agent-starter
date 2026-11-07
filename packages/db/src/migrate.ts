@@ -2,7 +2,7 @@
 // role from DATABASE_URL. The app role is not superuser and has no BYPASSRLS,
 // so Row-Level Security is enforced for every query the API makes.
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { createDb, OPERATOR_READ_ROLE } from './index.ts';
+import { createDb, OPERATOR_READ_ROLE, PLATFORM_AUDIT_ROLE } from './index.ts';
 
 const ownerUrl = process.env.MIGRATION_DATABASE_URL;
 const appUrl = process.env.DATABASE_URL;
@@ -38,6 +38,10 @@ await run(
 if (!(await roleExists(OPERATOR_READ_ROLE))) {
   await run('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT', OPERATOR_READ_ROLE);
 }
+// The only role the `platform_audit` policy lets insert org-less audit rows (index.ts).
+if (!(await roleExists(PLATFORM_AUDIT_ROLE))) {
+  await run('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT', PLATFORM_AUDIT_ROLE);
+}
 await migrate(db, { migrationsFolder: new URL('../migrations', import.meta.url).pathname });
 await run('GRANT USAGE ON SCHEMA public TO %I', role);
 await run('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I', role);
@@ -51,7 +55,11 @@ await run('GRANT SELECT ON ALL TABLES IN SCHEMA public TO %I', OPERATOR_READ_ROL
 // role's NOINHERIT above). The API refuses to start if it inherits it anyway (apps/api/src/db.ts).
 const pg16 =
   Number((await pool.query('show server_version_num')).rows[0].server_version_num) >= 160000;
-await run(`GRANT %I TO %I${pg16 ? ' WITH INHERIT FALSE, SET TRUE' : ''}`, OPERATOR_READ_ROLE, role);
+for (const r of [OPERATOR_READ_ROLE, PLATFORM_AUDIT_ROLE]) {
+  await run(`GRANT %I TO %I${pg16 ? ' WITH INHERIT FALSE, SET TRUE' : ''}`, r, role);
+}
+await run('GRANT USAGE ON SCHEMA public TO %I', PLATFORM_AUDIT_ROLE);
+await run('GRANT INSERT ON audit_log TO %I', PLATFORM_AUDIT_ROLE);
 // Every table with RLS (all tenant tables, including ones added later) gets the operator policy:
 // SELECT for the operator role only. Tenant policies stay as they are.
 const { rows: rlsTables } = await pool.query<{ t: string }>(

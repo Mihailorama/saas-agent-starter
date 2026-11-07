@@ -4,9 +4,9 @@ Status: accepted
 
 ## Context
 
-There were no backups: losing the disk lost every customer's data. The app, Temporal, GlitchTip, Umami
-and Langfuse databases live on one Postgres server (Chatwoot runs its own); uploaded
-files and AI call content live in S3 buckets. A backup that has never been restored is a hope,
+There were no backups: losing the disk lost every customer's data. The app, Temporal, GlitchTip, Umami,
+Langfuse, Postiz and Chatwoot databases live on one Postgres server; uploaded files (including
+Chatwoot attachments) and AI call content live in S3 buckets. A backup that has never been restored is a hope,
 so restores must be tested automatically and their absence must page someone.
 
 ## Decision
@@ -17,8 +17,8 @@ so restores must be tested automatically and their absence must page someone.
   repository. It backs up the whole server, so every database on it is covered, including
   ones a future profile adds. Preferred over WAL-G for its built-in repository checks
   (`pgbackrest check`), delta restore and backup selection by target time. It runs cleanly here: `archive_command` must run inside the Postgres container,
-  so `compose.backup.yaml` builds the stock `postgres:17-alpine` plus Alpine's `pgbackrest`
-  package (`infra/backup/Dockerfile`), and a sidecar using the same image takes the backups from
+  so `compose.backup.yaml` builds the stack's Postgres image (`postgres:17-alpine` with
+  pgvector) with Alpine's `pgbackrest` package added (`infra/backup/Dockerfile`, target `backup`), and a sidecar using the same image takes the backups from
   the shared data volume and socket. One constraint: pgBackRest talks to S3 over TLS only, so
   the local stand-in for off-site storage (`backup-s3`, a second SeaweedFS) serves HTTPS with
   a self-signed certificate that the clients pin as their CA. TLS is always verified.
@@ -69,6 +69,5 @@ so restores must be tested automatically and their absence must page someone.
   pages after 10 minutes.
 - The restore check needs free disk space for one more copy of the database in the
   `restorecheck` volume, and CPU/IO while it replays WAL.
-- Not covered: Chatwoot (own Postgres and file volume; follow-up in docs/TODO.md), ClickHouse
-  (Langfuse traces), Redis (rate-limit counters, queues), Prometheus/Loki/Jaeger telemetry and
+- Not covered: ClickHouse (Langfuse traces), Redis (rate-limit counters, queues), Prometheus/Loki/Jaeger telemetry and
   unlogged tables. docs/backups.md lists them.

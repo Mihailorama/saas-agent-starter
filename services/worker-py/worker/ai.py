@@ -32,7 +32,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
 from worker import settings
-from worker.billing import Plans, check_llm_budget
+from worker.billing import Plans, check_llm_budget, ensure_org_active
 from worker.posthog import PostHogAi
 from worker.s3 import S3
 
@@ -172,6 +172,8 @@ class Gateway:
                 ' or mark it "unmetered": true'
             )
 
+        async with self.pool.acquire() as conn:
+            await ensure_org_active(conn, org_id)
         if self.plans is not None and price is not None:
             await check_llm_budget(self.pool, self.plans, org_id, price.currency)
 

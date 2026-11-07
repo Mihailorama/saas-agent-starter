@@ -39,17 +39,24 @@ a reason. Usage: [docs/admin.md](../admin.md).
   that organization in the same transaction; user actions one row in each of the user's
   organizations, so customers' admins see what was done to them. For users without organization
   `org_id` may be null (platform row, invisible to tenants; policy `platform_audit` admits only
-  `operator.*` rows). Viewing an organization's page writes `operator.org.viewed` there.
+  `operator.*` rows, and only for the NOLOGIN `app_operator_audit` role with INSERT on `audit_log`,
+  which the console switches to for that one insert). User-level actions and their rows run in one
+  transaction (`auditUser`). "View as" start rows carry `expires_at`, the time the session ends by
+  itself, so no cleanup job is needed for the end of the trail. Viewing an organization's page writes `operator.org.viewed` there.
 - **Suspension** is `organization.suspended_at` (+ an internal reason): `requireRole` and
   `requireScope` answer `403 organization suspended`; a Better Auth hook blocks entering or
-  changing the organization (`ORG_SUSPENDED`), leaving still works. The web shows a notice.
-  Nothing is deleted or revoked, so unsuspending restores everything.
+  changing the organization (`ORG_SUSPENDED`), leaving still works. The web shows a notice. The
+  worker checks it inside each activity (project workflows, `Gateway.call_llm`, webhook delivery),
+  so queued work stops too. Data export and deletion stay allowed (owner decision 2026-11-07:
+  data-subject rights do not end with a suspension). Nothing is deleted or revoked, so
+  unsuspending restores everything.
 - **Limit overrides** stay inside `config/plans.json`: seats/projects up to a plan's new optional
   `limitsMax` (stored in `organization.limit_overrides`, applied in `entitlements()`), the LLM
   spend limit up to `llmSpendMax` through the existing `subscriptions.llm_spend_limits` (same rule
   and same reader in the worker's gateway as the org admin's own setting).
 - **Impersonation is read-only, not "confirm each destructive action"**: every mutating request
-  of an impersonation session is refused, on our routes (`requireRole`) and Better Auth's (hook),
+  of an impersonation session is refused, on our routes (one Fastify hook for every mutating
+  `/api/*` request, plus `requireRole`) and Better Auth's (hook),
   except sign-out, switching organization and stopping. Reasons: what support needs is to see
   what the user sees; anything the operator changed would be recorded as the user's own action
   (`withTenant` audits the session's user), which a second confirmation would not fix; and a
@@ -76,12 +83,19 @@ a reason. Usage: [docs/admin.md](../admin.md).
 
 ## Consequences
 
-- Migration `0005_operator_admin`: nullable/defaulted columns only (expand-safe). `migrate.ts`
-  creates the role, grants and policies on every run; managed PostgreSQL must allow `CREATE ROLE`
+- **No feature flag** (owner decision, 2026-11-07): the console is exempt from the feature-flag
+  rule (AGENTS.md). It is gated by `OPERATOR_EMAILS` + TOTP + a fresh session, so it is off until
+  an operator is listed, and the template has no live users before 1.0.
+- Migration `0006_operator_admin`: nullable/defaulted columns and one policy (expand-only).
+  `migrate.ts` creates the roles, grants and policies on every run; managed PostgreSQL must allow `CREATE ROLE`
   for the migration owner (it already creates the app role).
 - The operator read role sees every column of tenant tables; the routes choose what to show
   (never key hashes, tokens, webhook secrets or query strings).
-- User-level audit rows are written after the change (as in mfa.ts), so a crash in between can
-  lose one.
+- **Remaining risk: the app DB login can `SET ROLE app_operator_read` (and
+  `app_operator_audit`).** Membership without inheritance keeps normal queries tenant-scoped, but
+  any SQL the app login runs may switch: a SQL injection anywhere in the API would read every
+  tenant's rows (read-only) or write org-less `operator.*` audit rows, instead of one tenant's.
+  Mitigations: parameterised queries only (AGENTS.md), a test that only `packages/db` and `db.ts`
+  name the roles. Removing it needs a separate DB login for the console (Alternatives).
 - Support conversations are not linked: the Chatwoot integration stores no per-user link
   (ADR 0013); operators search Chatwoot by email or user id.

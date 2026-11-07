@@ -64,6 +64,10 @@ const schema = z
       ),
     /** Outbound webhooks: largest JSON body publishEvent() accepts (the worker checks it too). */
     WEBHOOK_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().default(65_536),
+    /** Data-subject rights (docs/privacy.md): days a requested deletion waits, cancellable. */
+    PRIVACY_DELETION_GRACE_DAYS: z.coerce.number().min(0).default(14),
+    /** At most one data export per user or organization in this many hours. */
+    PRIVACY_EXPORT_INTERVAL_HOURS: z.coerce.number().min(0).default(24),
     /** Shown in authenticator apps (TOTP issuer) and passkey prompts (WebAuthn RP name). */
     APP_NAME: z.string().min(1).default('Workspace'),
     /** WebAuthn relying party: registrable domain, defaults to the BETTER_AUTH_URL host. */
@@ -88,6 +92,11 @@ const schema = z
     POSTHOG_HOST: z.union([z.url(), z.literal('')]).optional(),
     /** Optional project secret API key (feature_flag:read): local evaluation, no request per check. */
     POSTHOG_SECRET_KEY: z.string().optional(),
+    /**
+     * Presidio PII sidecar (compose profile `pii`), e.g. http://pii:8000. Set: survey answers are
+     * redacted there and the hook fails closed (503) when it is down. Empty: emails masked only.
+     */
+    PII_REDACT_URL: z.union([z.url(), z.literal('')]).optional(),
     GITHUB_TOKEN: z.string().optional(),
     /** owner/name of the repository that receives the issues. */
     GITHUB_REPO: z.string().optional(),

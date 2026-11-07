@@ -1,5 +1,5 @@
 {
-  "id": "001dd92c-e746-48a6-8fa9-936ac55abf34",
+  "id": "86263598-3330-43f9-b72d-3db02371b5af",
   "prevId": "ab7526a0-bdfb-49b3-a60c-87c7863a6f61",
   "version": "7",
   "dialect": "postgresql",
@@ -176,6 +176,36 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "ai_calls_content_expires_at_index": {
+          "name": "ai_calls_content_expires_at_index",
+          "columns": [
+            {
+              "expression": "content_expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ai_calls_actor_id_index": {
+          "name": "ai_calls_actor_id_index",
+          "columns": [
+            {
+              "expression": "actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -255,6 +285,12 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -341,7 +377,7 @@
           "name": "org_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "actor_id": {
           "name": "actor_id",
@@ -363,12 +399,6 @@
         },
         "ip": {
           "name": "ip",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reason": {
-          "name": "reason",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -431,18 +461,160 @@
           ],
           "using": "org_id = current_setting('app.org_id', true)",
           "withCheck": "org_id = current_setting('app.org_id', true)"
-        },
-        "platform_audit": {
-          "name": "platform_audit",
-          "as": "PERMISSIVE",
-          "for": "INSERT",
-          "to": [
-            "public"
-          ],
-          "withCheck": "org_id is null and action like 'operator.%'"
         }
       },
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.privacy_requests": {
+      "name": "privacy_requests",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_type": {
+          "name": "subject_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject_id": {
+          "name": "subject_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "execute_after": {
+          "name": "execute_after",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "result_key": {
+          "name": "result_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "report": {
+          "name": "report",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "privacy_requests_subject_type_subject_id_created_at_index": {
+          "name": "privacy_requests_subject_type_subject_id_created_at_index",
+          "columns": [
+            {
+              "expression": "subject_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "privacy_requests_open_deletion": {
+          "name": "privacy_requests_open_deletion",
+          "columns": [
+            {
+              "expression": "subject_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "subject_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"privacy_requests\".\"kind\" = 'deletion' and \"privacy_requests\".\"status\" in ('scheduled', 'running')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "privacy_requests_kind": {
+          "name": "privacy_requests_kind",
+          "value": "\"privacy_requests\".\"kind\" in ('export', 'deletion')"
+        },
+        "privacy_requests_subject_type": {
+          "name": "privacy_requests_subject_type",
+          "value": "\"privacy_requests\".\"subject_type\" in ('user', 'org')"
+        },
+        "privacy_requests_status": {
+          "name": "privacy_requests_status",
+          "value": "\"privacy_requests\".\"status\" in ('scheduled', 'running', 'completed', 'failed', 'cancelled')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.projects": {
@@ -1726,24 +1898,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "suspended_at": {
-          "name": "suspended_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "suspend_reason": {
-          "name": "suspend_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "limit_overrides": {
-          "name": "limit_overrides",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -1945,12 +2099,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "impersonated_by": {
-          "name": "impersonated_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -2132,31 +2280,6 @@
           "primaryKey": false,
           "notNull": false,
           "default": false
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "banned": {
-          "name": "banned",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "ban_reason": {
-          "name": "ban_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ban_expires": {
-          "name": "ban_expires",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         },
         "created_at": {
           "name": "created_at",

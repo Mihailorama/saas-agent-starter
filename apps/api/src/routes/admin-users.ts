@@ -130,6 +130,7 @@ export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
                 action: z.string(),
                 actorEmail: z.string().nullable(),
                 reason: z.string().nullable(),
+                expiresAt: z.string().nullable(),
                 createdAt: z.string(),
               }),
             ),
@@ -184,6 +185,7 @@ export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
             action: auditLog.action,
             actorEmail: actor,
             reason: auditLog.reason,
+            expiresAt: auditLog.expiresAt,
             createdAt: auditLog.createdAt,
           })
           .from(auditLog)
@@ -214,7 +216,11 @@ export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
           createdAt: iso(s.createdAt)!,
           expiresAt: iso(s.expiresAt)!,
         })),
-        operatorActions: actions.map((a) => ({ ...a, createdAt: iso(a.createdAt)! })),
+        operatorActions: actions.map((a) => ({
+          ...a,
+          expiresAt: iso(a.expiresAt),
+          createdAt: iso(a.createdAt)!,
+        })),
       };
     },
   );
@@ -238,9 +244,10 @@ export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
     },
     async (req, reply) => {
       const u = await target(req.params.id);
-      const ctx = await auth.$context;
-      await ctx.internalAdapter.deleteUserSessions(u.id);
-      await auditUser(req, u.id, 'user.sessions_revoked', req.body.reason);
+      // In the audit transaction (no session cache in front of the table: auth.ts).
+      await auditUser(req, u.id, 'user.sessions_revoked', req.body.reason, (tx) =>
+        tx.delete(session).where(eq(session.userId, u.id)),
+      );
       return reply.code(204).send(null);
     },
   );
@@ -259,10 +266,9 @@ export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const u = await target(req.params.id);
       if (u.emailVerified) throw httpError(409, 'the email address is already verified');
-      await authCall(
-        auth.api.sendVerificationEmail({ body: { email: u.email, callbackURL: '/' } }),
+      await auditUser(req, u.id, 'user.verification_resent', req.body.reason, () =>
+        authCall(auth.api.sendVerificationEmail({ body: { email: u.email, callbackURL: '/' } })),
       );
-      await auditUser(req, u.id, 'user.verification_resent', req.body.reason);
       return reply.code(204).send(null);
     },
   );
@@ -299,22 +305,40 @@ export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
           .where(and(eq(member.userId, u.id), eq(member.organizationId, req.body.orgId)));
         if (!m) throw httpError(400, 'the user is not a member of this organization');
       }
-      const { headers, response } = await authCall(
-        auth.api.impersonateUser({
-          body: { userId: u.id },
-          headers: fromNodeHeaders(req.headers),
-          returnHeaders: true,
-        }),
-      );
-      if (req.body.orgId) {
-        await db
-          .update(session)
-          .set({ activeOrganizationId: req.body.orgId })
-          .where(eq(session.id, response.session.id));
+      let created: string | undefined;
+      try {
+        const { headers, response } = await auditUser(
+          req,
+          u.id,
+          'impersonation.started',
+          req.body.reason,
+          async (tx) => {
+            const res = await authCall(
+              auth.api.impersonateUser({
+                body: { userId: u.id },
+                headers: fromNodeHeaders(req.headers),
+                returnHeaders: true,
+              }),
+            );
+            created = res.response.session.id;
+            if (req.body.orgId) {
+              await tx
+                .update(session)
+                .set({ activeOrganizationId: req.body.orgId })
+                .where(eq(session.id, created));
+            }
+            return res;
+          },
+          // The "ended" time unless stopped earlier (then an impersonation.ended row follows).
+          (res) => new Date(res.response.session.expiresAt),
+        );
+        reply.header('set-cookie', headers.getSetCookie());
+        return { expiresAt: iso(response.session.expiresAt)! };
+      } catch (err) {
+        // Better Auth committed the session on its own connection: no audit row, no session.
+        if (created) await db.delete(session).where(eq(session.id, created));
+        throw err;
       }
-      await auditUser(req, u.id, 'impersonation.started', req.body.reason);
-      reply.header('set-cookie', headers.getSetCookie());
-      return { expiresAt: iso(response.session.expiresAt)! };
     },
   );
 };

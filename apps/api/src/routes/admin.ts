@@ -42,9 +42,15 @@ export const impersonationRoutes: FastifyPluginAsyncZod = async (app) => {
       const s = await auth.api.getSession({ headers });
       const operatorId = s?.session.impersonatedBy;
       if (!s || !operatorId) throw httpError(400, 'not viewing as a user');
-      const res = await authCall(auth.api.stopImpersonating({ headers, returnHeaders: true }));
       req.operator = { id: operatorId, email: '' };
-      await auditUser(req, s.user.id, 'impersonation.ended', 'stopped by the operator');
+      // If Better Auth fails, no row; if a row fails, the started row's expiresAt still bounds it.
+      const res = await auditUser(
+        req,
+        s.user.id,
+        'impersonation.ended',
+        'stopped by the operator',
+        () => authCall(auth.api.stopImpersonating({ headers, returnHeaders: true })),
+      );
       reply.header('set-cookie', res.headers.getSetCookie());
       return { userId: s.user.id };
     },

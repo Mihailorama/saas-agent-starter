@@ -1,6 +1,7 @@
 """Billing in the worker (docs/billing.md, docs/adr/0019-billing.md).
 
 - `Plans`: config/plans.json, the same file the API reads (apps/api/src/billing/plans.ts).
+- `ensure_org_active`: refuses work of an org an operator suspended (activities, the gateway).
 - `check_llm_budget`: the LLM spend limit, called by `Gateway.call_llm` before every call.
 - `BillingActivities.apply_billing_event`: writes a normalized provider event (from the API's
   webhook route, via BillingEventWorkflow) to `subscriptions`. Idempotent: older events never
@@ -121,6 +122,24 @@ class Budget:
 class SpendLimitExceeded(ApplicationError):
     def __init__(self, message: str) -> None:
         super().__init__(message, type="SpendLimitExceeded", non_retryable=True)
+
+
+class OrgSuspended(ApplicationError):
+    """The organization is suspended by an operator (docs/admin.md): its work stops."""
+
+    def __init__(self, org_id: str) -> None:
+        super().__init__(
+            f"organization {org_id} is suspended", type="OrgSuspended", non_retryable=True
+        )
+
+
+async def ensure_org_active(conn: "asyncpg.Connection | PoolConnectionProxy", org_id: str) -> None:
+    """Raises OrgSuspended when an operator suspended the org. Checked inside each activity (not
+    only when a workflow starts), so already-queued work stops too. `organization` has no RLS."""
+    if await conn.fetchval(
+        "select 1 from organization where id = $1 and suspended_at is not null", org_id
+    ):
+        raise OrgSuspended(org_id)
 
 
 async def llm_budget(

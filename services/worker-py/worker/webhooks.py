@@ -46,6 +46,7 @@ PERMANENT = {
     "invalid_url",
     "blocked_address",
     "secret_unreadable",
+    "org_suspended",  # an operator suspended the org (docs/admin.md); a replay resends it later
 }
 
 
@@ -159,7 +160,9 @@ class WebhookActivities:
             row = await conn.fetchrow(
                 "select d.status, e.id::text as event_id, e.payload, ep.id::text as endpoint_id,"
                 " ep.url, ep.enabled,"
-                " ep.secret, ep.previous_secret, ep.previous_secret_expires_at"
+                " ep.secret, ep.previous_secret, ep.previous_secret_expires_at,"
+                " (select o.suspended_at is not null from organization o where o.id = ep.org_id)"
+                " as org_suspended"
                 " from webhook_deliveries d"
                 " join webhook_events e on e.id = d.event_id"
                 " join webhook_endpoints ep on ep.id = d.endpoint_id"
@@ -201,6 +204,8 @@ class WebhookActivities:
         return status
 
     async def _send(self, row: asyncpg.Record) -> tuple[int | None, str | None]:
+        if row["org_suspended"]:
+            return None, "org_suspended"
         if not row["enabled"]:
             return None, "endpoint_disabled"
         body: str = row["payload"]
@@ -287,7 +292,7 @@ class WebhookActivities:
                 status,
                 d.deliveryId,
             )
-            if final and error != "endpoint_disabled":
+            if final and error not in ("endpoint_disabled", "org_suspended"):
                 await self._track_endpoint(conn, d.orgId, endpoint_id, status, status_code)
         return True
 

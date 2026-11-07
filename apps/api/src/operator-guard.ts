@@ -61,6 +61,17 @@ export const operatorGuard = () =>
     id: 'operator-guard',
     hooks: {
       before: [
+        // The admin and API key plugins' HTTP endpoints are closed (app.ts routes them to 404).
+        // This holds for any URL spelling Better Auth's router resolves to them (`//`, %-encoding):
+        // ctx.path is the matched endpoint. Server-side auth.api calls carry no request.
+        {
+          matcher: (ctx) =>
+            Boolean(ctx.request) &&
+            (ctx.path?.startsWith('/admin/') || ctx.path?.startsWith('/api-key/')) === true,
+          handler: createAuthMiddleware(async () => {
+            throw new APIError('NOT_FOUND', { message: 'not found' });
+          }),
+        },
         {
           matcher: (ctx) => ctx.request?.method === 'POST',
           handler: createAuthMiddleware(async (ctx) => {

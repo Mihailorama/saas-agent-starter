@@ -1,6 +1,6 @@
-import { auditLog, member, type Tx, user, withOrg } from '@app/db';
+import { auditLog, member, type Tx, user, withPlatformAudit } from '@app/db';
 import { fromNodeHeaders } from 'better-auth/node';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
@@ -61,6 +61,7 @@ export function audit(
   target: string,
   reason: string | null,
   createdAt = new Date(),
+  expiresAt: Date | null = null,
 ) {
   return tx.insert(auditLog).values({
     orgId,
@@ -70,31 +71,44 @@ export function audit(
     reason,
     ip: req.ip,
     createdAt,
+    expiresAt,
   });
 }
 
 /**
- * User-level actions: one row in each of the user's organizations (same timestamp), so their
- * admins see it; a platform row (org_id null, operators only) for a user without organization.
- * After the change, like mfa.ts: a crash in between loses the row, never the other way round.
+ * A user-level action and its audit rows in ONE transaction: `change` runs first, then one row in
+ * each of the user's organizations (same timestamp, so their admins see it), or a platform row
+ * (org_id null, operators only) for a user without organization. If any row fails, the change in
+ * `tx` rolls back; a change outside the database (mail, Better Auth's own connection) runs inside
+ * the transaction too, so a failed change writes no row. `expiresAt`: when a time-boxed action
+ * ends by itself (impersonation), so the trail is complete without a cleanup job.
  */
-export async function auditUser(
+export async function auditUser<T>(
   req: FastifyRequest,
   userId: string,
   action: string,
   reason: string,
-) {
+  change: (tx: Tx) => Promise<T>,
+  expiresAt: (result: T) => Date | null = () => null,
+): Promise<T> {
   const at = new Date();
-  const orgs = await db
-    .select({ orgId: member.organizationId })
-    .from(member)
-    .where(eq(member.userId, userId));
-  if (!orgs.length) {
-    await db.transaction((tx) => audit(tx, req, null, action, userId, reason, at));
-  }
-  for (const { orgId } of orgs) {
-    await withOrg(db, orgId, (tx) => audit(tx, req, orgId, action, userId, reason, at));
-  }
+  return db.transaction(async (tx) => {
+    const result = await change(tx);
+    const orgs = await tx
+      .select({ orgId: member.organizationId })
+      .from(member)
+      .where(eq(member.userId, userId));
+    for (const { orgId } of orgs) {
+      await tx.execute(sql`select set_config('app.org_id', ${orgId}, true)`);
+      await audit(tx, req, orgId, action, userId, reason, at, expiresAt(result));
+    }
+    if (!orgs.length) {
+      await withPlatformAudit(tx, () =>
+        audit(tx, req, null, action, userId, reason, at, expiresAt(result)),
+      );
+    }
+    return result;
+  });
 }
 
 /** Better Auth APIErrors carry a statusCode; pass 4xx through. */
