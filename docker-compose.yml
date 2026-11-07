@@ -20,6 +20,8 @@ x-app-env: &app-env
   S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT:-8333}
   S3_ACCESS_KEY_ID: local-dev-access-key
   S3_SECRET_ACCESS_KEY: local-dev-secret-key
+  # Encrypts webhook signing secrets at rest; API and worker need the same keys (docs/public-api.md).
+  WEBHOOK_ENCRYPTION_KEYS: ${WEBHOOK_ENCRYPTION_KEYS:-local-dev:change-me-local-dev-webhook-encryption-key}
 
 services:
   postgres:

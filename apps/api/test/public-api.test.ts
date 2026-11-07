@@ -286,24 +286,62 @@ describe('webhooks', () => {
     expect((await replayRun.describe()).type).toBe('WebhookEventWorkflow');
     await replayRun.terminate('test: no worker');
 
-    const revealed = (
-      await call(owner, 'GET', `/api/webhooks/endpoints/${endpoint.id}/secret`)
-    ).json();
-    expect(revealed.secret).toBe(secret);
+    // Secrets are encrypted at rest and never readable through the API again.
+    const load = async () =>
+      (
+        await withOrg(db, org, (tx) =>
+          tx.select().from(webhookEndpoints).where(eq(webhookEndpoints.id, endpoint.id)),
+        )
+      )[0]!;
+    const noPlaintext = (column: string | null, plain: string) => {
+      expect(column).toMatch(/^v1:local-dev:[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$/);
+      expect(column).not.toContain(plain.slice('whsec_'.length));
+    };
+    const before = await load();
+    noPlaintext(before.secret, secret);
+    expect(
+      (await call(owner, 'GET', `/api/webhooks/endpoints/${endpoint.id}/secret`)).statusCode,
+    ).toBe(404);
     const rotated = (
       await call(owner, 'POST', `/api/webhooks/endpoints/${endpoint.id}/rotate-secret`)
     ).json();
+    expect(rotated.secret).toMatch(/^whsec_/);
     expect(rotated.secret).not.toBe(secret);
-    const [stored] = await withOrg(db, org, (tx) =>
-      tx.select().from(webhookEndpoints).where(eq(webhookEndpoints.id, endpoint.id)),
-    );
-    expect(stored).toMatchObject({ secret: rotated.secret, previousSecret: secret });
-    expect(stored!.previousSecretExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+    const stored = await load();
+    noPlaintext(stored.secret, rotated.secret);
+    expect(stored.previousSecret).toBe(before.secret); // still encrypted, still signs for 24 h
+    expect(stored.previousSecretExpiresAt!.getTime()).toBeGreaterThan(Date.now());
 
     const patched = await call(owner, 'PATCH', `/api/webhooks/endpoints/${endpoint.id}`, {
       enabled: false,
     });
-    expect(patched.json()).toMatchObject({ enabled: false, eventTypes: ['project.created'] });
+    expect(patched.json()).toMatchObject({
+      enabled: false,
+      disabledReason: 'manual',
+      eventTypes: ['project.created'],
+    });
+    // The worker disabled it (410 or too many failures): re-enabling clears that state.
+    await withOrg(db, org, (tx) =>
+      tx
+        .update(webhookEndpoints)
+        .set({ disabledReason: 'gone', consecutiveFailures: 7 })
+        .where(eq(webhookEndpoints.id, endpoint.id)),
+    );
+    const listed = (await call(owner, 'GET', '/api/webhooks/endpoints')).json();
+    expect(listed.find((e: { id: string }) => e.id === endpoint.id)).toMatchObject({
+      id: endpoint.id,
+      disabledReason: 'gone',
+      consecutiveFailures: 7,
+    });
+    const reenabled = await call(owner, 'PATCH', `/api/webhooks/endpoints/${endpoint.id}`, {
+      enabled: true,
+    });
+    expect(reenabled.json()).toMatchObject({
+      enabled: true,
+      disabledReason: null,
+      disabledAt: null,
+      consecutiveFailures: 0,
+    });
     expect((await call(owner, 'DELETE', `/api/webhooks/endpoints/${endpoint.id}`)).statusCode).toBe(
       204,
     );
@@ -330,9 +368,6 @@ describe('webhooks', () => {
     expect((await call(member, 'GET', '/api/webhooks/endpoints')).statusCode).toBe(403);
     expect((await call(b.owner, 'GET', '/api/webhooks/endpoints')).json()).toEqual([]);
     expect(
-      (await call(b.owner, 'GET', `/api/webhooks/endpoints/${endpoint.id}/secret`)).statusCode,
-    ).toBe(404);
-    expect(
       (await call(b.owner, 'POST', `/api/webhooks/endpoints/${endpoint.id}/rotate-secret`))
         .statusCode,
     ).toBe(404);
@@ -344,7 +379,8 @@ describe('webhooks', () => {
         .statusCode,
     ).toBe(403);
     expect(
-      (await withKey(key, 'GET', `/api/webhooks/endpoints/${endpoint.id}/secret`)).statusCode,
+      (await withKey(key, 'POST', `/api/webhooks/endpoints/${endpoint.id}/rotate-secret`))
+        .statusCode,
     ).toBe(403);
   });
 });

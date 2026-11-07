@@ -1,5 +1,5 @@
 {
-  "id": "d73a1437-85a7-4f15-b2e6-3dee512be325",
+  "id": "2a32187f-a71d-4147-a28c-fb890043a71a",
   "prevId": "04759e37-e10a-4c33-9c11-316aa3649e60",
   "version": "7",
   "dialect": "postgresql",
@@ -890,6 +890,25 @@
           "notNull": true,
           "default": true
         },
+        "disabled_reason": {
+          "name": "disabled_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "disabled_at": {
+          "name": "disabled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "consecutive_failures": {
+          "name": "consecutive_failures",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "secret": {
           "name": "secret",
           "type": "text",
@@ -962,7 +981,12 @@
           "withCheck": "org_id = current_setting('app.org_id', true)"
         }
       },
-      "checkConstraints": {},
+      "checkConstraints": {
+        "webhook_endpoints_disabled_reason": {
+          "name": "webhook_endpoints_disabled_reason",
+          "value": "\"webhook_endpoints\".\"disabled_reason\" in ('manual', 'gone', 'failures')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.webhook_events": {

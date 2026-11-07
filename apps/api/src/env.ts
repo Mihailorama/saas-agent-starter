@@ -42,6 +42,20 @@ const schema = z
     SENTRY_DSN: z.union([z.url(), z.literal('')]).optional(),
     /** Public API: requests per minute per API key (Redis, shared across replicas). */
     API_KEY_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(600),
+    /**
+     * Keys that encrypt webhook signing secrets at rest: `id:secret,id:secret` (secret >= 32
+     * chars, e.g. `openssl rand -base64 32`). The first one encrypts; the worker decrypts with
+     * any of them and re-encrypts old rows with the first (docs/public-api.md, key rotation).
+     */
+    WEBHOOK_ENCRYPTION_KEYS: z
+      .string()
+      .min(1)
+      .transform((s) => s.split(',').map((k) => k.trim()))
+      .pipe(
+        z
+          .array(z.string().regex(/^[A-Za-z0-9_-]{1,32}:.{32,}$/, 'expected id:secret (32+ chars)'))
+          .min(1),
+      ),
     /** Outbound webhooks: largest JSON body publishEvent() accepts (the worker checks it too). */
     WEBHOOK_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().default(65_536),
     OIDC_ISSUER: z.url().optional(),
@@ -61,6 +75,14 @@ const schema = z
     message: 'BETTER_AUTH_SECRET still has the example value',
     path: ['BETTER_AUTH_SECRET'],
   })
+  .refine(
+    (e) =>
+      e.NODE_ENV !== 'production' || !e.WEBHOOK_ENCRYPTION_KEYS.some((k) => /change-me/.test(k)),
+    {
+      message: 'WEBHOOK_ENCRYPTION_KEYS still has the example value',
+      path: ['WEBHOOK_ENCRYPTION_KEYS'],
+    },
+  )
   .refine(
     (e) => e.NODE_ENV !== 'production' || !e.POSTHOG_WEBHOOK_SECRET?.startsWith('local-dev'),
     {

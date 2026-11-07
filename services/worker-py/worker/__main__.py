@@ -22,8 +22,13 @@ from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.s3 import S3
 from worker.text import backend
-from worker.webhooks import WebhookActivities
-from worker.workflows import ProjectCreatedWorkflow, WebhookEventWorkflow
+from worker.webhooks import WebhookActivities, parse_keys
+from worker.workflows import (
+    ProjectCreatedWorkflow,
+    WebhookEventWorkflow,
+    WebhookMaintenanceWorkflow,
+    ensure_maintenance_schedule,
+)
 
 log = logging.getLogger("worker")
 
@@ -79,8 +84,12 @@ async def main() -> None:
     webhooks = WebhookActivities(
         pool,
         allowed_networks=[ip_network(c) for c in settings.WEBHOOK_ALLOWED_CIDRS],
+        encryption_keys=parse_keys(settings.WEBHOOK_ENCRYPTION_KEYS),
         max_payload_bytes=settings.WEBHOOK_MAX_PAYLOAD_BYTES,
+        disable_after_failures=settings.WEBHOOK_DISABLE_AFTER_FAILURES,
+        retention_days=settings.WEBHOOK_RETENTION_DAYS,
     )
+    await ensure_maintenance_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -88,11 +97,13 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_TASK_QUEUE,
-        workflows=[ProjectCreatedWorkflow, WebhookEventWorkflow],
+        workflows=[ProjectCreatedWorkflow, WebhookEventWorkflow, WebhookMaintenanceWorkflow],
         activities=[
             activities.fingerprint_project,
             activities.summarize_project,
             webhooks.deliver_webhook,
+            webhooks.prune_webhooks,
+            webhooks.reencrypt_webhook_secrets,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],

@@ -55,3 +55,9 @@ WEBHOOK_ALLOWED_CIDRS = [
     c.strip() for c in os.environ.get("WEBHOOK_ALLOWED_CIDRS", "").split(",") if c.strip()
 ]
 WEBHOOK_MAX_PAYLOAD_BYTES = int(os.environ.get("WEBHOOK_MAX_PAYLOAD_BYTES", "65536"))
+# Same value as the API's: `id:secret,...`, first one active (worker.webhooks.parse_keys).
+WEBHOOK_ENCRYPTION_KEYS = os.environ.get("WEBHOOK_ENCRYPTION_KEYS", "")
+# Disable an endpoint after this many failed deliveries in a row (0 = never); 410 disables at once.
+WEBHOOK_DISABLE_AFTER_FAILURES = int(os.environ.get("WEBHOOK_DISABLE_AFTER_FAILURES", "5"))
+# Daily schedule deletes webhook events and attempts older than this (0 = keep forever).
+WEBHOOK_RETENTION_DAYS = int(os.environ.get("WEBHOOK_RETENTION_DAYS", "30"))

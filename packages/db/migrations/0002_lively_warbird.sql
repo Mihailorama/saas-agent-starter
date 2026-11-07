@@ -30,10 +30,14 @@ CREATE TABLE "webhook_endpoints" (
 	"description" text,
 	"event_types" text[] NOT NULL,
 	"enabled" boolean DEFAULT true NOT NULL,
+	"disabled_reason" text,
+	"disabled_at" timestamp with time zone,
+	"consecutive_failures" integer DEFAULT 0 NOT NULL,
 	"secret" text NOT NULL,
 	"previous_secret" text,
 	"previous_secret_expires_at" timestamp with time zone,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "webhook_endpoints_disabled_reason" CHECK ("webhook_endpoints"."disabled_reason" in ('manual', 'gone', 'failures'))
 );
 --> statement-breakpoint
 ALTER TABLE "webhook_endpoints" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint

@@ -1,7 +1,18 @@
 import asyncio
+import contextlib
 from datetime import timedelta
 
 from temporalio import workflow
+from temporalio.client import (
+    Client,
+    Schedule,
+    ScheduleActionStartWorkflow,
+    ScheduleAlreadyRunningError,
+    ScheduleIntervalSpec,
+    ScheduleOverlapPolicy,
+    SchedulePolicy,
+    ScheduleSpec,
+)
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
@@ -57,3 +68,41 @@ class WebhookEventWorkflow:
                 )
             )
         )
+
+
+@workflow.defn(name="WebhookMaintenanceWorkflow")
+class WebhookMaintenanceWorkflow:
+    """Daily (Temporal Schedule `webhook-maintenance`): retention, then re-encryption of secrets
+    still under an older WEBHOOK_ENCRYPTION_KEYS entry."""
+
+    @workflow.run
+    async def run(self) -> dict[str, int]:
+        timeout, retry = timedelta(minutes=30), RetryPolicy(maximum_attempts=3)
+        pruned = await workflow.execute_activity_method(
+            WebhookActivities.prune_webhooks, start_to_close_timeout=timeout, retry_policy=retry
+        )
+        reencrypted = await workflow.execute_activity_method(
+            WebhookActivities.reencrypt_webhook_secrets,
+            start_to_close_timeout=timeout,
+            retry_policy=retry,
+        )
+        return {"pruned": pruned, "reencrypted": reencrypted}
+
+
+MAINTENANCE_SCHEDULE_ID = "webhook-maintenance"
+
+
+async def ensure_maintenance_schedule(
+    client: Client, task_queue: str, schedule_id: str = MAINTENANCE_SCHEDULE_ID
+) -> None:
+    """Creates the daily maintenance schedule once; later worker starts leave it as it is
+    (edit or pause it in the Temporal UI). Settings are read by the activities at run time."""
+    schedule = Schedule(
+        action=ScheduleActionStartWorkflow(
+            WebhookMaintenanceWorkflow.run, id=schedule_id, task_queue=task_queue
+        ),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(days=1))]),
+        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+    )
+    with contextlib.suppress(ScheduleAlreadyRunningError):
+        await client.create_schedule(schedule_id, schedule)

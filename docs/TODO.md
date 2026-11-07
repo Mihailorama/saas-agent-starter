@@ -64,21 +64,9 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
-- **Webhook endpoint secrets are stored in plaintext** (`webhook_endpoints.secret`, under RLS):
-  the worker needs them to sign, so they cannot be hashed. A database dump lets someone forge
-  webhooks to customers. Fix: encrypt them (AES-256-GCM) with a key from the environment in
-  `apps/api/src/routes/webhooks.ts` and decrypt in `services/worker-py/worker/webhooks.py`
-  (needs a vetted crypto dependency in the worker, through the license gate). ADR 0018.
-- **Webhook retention.** `webhook_events` and `webhook_attempts` grow without bound. Fix: a
-  scheduled Temporal workflow that deletes events (cascading to deliveries and attempts) older
-  than a configurable number of days, e.g. `WEBHOOK_RETENTION_DAYS=30`.
 - **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.
-- **Failing webhook endpoints are never disabled automatically.** Standard Webhooks suggests
-  disabling an endpoint after repeated failures or a `410 Gone`; today it keeps retrying every
-  event. Fix: in `worker/webhooks.py`, disable the endpoint after N consecutive failed deliveries
-  or on 410, and show it in Settings -> Webhooks.
 - **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.

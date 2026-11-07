@@ -52,7 +52,8 @@ packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
-  worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log
+  worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log,
+                      secret decryption, auto-disable, retention (daily Temporal Schedule)
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),

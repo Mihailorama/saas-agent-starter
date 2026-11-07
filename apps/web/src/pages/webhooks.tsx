@@ -41,6 +41,9 @@ type Endpoint = {
   description: string | null;
   eventTypes: string[];
   enabled: boolean;
+  disabledReason: 'manual' | 'gone' | 'failures' | null;
+  disabledAt: string | null;
+  consecutiveFailures: number;
   createdAt: string;
 };
 type DeliveryStatus = 'pending' | 'succeeded' | 'failed';
@@ -67,6 +70,11 @@ type DeliveryDetail = Delivery & { payload: unknown; attemptLog: Attempt[] };
 const PAGE = 25;
 const dateTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+/** Why the worker turned an endpoint off (null/manual: an admin did). */
+const AUTO_DISABLED = {
+  gone: 'it answered 410 Gone',
+  failures: 'too many deliveries in a row failed',
+} as const;
 const STATUS_VARIANT = {
   succeeded: 'secondary',
   pending: 'outline',
@@ -271,13 +279,9 @@ export function WebhooksPage() {
     },
     onError: (err) => toast.error(err.message),
   });
-  const reveal = useMutation({
-    mutationFn: ({ id, rotate }: { id: string; rotate: boolean }) =>
-      rotate
-        ? api<{ secret: string }>(`/api/webhooks/endpoints/${id}/rotate-secret`, {
-            method: 'POST',
-          })
-        : api<{ secret: string }>(`/api/webhooks/endpoints/${id}/secret`),
+  const rotate = useMutation({
+    mutationFn: (id: string) =>
+      api<{ secret: string }>(`/api/webhooks/endpoints/${id}/rotate-secret`, { method: 'POST' }),
     onSuccess: ({ secret }) => setSecret(secret),
     onError: (err) => toast.error(err.message),
   });
@@ -290,6 +294,10 @@ export function WebhooksPage() {
     onError: (err) => toast.error(err.message),
   });
   const urlOf = (id: string) => endpoints.data?.find((e) => e.id === id)?.url ?? id;
+  const autoDisabled = endpoints.data?.filter(
+    (e): e is Endpoint & { disabledReason: keyof typeof AUTO_DISABLED } =>
+      !e.enabled && (e.disabledReason === 'gone' || e.disabledReason === 'failures'),
+  );
   const total = deliveries.data?.total ?? 0;
 
   return (
@@ -309,6 +317,26 @@ export function WebhooksPage() {
           <Plus className="size-4" /> Add endpoint
         </Button>
       </div>
+
+      {autoDisabled?.map((e) => (
+        <Alert key={e.id} variant="destructive" role="status" aria-label="Endpoint disabled">
+          <AlertTitle>Endpoint disabled: {e.url}</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-4">
+            <span>
+              We stopped sending to it {e.disabledAt && `on ${dateTime(e.disabledAt)} `}because{' '}
+              {AUTO_DISABLED[e.disabledReason]}. New events are not delivered until you enable it
+              again.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => update.mutate({ id: e.id, enabled: true })}
+            >
+              Re-enable
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ))}
 
       {endpoints.isError ? (
         <Alert variant="destructive">
@@ -364,6 +392,11 @@ export function WebhooksPage() {
                     <Badge variant={e.enabled ? 'outline' : 'destructive'}>
                       {e.enabled ? 'Enabled' : 'Disabled'}
                     </Badge>
+                    {e.enabled && e.consecutiveFailures > 0 && (
+                      <span className="block text-xs text-muted-foreground">
+                        {e.consecutiveFailures} failed in a row
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
@@ -373,14 +406,7 @@ export function WebhooksPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onSelect={() => reveal.mutate({ id: e.id, rotate: false })}
-                        >
-                          Show signing secret
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onSelect={() => reveal.mutate({ id: e.id, rotate: true })}
-                        >
+                        <DropdownMenuItem onSelect={() => rotate.mutate(e.id)}>
                           Rotate secret
                         </DropdownMenuItem>
                         <DropdownMenuItem
@@ -499,7 +525,7 @@ export function WebhooksPage() {
       <NewEndpointDialog open={creating} onOpenChange={setCreating} onCreated={setSecret} />
       <SecretDialog
         title="Signing secret"
-        description="Verify webhook-signature with this secret. After a rotation the previous secret also signs for 24 hours."
+        description="Copy it now: it is stored encrypted and not shown again (rotate for a new one). After a rotation the previous secret also signs for 24 hours."
         value={secret}
         onClose={() => setSecret(null)}
       />

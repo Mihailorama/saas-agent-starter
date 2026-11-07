@@ -129,9 +129,11 @@ export const auditLog = pgTable(
 );
 
 /**
- * Outbound webhooks (docs/public-api.md). A customer endpoint subscribes to event types; the
- * signing secret (Standard Webhooks `whsec_...`) is readable by the worker, which signs every
- * attempt. After a rotation the previous secret keeps signing until `previous_secret_expires_at`.
+ * Outbound webhooks (docs/public-api.md). A customer endpoint subscribes to event types. The
+ * signing secret (Standard Webhooks `whsec_...`) is stored encrypted (`v1:<key id>:<iv>:<data>`,
+ * AES-256-GCM, WEBHOOK_ENCRYPTION_KEYS); only the worker decrypts it to sign. After a rotation the
+ * previous secret keeps signing until `previous_secret_expires_at`. The worker disables an
+ * endpoint on 410 Gone or after WEBHOOK_DISABLE_AFTER_FAILURES failed deliveries in a row.
  */
 export const webhookEndpoints = pgTable(
   'webhook_endpoints',
@@ -142,12 +144,24 @@ export const webhookEndpoints = pgTable(
     description: text('description'),
     eventTypes: text('event_types').array().notNull(),
     enabled: boolean('enabled').notNull().default(true),
+    /** Why it is disabled: manual, gone (410), failures (too many failed deliveries). */
+    disabledReason: text('disabled_reason', { enum: ['manual', 'gone', 'failures'] }),
+    disabledAt: timestamp('disabled_at', { withTimezone: true }),
+    /** Failed deliveries since the last successful one. */
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
     secret: text('secret').notNull(),
     previousSecret: text('previous_secret'),
     previousSecretExpiresAt: timestamp('previous_secret_expires_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index().on(t.orgId), tenantIsolation()],
+  (t) => [
+    index().on(t.orgId),
+    check(
+      'webhook_endpoints_disabled_reason',
+      sql`${t.disabledReason} in ('manual', 'gone', 'failures')`,
+    ),
+    tenantIsolation(),
+  ],
 );
 
 /** One row per published event that had at least one subscribed endpoint; `payload` is the

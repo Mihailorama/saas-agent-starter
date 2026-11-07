@@ -56,6 +56,15 @@ datastore, so delivery runs on Temporal, which the stack already has.**
   secrets, `webhook-*` headers), 15 lines of stdlib code; tests verify it with the reference
   library (`standardwebhooks`, MIT, dev dependency). Rotation keeps the previous secret signing
   for 24 h.
+- Secrets at rest: AES-256-GCM (`v1:<key id>:...`, endpoint id as additional data) with keys
+  from `WEBHOOK_ENCRYPTION_KEYS`; the API only encrypts and shows a secret once, the worker's
+  signing path alone decrypts. The worker needs AES, which the standard library lacks:
+  `cryptography` (Apache-2.0 OR BSD-3-Clause), the reference Python crypto library. The key id
+  makes key rotation possible; the daily schedule re-encrypts rows under older keys.
+- Endpoints are disabled on 410 or after `WEBHOOK_DISABLE_AFTER_FAILURES` failed deliveries in
+  a row (audit-logged, notice and re-enable in the UI). Retention runs as a Temporal Schedule in
+  the worker (`webhook-maintenance`, daily, `WEBHOOK_RETENTION_DAYS`), so it is visible and
+  pausable in the Temporal UI rather than a cron we would have to monitor.
 - SSRF: resolve, refuse non-global addresses, connect to the checked IP with Host/SNI set to
   the hostname, no redirects, no proxy from the environment, response body never read. Payload
   cap in the API and the worker.
@@ -74,11 +83,9 @@ datastore, so delivery runs on Temporal, which the stack already has.**
 
 ## Consequences
 
-- Endpoint secrets are stored in plaintext under RLS (the worker needs them to sign). A
-  database dump exposes them; encrypting them with a key from the environment is in
-  docs/TODO.md.
+- The API cannot show a secret again (it cannot decrypt): customers copy it on creation or
+  rotate. Losing `WEBHOOK_ENCRYPTION_KEYS` means every endpoint must rotate its secret.
 - Like project workflows, a delivery whose workflow start fails (Temporal down at that instant)
   stays `pending` until replayed; the transactional outbox in docs/TODO.md covers both.
-- `webhook_events` and `webhook_attempts` grow with traffic; retention is in docs/TODO.md.
 - Migrations: `apikey` (auth table, not tenant-scoped, like the other Better Auth tables) and
   four tenant tables with the standard RLS policy.

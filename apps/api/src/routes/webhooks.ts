@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   type Tx,
   webhookAttempts,
@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { eventCatalog, eventTypes } from '../events.ts';
 import { startWebhookEvent } from '../temporal.ts';
 import { access, httpError, withTenant } from '../tenant.ts';
+import { encryptSecret, newSecret } from '../webhook-secret.ts';
 
 /**
  * Outbound webhooks (docs/public-api.md): endpoints subscribe to event types; deliveries and
@@ -24,6 +25,10 @@ const Endpoint = z.object({
   description: z.string().nullable(),
   eventTypes: z.array(z.string()),
   enabled: z.boolean(),
+  /** Set when disabled: manual, gone (endpoint answered 410), failures (too many in a row). */
+  disabledReason: z.enum(['manual', 'gone', 'failures']).nullable(),
+  disabledAt: z.string().nullable(),
+  consecutiveFailures: z.number().int(),
   createdAt: z.string(),
 });
 const url = z
@@ -67,8 +72,6 @@ const DeliveryQuery = z.object({
 });
 const ErrorBody = z.object({ error: z.string() });
 
-/** Standard Webhooks secret: `whsec_` + base64 of 24 random bytes. */
-const newSecret = () => `whsec_${randomBytes(24).toString('base64')}`;
 /** After a rotation the old secret keeps signing (second signature) for this long. */
 const ROTATION_OVERLAP_MS = 24 * 3600_000;
 
@@ -78,8 +81,13 @@ const endpointDto = ({
   previousSecret: ___,
   previousSecretExpiresAt: ____,
   createdAt,
+  disabledAt,
   ...e
-}: typeof webhookEndpoints.$inferSelect) => ({ ...e, createdAt: createdAt.toISOString() });
+}: typeof webhookEndpoints.$inferSelect) => ({
+  ...e,
+  disabledAt: disabledAt?.toISOString() ?? null,
+  createdAt: createdAt.toISOString(),
+});
 
 const attemptCount = sql<number>`(select count(*)::int from ${webhookAttempts} where ${webhookAttempts.deliveryId} = ${webhookDeliveries.id})`;
 const lastStatusCode = sql<
@@ -146,25 +154,33 @@ export const webhookRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (req, reply) => {
+      // Shown once: only the encrypted form is stored (rotate to get a new one).
+      const secret = newSecret();
+      const id = randomUUID();
       const row = await withTenant(
         req,
         async (tx) => {
           const [created] = await tx
             .insert(webhookEndpoints)
             .values({
+              id,
               orgId: req.tenant.orgId,
               url: req.body.url,
               description: req.body.description || null,
               eventTypes: [...new Set(req.body.eventTypes)],
               enabled: req.body.enabled ?? true,
-              secret: newSecret(),
+              ...(req.body.enabled === false && {
+                disabledReason: 'manual',
+                disabledAt: new Date(),
+              }),
+              secret: encryptSecret(secret, id),
             })
             .returning();
           return created!;
         },
         (e) => e.id,
       );
-      return reply.code(201).send({ endpoint: endpointDto(row), secret: row.secret });
+      return reply.code(201).send({ endpoint: endpointDto(row), secret });
     },
   );
 
@@ -188,7 +204,18 @@ export const webhookRoutes: FastifyPluginAsyncZod = async (app) => {
             ...(url !== undefined && { url }),
             ...(description !== undefined && { description: description || null }),
             ...(types !== undefined && { eventTypes: [...new Set(types)] }),
-            ...(enabled !== undefined && { enabled }),
+            // Re-enabling clears the worker's auto-disable state and failure count.
+            ...(enabled === true && {
+              enabled,
+              disabledReason: null,
+              disabledAt: null,
+              consecutiveFailures: 0,
+            }),
+            ...(enabled === false && {
+              enabled,
+              disabledReason: sql`coalesce(${webhookEndpoints.disabledReason}, 'manual')`,
+              disabledAt: sql`coalesce(${webhookEndpoints.disabledAt}, now())`,
+            }),
           })
           .where(eq(webhookEndpoints.id, req.params.id))
           .returning();
@@ -208,38 +235,26 @@ export const webhookRoutes: FastifyPluginAsyncZod = async (app) => {
     return reply.code(204).send();
   });
 
-  app.get(
-    '/endpoints/:id/secret',
-    { ...write, schema: { tags, params: Id, response: { 200: Secret, 404: ErrorBody } } },
-    async (req) =>
-      withTenant(req, async (tx) => {
-        const [row] = await tx
-          .select({ secret: webhookEndpoints.secret })
-          .from(webhookEndpoints)
-          .where(eq(webhookEndpoints.id, req.params.id));
-        if (!row) throw httpError(404, 'not found');
-        return row;
-      }),
-  );
-
   // The old secret keeps signing for ROTATION_OVERLAP_MS so receivers can switch without gaps.
   app.post(
     '/endpoints/:id/rotate-secret',
     { ...write, schema: { tags, params: Id, response: { 200: Secret, 404: ErrorBody } } },
-    async (req) =>
-      withTenant(req, async (tx) => {
+    async (req) => {
+      const secret = newSecret();
+      return withTenant(req, async (tx) => {
         const [row] = await tx
           .update(webhookEndpoints)
           .set({
             previousSecret: sql`${webhookEndpoints.secret}`,
             previousSecretExpiresAt: new Date(Date.now() + ROTATION_OVERLAP_MS),
-            secret: newSecret(),
+            secret: encryptSecret(secret, req.params.id),
           })
           .where(eq(webhookEndpoints.id, req.params.id))
-          .returning({ secret: webhookEndpoints.secret });
+          .returning({ id: webhookEndpoints.id });
         if (!row) throw httpError(404, 'not found');
-        return row;
-      }),
+        return { secret };
+      });
+    },
   );
 
   app.get(

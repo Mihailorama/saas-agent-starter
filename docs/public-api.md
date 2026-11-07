@@ -31,7 +31,7 @@ more than an org role could. The UI only offers scopes the creator's role covers
 | `projects:delete` | admin        | `DELETE /api/projects/{id}`                                  |
 | `ai_calls:read`   | admin        | `GET /api/orgs/{orgId}/ai-calls...`                          |
 | `webhooks:read`   | admin        | `GET /api/webhooks/...` (endpoints, deliveries, event types) |
-| `webhooks:write`  | admin        | manage endpoints, reveal/rotate secrets, replay deliveries   |
+| `webhooks:write`  | admin        | manage endpoints, rotate secrets, replay deliveries          |
 
 Only routes declared with `access('<scope>')` (`apps/api/src/tenant.ts`) accept keys. They are
 marked in `/api/openapi.json` with the `apiKey` security scheme and "API key scope: ..." in the
@@ -63,8 +63,8 @@ by `@fastify/rate-limit` (shared across API replicas, like the auth limits). Ove
 ## Webhooks
 
 An org admin adds endpoints in **Settings -> Webhooks** (or `POST /api/webhooks/endpoints`)
-and picks event types. The signing secret (`whsec_...`) is shown on creation and can be shown
-again or rotated.
+and picks event types. The signing secret (`whsec_...`) is shown once, on creation; rotate it to
+get a new one.
 
 ### Events
 
@@ -129,9 +129,38 @@ event = Webhook(secret).verify(raw_body, headers)  # raises WebhookVerificationE
 
 ### Secret rotation
 
-`POST /api/webhooks/endpoints/{id}/rotate-secret` returns a new secret. For 24 hours deliveries
-carry two signatures (new and previous secret, space-separated), so receivers verify with either
-while they switch.
+`POST /api/webhooks/endpoints/{id}/rotate-secret` returns a new secret (once). For 24 hours
+deliveries carry two signatures (new and previous secret, space-separated), so receivers verify
+with either while they switch.
+
+### Secrets at rest
+
+Signing secrets are encrypted with AES-256-GCM before they are stored:
+`v1:<key id>:<iv>:<ciphertext+tag>`, bound to the endpoint id, so a row copied to another
+endpoint does not decrypt. Keys come from `WEBHOOK_ENCRYPTION_KEYS` (`id:secret,...`, same value
+for API and worker, secrets of 32+ characters such as `openssl rand -base64 32`). The API only
+encrypts (`apps/api/src/webhook-secret.ts`); only the worker's signing path decrypts
+(`worker/webhooks.py`). A row it cannot decrypt fails with `secret_unreadable` and is never sent.
+
+Key rotation: put a new key first (`new:...,old:...`) in both API and worker. New secrets use it
+at once; the daily maintenance schedule re-encrypts existing ones. Once a run has finished, remove
+the old key.
+
+### Disabled endpoints
+
+The worker disables an endpoint when it answers **410 Gone** (no retries) or after
+`WEBHOOK_DISABLE_AFTER_FAILURES` (default 5, 0 = never) failed deliveries in a row. A delivery
+counts as failed once its retries are exhausted; a successful one resets the count. Disabling
+writes an `audit_log` row (`webhook_endpoint.disabled`, actor `worker`). Settings -> Webhooks
+shows a notice with the reason and a **Re-enable** action (`PATCH ... { "enabled": true }`, which
+also resets the count). Events published while it is disabled are not queued for it.
+
+### Retention
+
+A Temporal Schedule (`webhook-maintenance`, created by the worker on start, daily) deletes
+webhook events (with their deliveries) and attempts older than `WEBHOOK_RETENTION_DAYS` (default
+30, 0 = keep), then re-encrypts secrets still under an older key. It is visible, pausable and
+triggerable in the Temporal UI; the worker does not overwrite a schedule that already exists.
 
 ### Safety limits
 
