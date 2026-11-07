@@ -31,7 +31,7 @@ from worker.privacy import (
     Tools,
     TwentyCrm,
 )
-from worker.s3 import S3
+from worker.s3 import S3, NotFound
 from worker.workflows import DataDeletionWorkflow, DataExportWorkflow, PrivacyRetentionWorkflow
 
 TASK_QUEUE = f"test-privacy-{uuid.uuid4()}"
@@ -137,6 +137,7 @@ async def env(pool: asyncpg.Pool) -> AsyncIterator[tuple[Client, PrivacyActiviti
             acts.purge_ai_content,
             acts.purge_exports,
             acts.purge_deleted_orgs,
+            acts.purge_tracker_inbox,
             acts.purge_booking_payloads,
             fake_send_email,
         ],
@@ -183,8 +184,7 @@ async def exists(store: S3, key: str) -> bool:
     try:
         await store.get(key)
         return True
-    except httpx2.HTTPStatusError as err:
-        assert err.response.status_code == 404
+    except NotFound:
         return False
 
 
@@ -472,9 +472,19 @@ async def test_retention_deletes_expired_content_keeps_metadata(
     for key in (old_booking, new_booking):
         await acts.files.put(key, b"{}")
 
+    inbox_key = f"tracker-inbox/{uuid.uuid4()}.json"  # an unfiled tracker item, minutes old
+    await acts.files.put(inbox_key, b'{"title": "t", "body": "b"}')
+
     result = await client.execute_workflow(
         PrivacyRetentionWorkflow.run, id=f"privacy-retention-{uuid.uuid4()}", task_queue=TASK_QUEUE
     )
+    # Tracker items go after a day; the cut-off is S3's LastModified.
+    assert "tracker_inbox" in result and await exists(acts.files, inbox_key)
+    later = now + timedelta(minutes=5)
+    assert inbox_key in await acts.files.list_keys("tracker-inbox/", before=later)
+    earlier = now - timedelta(minutes=5)
+    assert inbox_key not in await acts.files.list_keys("tracker-inbox/", before=earlier)
+    await acts.files.delete(inbox_key)
 
     assert result["calls"] >= 1 and result["exports"] >= 1 and result["until"]
     assert result["bookings"] >= 1

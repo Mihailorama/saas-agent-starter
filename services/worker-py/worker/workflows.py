@@ -34,6 +34,7 @@ with workflow.unsafe.imports_passed_through():
         Step,
     )
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
+    from worker.tracker import TrackerActivities, TrackerItem
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
 
 
@@ -84,6 +85,20 @@ class SupportIssueClosedWorkflow:
             e,
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5),
+        )
+
+
+@workflow.defn(name="TrackerItemWorkflow")
+class TrackerItemWorkflow:
+    """Started by POST /api/hooks/posthog, id `tracker-item-<hash of the redacted text>`."""
+
+    @workflow.run
+    async def run(self, item: TrackerItem) -> str:
+        return await workflow.execute_activity_method(
+            TrackerActivities.file_item,
+            item,
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=10), maximum_attempts=10),
         )
 
 
@@ -345,8 +360,8 @@ class DataDeletionWorkflow:
 class PrivacyRetentionWorkflow:
     """Daily (Temporal Schedule `privacy-retention`): deletes AI request/response content past
     ai_calls.content_expires_at, expired data exports, deleted organizations whose record
-    period ended and leftover booking payloads. The previous run's result is the watermark, so
-    each AI call is visited once."""
+    period ended, tracker items a TrackerItemWorkflow left in S3 and leftover booking payloads.
+    The previous run's result is the watermark, so each AI call is visited once."""
 
     @workflow.run
     async def run(self) -> dict[str, Any]:
@@ -369,6 +384,11 @@ class PrivacyRetentionWorkflow:
         orgs = await workflow.execute_activity_method(
             PrivacyActivities.purge_deleted_orgs, start_to_close_timeout=timeout, retry_policy=retry
         )
+        inbox = await workflow.execute_activity_method(
+            PrivacyActivities.purge_tracker_inbox,
+            start_to_close_timeout=timeout,
+            retry_policy=retry,
+        )
         bookings = 0
         if workflow.patched("booking-payloads"):
             bookings = await workflow.execute_activity_method(
@@ -376,4 +396,10 @@ class PrivacyRetentionWorkflow:
                 start_to_close_timeout=timeout,
                 retry_policy=retry,
             )
-        return {**content, "exports": exports, "orgs": orgs, "bookings": bookings}
+        return {
+            **content,
+            "exports": exports,
+            "orgs": orgs,
+            "tracker_inbox": inbox,
+            "bookings": bookings,
+        }

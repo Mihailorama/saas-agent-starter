@@ -13,7 +13,7 @@ import { auth } from '../src/auth.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { exportCalls } from '../src/eval-pull.ts';
-import { ensureBucket } from '../src/s3.ts';
+import { ensureBucket, getJson } from '../src/s3.ts';
 import {
   closeTemporal,
   projectWorkflowId,
@@ -484,7 +484,19 @@ describe('AI calls log', () => {
   });
 });
 
-describe('PostHog webhook -> GitHub issue', () => {
+/** The argument a workflow was started with (first event of its history). */
+async function startArg(handle: { fetchHistory: () => Promise<unknown> }): Promise<unknown> {
+  const history = (await handle.fetchHistory()) as {
+    events?: {
+      workflowExecutionStartedEventAttributes?: { input?: { payloads?: { data?: Uint8Array }[] } };
+    }[];
+  };
+  const data =
+    history.events?.[0]?.workflowExecutionStartedEventAttributes?.input?.payloads?.[0]?.data;
+  return data ? JSON.parse(Buffer.from(data).toString('utf8')) : undefined;
+}
+
+describe('PostHog webhook -> tracker item', () => {
   const hook = (secret: string | null, event: object) =>
     app.inject({
       method: 'POST',
@@ -500,6 +512,7 @@ describe('PostHog webhook -> GitHub issue', () => {
       insight_name: 'Journey: activation',
       insight_id: 'AbC123',
       state: 'Firing',
+      last_checked_at: randomUUID(), // a new text per test run: workflow ids are never reused
       breaches: 'The insight value (12%) is below the lower threshold (30%)',
     },
   };
@@ -515,7 +528,7 @@ describe('PostHog webhook -> GitHub issue', () => {
         },
       ],
       $pathname: '/projects/$projectId',
-      release: 'abc123',
+      release: randomUUID(),
     },
   };
 
@@ -524,18 +537,32 @@ describe('PostHog webhook -> GitHub issue', () => {
     expect((await hook('wrong', alert)).statusCode).toBe(401);
   });
 
-  it('dry-runs without a GitHub token and ignores unrelated events', async () => {
+  /** The item the worker will file: S3 object + TrackerItemWorkflow with only producer and key. */
+  const stored = async (res: { key: string }) => {
+    const id = `tracker-item-${res.key.slice('tracker-inbox/'.length, -'.json'.length)}`;
+    const handle = (await temporal()).workflow.getHandle(id);
+    const arg = await startArg(handle);
+    const item = (await getJson(env.S3_BUCKET, res.key)) as { title: string; body: string };
+    await handle.terminate('test cleanup').catch(() => {}); // the worker may have finished it
+    return { item, arg };
+  };
+
+  it('hands the redacted item to the worker through S3 and ignores unrelated events', async () => {
     const secret = env.POSTHOG_WEBHOOK_SECRET!;
-    const planned = (await hook(secret, alert)).json();
-    expect(planned).toMatchObject({
-      action: 'dry-run',
-      label: 'cjm-regression',
-      title: '[cjm] activation below 30%',
-    });
-    expect(planned.body).toContain('below the lower threshold');
+    const started = (await hook(secret, alert)).json();
+    expect(started).toMatchObject({ action: 'started', producer: 'cjm-regression' });
+    // A redelivered webhook (same text, same workflow id) files nothing twice.
+    expect((await hook(secret, alert)).json()).toMatchObject({ action: 'duplicate' });
+    const { item, arg } = await stored(started);
+    expect(item.title).toBe('[cjm] activation below 30%');
+    expect(item.body).toContain('below the lower threshold');
+    expect(arg).toEqual({ producer: 'cjm-regression', s3Key: started.key }); // no text in Temporal
+
     const feedback = (await hook(secret, survey)).json();
-    expect(feedback).toMatchObject({ action: 'dry-run', label: 'from-users' });
-    expect(feedback.body).not.toContain('a@example.com');
+    expect(feedback).toMatchObject({ action: 'started', producer: 'from-users' });
+    const filed = await stored(feedback);
+    expect(JSON.stringify(filed.item)).not.toContain('a@example.com');
+    expect(filed.item.title).toBe('[feedback] Upload fails, mail me at [email]');
     expect((await hook(secret, { event: '$pageview', properties: {} })).json()).toEqual({
       action: 'ignored',
     });
@@ -544,47 +571,12 @@ describe('PostHog webhook -> GitHub issue', () => {
     expect((await hook(secret, thumbs)).json()).toEqual({ action: 'ignored' });
   });
 
-  it('opens an issue, then comments on it for the same alert', async () => {
-    Object.assign(env, { GITHUB_TOKEN: 'test-token', GITHUB_REPO: 'example/app' });
-    const issues: { number: number; title: string }[] = [];
-    const calls: string[] = [];
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      calls.push(
-        `${init?.method ?? 'GET'} ${url.replace('https://api.github.com/repos/example/app', '')}`,
-      );
-      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-token');
-      if (init?.method === 'POST' && url.endsWith('/issues')) {
-        const body = JSON.parse(String(init.body));
-        expect(body.labels).toEqual(['cjm-regression']);
-        issues.push({ number: 7, title: body.title });
-        return Response.json({ number: 7 }, { status: 201 });
-      }
-      if (init?.method === 'POST') return Response.json({}, { status: 201 });
-      return Response.json(issues);
-    });
-    try {
-      const secret = env.POSTHOG_WEBHOOK_SECRET!;
-      expect((await hook(secret, alert)).json()).toEqual({ action: 'created', issue: 7 });
-      expect((await hook(secret, alert)).json()).toEqual({ action: 'commented', issue: 7 });
-      expect(calls).toEqual([
-        'GET /issues?state=open&per_page=100&labels=cjm-regression',
-        'POST /issues',
-        'GET /issues?state=open&per_page=100&labels=cjm-regression',
-        'POST /issues/7/comments',
-      ]);
-    } finally {
-      fetchMock.mockRestore();
-      Object.assign(env, { GITHUB_TOKEN: undefined, GITHUB_REPO: undefined });
-    }
-  });
-
   it('redacts answers with the PII sidecar and fails closed when it is down', async () => {
     Object.assign(env, { PII_REDACT_URL: 'http://pii.test:8000' });
     const sidecar: string[][] = [];
     let up = true;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      expect(String(input)).toBe('http://pii.test:8000/redact'); // never GitHub in a dry run
+      expect(String(input)).toBe('http://pii.test:8000/redact'); // the only HTTP call it makes
       if (!up) throw new TypeError('fetch failed');
       const { texts } = JSON.parse(String(init?.body)) as { texts: string[] };
       sidecar.push(texts);
@@ -592,16 +584,21 @@ describe('PostHog webhook -> GitHub issue', () => {
     });
     try {
       const secret = env.POSTHOG_WEBHOOK_SECRET!;
-      const filed = (await hook(secret, survey)).json();
-      expect(filed).toMatchObject({ action: 'dry-run', label: 'from-users' });
-      expect(filed.body).toContain('call [name] at [phone]');
+      const res = (await hook(secret, survey)).json();
+      expect(res).toMatchObject({ action: 'started', producer: 'from-users' });
+      const { item } = await stored(res);
+      expect(item.title).toBe('[feedback] Upload fails, call [name] at [phone]');
+      expect(item.body).toContain('call [name] at [phone]');
       expect(sidecar).toEqual([['Upload fails, mail me at a@example.com']]);
       up = false;
       const down = await hook(secret, survey);
       expect(down.statusCode).toBe(503);
       expect(down.body).not.toContain('example.com');
       // Alerts carry no user text and do not need the sidecar.
-      expect((await hook(secret, alert)).statusCode).toBe(200);
+      const again = { ...alert, properties: { ...alert.properties, state: 'Firing again' } };
+      const filed = await hook(secret, again);
+      expect(filed.statusCode).toBe(200);
+      await stored(filed.json());
     } finally {
       fetchMock.mockRestore();
       Object.assign(env, { PII_REDACT_URL: undefined });
@@ -737,7 +734,7 @@ describe('service desk (Chatwoot)', () => {
       'release-v1.2.0',
     );
     const rel = (await temporal()).workflow.getHandle(rid);
-    expect(JSON.stringify(await rel.fetchHistory())).toContain('v1.2.0');
+    expect(await startArg(rel)).toMatchObject({ release: 'v1.2.0' });
     await rel.terminate('test cleanup');
   });
 
@@ -764,6 +761,67 @@ describe('service desk (Chatwoot)', () => {
       event.event_id,
     );
     await (await temporal()).workflow.getHandle(id).terminate('test cleanup');
+
+    // The release comment (worker/released.py) on a Plane item: live in that version.
+    const comment = (text: string) => ({
+      event: 'workitem.comment.created',
+      event_id: randomUUID(),
+      entity_type: 'issue',
+      data: {
+        id: event.data.id,
+        name: 'x',
+        comment: { comment_stripped: text, actor_id: 'u-bot' },
+      },
+      previous_attributes: {},
+    });
+    expect((await plane(comment('thanks!'))).json()).toEqual({ action: 'ignored' });
+    expect((await plane(comment('Released in v1.2.0 (via #5). Notes'))).json()).toEqual({
+      action: 'started',
+    });
+    const rid = supportClosedWorkflowId(
+      { tracker: 'plane', issueId: event.data.id },
+      'release-v1.2.0',
+    );
+    const rel = (await temporal()).workflow.getHandle(rid);
+    // The author goes along: the worker acts only on its own integration user's comments.
+    expect(await startArg(rel)).toMatchObject({ release: 'v1.2.0', author: 'u-bot' });
+    await rel.terminate('test cleanup');
+
+    // v1 payloads (Plane Community Edition, no `version`): the same two triggers.
+    const v1Id = randomUUID();
+    const v1 = (e: object) => plane({ webhook_id: 'w', workspace_slug: 'ws', ...e });
+    const v1State = {
+      event: 'issue',
+      action: 'updated',
+      data: { id: v1Id, project: 'p1', updated_at: '2026-11-07T10:00:00Z' },
+      activity: { field: 'state_id', old_value: 'a', new_value: 'b' },
+    };
+    expect((await v1({ ...v1State, activity: { field: 'name' } })).json()).toEqual({
+      action: 'ignored',
+    });
+    expect((await v1(v1State)).json()).toEqual({ action: 'started' });
+    await (await temporal()).workflow
+      .getHandle(
+        supportClosedWorkflowId({ tracker: 'plane', issueId: v1Id }, v1State.data.updated_at),
+      )
+      .terminate('test cleanup');
+    const v1Comment = {
+      event: 'issue_comment',
+      action: 'created',
+      data: {
+        id: randomUUID(),
+        issue: v1Id,
+        project: 'p1',
+        comment_stripped: 'Released in v2.0.0 (via #9).',
+      },
+      activity: { field: null, actor: { id: 'u-bot-v1', display_name: 'Release bot' } },
+    };
+    expect((await v1(v1Comment)).json()).toEqual({ action: 'started' });
+    const v1Rel = (await temporal()).workflow.getHandle(
+      supportClosedWorkflowId({ tracker: 'plane', issueId: v1Id }, 'release-v2.0.0'),
+    );
+    expect(await startArg(v1Rel)).toMatchObject({ release: 'v2.0.0', author: 'u-bot-v1' });
+    await v1Rel.terminate('test cleanup');
   });
 
   it('signs the widget identity of the signed-in user only', async () => {

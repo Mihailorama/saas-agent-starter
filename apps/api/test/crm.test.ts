@@ -111,7 +111,7 @@ describe('booking webhook (Cal.diy / Cal.com) -> CRM', () => {
       for (const text of ['grace@example.com', 'Grace Hopper', 'Demo between', 'free text']) {
         expect(run.history).not.toContain(text);
       }
-      expect(await getJson(input.bookingKey)).toEqual({
+      expect(await getJson(env.S3_BUCKET, input.bookingKey)).toEqual({
         trigger,
         uid: event.payload.uid,
         title: 'Demo between Acme and Grace',

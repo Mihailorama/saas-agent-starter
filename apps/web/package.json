@@ -26,6 +26,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.68.0",
+    "openapi-fetch": "^0.17.0",
     "posthog-js": "^1.446.3",
     "qrcode.react": "^4.2.0",
     "react": "^19.3.1",

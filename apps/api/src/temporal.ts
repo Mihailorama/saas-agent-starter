@@ -65,8 +65,10 @@ export const startSupportTriage = (c: SupportConversation) =>
 export type SupportIssueClosed = {
   tracker: 'github' | 'plane';
   issueId: string;
-  /** GitHub release tag from the `Released in vX.Y.Z` comment; empty for the close event. */
+  /** Release tag from the `Released in vX.Y.Z` comment (GitHub or Plane); empty for a close. */
   release?: string;
+  /** Plane user id of the release comment's author; the worker acts only on its own comments. */
+  author?: string;
 };
 export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) =>
   `support-closed-${e.tracker}-${e.issueId}-${closeId}`;
@@ -90,6 +92,13 @@ export const crmWorkflowId = (eventId: string) => `crm-${eventId}`;
 export const startCrmSync = (e: CrmEvent) =>
   startOnce('CrmSyncWorkflow', crmWorkflowId(e.eventId), e);
 
+/**
+ * Contract with services/worker-py (worker/tracker.py): a redacted tracker item whose title and
+ * body are the JSON object at `s3Key` (uploads bucket). The worker files it and deletes the object.
+ */
+export type TrackerItem = { producer: 'cjm-regression' | 'from-users'; s3Key: string };
+export const startTrackerItem = (item: TrackerItem, hash: string) =>
+  startOnce('TrackerItemWorkflow', `tracker-item-${hash}`, item);
 /** Contract with services/worker-py (worker/mail.py): one rendered email to one recipient. */
 export type SendEmail = {
   kind: 'verify-email' | 'reset-password' | 'invitation' | 'data-export-ready';
