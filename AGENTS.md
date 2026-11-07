@@ -96,7 +96,8 @@ compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
 compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy (docs/deploy.md)
 deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
 compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
-infra/backup/       backup image (postgres + pgBackRest/rclone) and its scripts (ADR 0015)
+infra/backup/       Postgres image (+ pgvector) and backup image (+ pgBackRest/rclone), scripts (ADR 0015)
+infra/chatwoot/     Chatwoot initializer: attachments served through Chatwoot (docs/support.md)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),

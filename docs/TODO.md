@@ -64,13 +64,11 @@
   not survive losing that host. Each deployment must set `BACKUP_S3_*` to another provider or
   region, store `BACKUP_ENCRYPTION_PASSPHRASE` off the server, and route the `backups` alerts
   (Alertmanager, see "Alert notifications" above).
-- **Backups: Chatwoot is not backed up.** The `support` profile runs its own Postgres
-  (`chatwoot-postgres`, `pgvector/pgvector`, volume `chatwoot-pgdata`) and keeps attachments in
-  the `chatwoot-storage` volume, so pgBackRest and the bucket copy (compose.backup.yaml) do not
-  reach customer conversations. Options: move Chatwoot's database onto the main Postgres server
-  (needs the pgvector extension in `infra/backup/Dockerfile` and the base image) so it is covered
-  automatically, or a second pgBackRest stanza for `chatwoot-postgres`; and switch Chatwoot's
-  `ACTIVE_STORAGE_SERVICE` to S3 with its bucket in `BACKUP_APP_BUCKETS`.
+- **Production SeaweedFS fits only two buckets.** `s3` in `compose.prod.yaml` (profile `s3`)
+  runs with SeaweedFS's default `-volume.max` (14 volume slots); each bucket takes 7, so a third
+  bucket (e.g. Chatwoot's or Langfuse's, if run there) gets HTTP 500 on its first upload. The
+  dev `s3` in `docker-compose.yml` sets `-volume.max=64`; do the same in production, sized to
+  the disk (`-master.volumeSizeLimitMB` caps each volume, default 30 GB).
 - **Backups: a second repository.** pgBackRest supports `repo2` (e.g. a second provider or
   object-locked bucket). Add `PGBACKREST_REPO2_*` to `compose.backup.yaml` if one off-site copy is
   not enough; the restore check would then also need a run per repository.

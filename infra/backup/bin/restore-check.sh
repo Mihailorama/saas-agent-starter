@@ -19,7 +19,8 @@ trap cleanup EXIT
 # Migration/schema version per database (only for databases that exist on the source).
 versions='app|select hash from drizzle.__drizzle_migrations order by id desc limit 1
 temporal|select curr_version from schema_version
-temporal_visibility|select curr_version from schema_version'
+temporal_visibility|select curr_version from schema_version
+chatwoot|select max(version) from schema_migrations'
 dbs_sql="select datname from pg_database where not datistemplate order by 1"
 
 # measure <psql function>: one "key value" line per check; "missing" when it cannot be read.

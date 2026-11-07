@@ -34,7 +34,7 @@ on an image that is not. Their primary software licenses:
 | `langfuse/langfuse-worker`             | Langfuse worker (llmops profile)                   | MIT core + `ee/` commercial |
 | `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
 | `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
-| `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
+| `saas-agent-starter-postgres`          | Postgres 17 + pgvector extension (built)           | PostgreSQL                  |
 | `ghcr.io/gitroomhq/postiz-app`         | social post scheduling (`marketing` profile)       | AGPL-3.0                    |
 | `towfiqi/serpbear`                     | keyword rank tracking (`marketing` profile)        | MIT                         |
 | `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
@@ -69,8 +69,8 @@ Notes:
   use are MIT (`@sentry/react`, `@sentry/node-core`, `sentry-sdk`). `@sentry/node` 11 is not
   used: it depends on the `sentry` CLI package (FSL-1.1-Apache-2.0), which the code license gate
   rejects.
-- `saas-agent-starter-pgbackup` is built locally from `infra/backup/Dockerfile`: the `postgres`
-  image plus Alpine packages pgBackRest (MIT), rclone (MIT), supercronic (MIT), jq (MIT), curl
+- `saas-agent-starter-pgbackup` is built locally from `infra/backup/Dockerfile`: the
+  `saas-agent-starter-postgres` image (below) plus Alpine packages pgBackRest (MIT), rclone (MIT), supercronic (MIT), jq (MIT), curl
   (curl license, MIT-style) and openssl (Apache-2.0); licenses as declared in the Alpine package
   metadata (`apk info -a <pkg>`). `chrislusf/seaweedfs` also runs as `backup-s3`, the local
   stand-in for off-site backup storage. Every backup container is permissive, so the permissive
@@ -139,9 +139,12 @@ Notes:
   builds after `rm -rf enterprise`, so no enterprise code is in the image and none of its
   features (Captain AI, SLA, custom roles, audit logs) are used. The plain `vX.Y.Z` tag
   contains `enterprise/`: do not switch to it. Chatwoot Cloud is an external service, not shipped.
-- `pgvector/pgvector`: the official Postgres image plus the pgvector extension (PostgreSQL
-  License, [LICENSE](https://github.com/pgvector/pgvector/blob/master/LICENSE)). Chatwoot's schema
-  enables `vector`, which `postgres:17-alpine` does not ship, so Chatwoot gets this server.
+- `saas-agent-starter-postgres`: the stack's Postgres, built locally (`infra/backup/Dockerfile`,
+  target `postgres`): `postgres:17-alpine` plus the pgvector extension compiled from its pinned
+  release tarball (PostgreSQL License,
+  [LICENSE](https://github.com/pgvector/pgvector/blob/master/LICENSE)). Chatwoot's schema enables
+  `vector`, so its database can live on this server and be backed up with the rest.
+  `saas-agent-starter-pgbackup` is the same image plus the backup tools.
 - `stripe/stripe-mock` ([MIT](https://github.com/stripe/stripe-mock/blob/master/LICENSE),
   Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
   never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
