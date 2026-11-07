@@ -113,6 +113,16 @@
         "reason": "string"
       }
     },
+    "api_key_created": {
+      "description": "An org admin created an API key. `scopes` is how many scopes it has.",
+      "pii": false,
+      "props": { "scopes": "number", "expires": "boolean" }
+    },
+    "webhook_endpoint_created": {
+      "description": "An org admin added a webhook endpoint. `event_types` is how many events it subscribes to.",
+      "pii": false,
+      "props": { "event_types": "number" }
+    },
     "consent_set": {
       "description": "The user answered the analytics consent banner.",
       "pii": false,

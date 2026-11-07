@@ -115,6 +115,12 @@ Notes:
   (ISC) for the enrolment QR code, and `otpauth` (MIT, tests only) to generate TOTP codes. The
   TOTP plugin itself ships inside `better-auth` (MIT).
 
+- Public API and webhooks (ADR 0018) add no container. Code dependencies, checked by the gate:
+  `@better-auth/api-key` (MIT); in the worker, the official Standard Webhooks library
+  `standardwebhooks` (PyPI, MIT, no dependencies), which signs deliveries, and `cryptography`
+  (Apache-2.0 OR BSD-3-Clause; with `cffi` MIT-0 and `pycparser` BSD-3-Clause), which decrypts
+  the signing secrets. Self-hosted Svix (`svix/svix-server`, MIT) was evaluated and not added:
+  its open-source edition has no customer app portal.
 - `chatwoot/chatwoot` (service desk, [docs/support.md](support.md)): the repository's
   [LICENSE](https://github.com/chatwoot/chatwoot/blob/develop/LICENSE) puts everything outside
   `enterprise/` under MIT (Expat) and `enterprise/` under its own license (`enterprise/LICENSE`).

@@ -15,6 +15,7 @@ COPY packages/db packages/db
 COPY apps/api apps/api
 # Feature flag catalog (apps/api/src/flags.ts).
 COPY config/flags.json config/flags.json
+COPY config/webhook-events.json config/
 ARG GIT_SHA=dev
 ENV SENTRY_RELEASE=$GIT_SHA
 USER node
