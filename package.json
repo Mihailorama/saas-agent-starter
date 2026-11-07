@@ -29,7 +29,10 @@
     "journeys:sync": "node scripts/journeys.mjs sync",
     "journeys:report": "node scripts/journeys.mjs report",
     "check:flags": "node scripts/check-flags.mjs",
-    "flags:sync": "node scripts/flags.mjs sync"
+    "flags:sync": "node scripts/flags.mjs sync",
+    "seo:report": "node scripts/seo-report.mjs",
+    "seo:indexnow": "node scripts/indexnow.mjs",
+    "geo:check": "node scripts/geo-check.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",

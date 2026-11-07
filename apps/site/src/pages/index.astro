@@ -1,0 +1,100 @@
+---
+import Faq from '../components/Faq.astro';
+import { faqLd } from '../faq.ts';
+import Base from '../layouts/Base.astro';
+import { posts } from '../posts.ts';
+import { abs, site } from '../site.ts';
+
+const start = new URL('/', site.appUrl).href;
+const features = [
+  {
+    title: 'Projects per organization',
+    text: 'Every team gets its own space. Data is isolated per organization in the database itself.',
+  },
+  {
+    title: 'AI summaries you review',
+    text: 'Drafts are marked as AI-generated until a member confirms or corrects them.',
+  },
+  {
+    title: 'An audit trail by default',
+    text: 'Every change and every AI call is logged, so you can answer who did what and when.',
+  },
+];
+const faq = [
+  {
+    q: 'Is there a free plan?',
+    a: 'Yes. Create an account and an organization and start with your first project for free.',
+  },
+  {
+    q: 'Where is my data stored?',
+    a: 'In the region you deploy to. The whole stack runs on one server or your own infrastructure.',
+  },
+  {
+    q: 'Which AI models do you use?',
+    a: 'Only the models your administrator enables. Each AI call is logged and can be exported.',
+  },
+];
+const latest = (await posts()).slice(0, 3);
+const app = {
+  '@type': 'SoftwareApplication',
+  name: site.name,
+  description: site.description,
+  url: abs('/'),
+  applicationCategory: site.product.category,
+  operatingSystem: site.product.operatingSystem,
+  offers: { '@type': 'Offer', ...site.product.offers },
+  publisher: { '@id': abs('/#organization') },
+};
+---
+
+<Base title={site.name} description={site.description} jsonLd={[app, faqLd(faq)]}>
+  <section class="mx-auto max-w-3xl px-6 py-24 text-center">
+    <h1 class="text-4xl font-bold tracking-tight sm:text-5xl">{site.tagline}</h1>
+    <p class="mt-6 text-lg text-muted-foreground">{site.description}</p>
+    <div class="mt-10 flex justify-center gap-3">
+      <a
+        href={start}
+        data-cta="hero_start"
+        class="rounded-md bg-primary px-5 py-2.5 font-medium text-primary-foreground hover:opacity-90"
+        >Start free</a
+      >
+      <a href="/blog/" class="rounded-md border px-5 py-2.5 font-medium hover:bg-secondary">Read the blog</a>
+    </div>
+  </section>
+
+  <section aria-labelledby="features" class="border-y bg-secondary/40">
+    <div class="mx-auto max-w-5xl px-6 py-16">
+      <h2 id="features" class="sr-only">Features</h2>
+      <ul class="grid gap-8 sm:grid-cols-3">
+        {
+          features.map((f) => (
+            <li>
+              <h3 class="font-semibold">{f.title}</h3>
+              <p class="mt-2 text-muted-foreground">{f.text}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  {
+    latest.length > 0 && (
+      <section aria-labelledby="latest" class="mx-auto max-w-3xl px-6 py-16">
+        <h2 id="latest" class="text-2xl font-semibold tracking-tight">From the blog</h2>
+        <ul class="mt-6 space-y-4">
+          {latest.map((p) => (
+            <li>
+              <a href={`/blog/${p.id}/`} class="font-medium hover:underline">
+                {p.data.title}
+              </a>
+              <p class="text-muted-foreground">{p.data.description}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+
+  <Faq items={faq} />
+</Base>

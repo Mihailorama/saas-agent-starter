@@ -26,12 +26,22 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | loki           | observability |               116 |         512 |       1.7% |
 | grafana        | observability |               305 |         512 |       2.5% |
 | glitchtip      | glitchtip     |               182 |         512 |       2.6% |
+| site (nginx)   | marketing     |                 7 |          64 |       0.0% |
+| postiz         | marketing     |             1,264 |        2048 |       ~20% |
+| serpbear       | marketing     |                71 |         512 |       0.0% |
 
 Totals (used / limit): default stack ~612 / 2304 MiB, observability ~670 / 2432 MiB,
 GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.1 GiB. Jaeger keeps traces in memory, so its
 use grows with traffic until the limit; Prometheus and Loki grow with retention (volumes, not
 RAM, for Loki). The permissive twin drops Loki and Grafana (~420 MiB used); Valkey uses about
 what Redis does.
+
+Marketing profile (2026-11-07, separate run, docs/marketing.md): `site`, Postiz v2.25.3 and
+SerpBear 3.1.2 on postgres, redis and temporal only. Postiz 1,264 MiB is idle 3 minutes after a
+restart with no traffic (1,381 MiB after a smoke test: register, one draft); its idle CPU stays at
+18-28 % of one core. SerpBear 71 MiB idle, 176 MiB after its smoke test (login, domain, keyword).
+Postiz's Temporal workers raise `temporal` to ~228 MiB and Postgres grows ~25 MiB; Redis is
+unchanged. Marketing profile ~1.3 / 2.6 GiB (used / limit) on top of the shared services.
 
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then

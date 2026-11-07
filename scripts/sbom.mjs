@@ -17,7 +17,7 @@ const twins = [['docker-compose.yml'], ['docker-compose.yml', 'compose.permissiv
 sh('node', ['scripts/license-check.mjs', '--notices', `${out}/THIRD_PARTY_NOTICES.md`], {
   stdio: 'inherit',
 });
-compose(twins[0], 'build', 'api', 'web', 'worker');
+compose(twins[0], 'build', 'api', 'web', 'worker', 'site');
 const images = new Set();
 for (const files of twins) {
   compose(files, 'pull', '--ignore-buildable', '--quiet');

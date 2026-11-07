@@ -6,6 +6,11 @@
       "pii": false,
       "props": { "route": "string" }
     },
+    "site_cta_clicked": {
+      "description": "A call to action on the marketing site (apps/site) was clicked. `cta` is the link's data-cta id (hero_start, nav_sign_in...).",
+      "pii": false,
+      "props": { "cta": "string" }
+    },
     "signup_started": {
       "description": "The sign-up form was opened on the sign-in page.",
       "pii": false,

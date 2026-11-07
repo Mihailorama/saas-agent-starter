@@ -90,3 +90,14 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
+  (docs/marketing.md) but nothing calls it, because the deploy workflow lives on another branch.
+  Fix: once a site deploy job exists, run it there after a successful deploy with the previously
+  deployed sha and `INDEXNOW_KEY`.
+- **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
+  others, add a runner per assistant CLI the team is logged in to (same config, same report),
+  never an API key in CI.
+- **Postiz idle cost.** ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
+  each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
+  task queues this server does not poll) listing the networks you do not use; measure before and
+  after in docs/STACK.md, and never exclude a network you post to.

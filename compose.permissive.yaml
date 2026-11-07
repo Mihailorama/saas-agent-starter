@@ -18,3 +18,12 @@ services:
     profiles: !override [agpl-disabled]
   grafana:
     profiles: !override [agpl-disabled]
+
+  # No Postiz (AGPL-3.0) in the marketing profile: schedule posts natively or with a tool you
+  # license (docs/LICENSES.md). SerpBear (MIT) and the site stay.
+  postiz:
+    profiles: !override [agpl-disabled]
+  postiz-db:
+    profiles: !override [agpl-disabled]
+  postiz-namespace:
+    profiles: !override [agpl-disabled]

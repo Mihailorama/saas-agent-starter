@@ -1,0 +1,29 @@
+---
+import Base from '../../layouts/Base.astro';
+import { posts } from '../../posts.ts';
+import { site } from '../../site.ts';
+
+const all = await posts();
+const fmt = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
+---
+
+<Base title="Blog" description={`Product notes, guides and release news from the ${site.name} team.`}>
+  <div class="mx-auto max-w-3xl px-6 py-16">
+    <h1 class="text-3xl font-bold tracking-tight">Blog</h1>
+    <ul class="mt-8 space-y-8">
+      {
+        all.map((p) => (
+          <li>
+            <a href={`/blog/${p.id}/`} class="text-xl font-semibold hover:underline">
+              {p.data.title}
+            </a>
+            <p class="mt-1 text-sm text-muted-foreground">
+              <time datetime={p.data.pubDate.toISOString()}>{fmt.format(p.data.pubDate)}</time>
+            </p>
+            <p class="mt-2 text-muted-foreground">{p.data.description}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</Base>

@@ -103,7 +103,9 @@ for (const p of py) {
 
 // Images: each must be documented with its license.
 const licensesDoc = readFileSync('docs/LICENSES.md', 'utf8');
-const dockerfiles = ['apps/api', 'apps/web', 'services/worker-py'].map((d) => `${d}/Dockerfile`);
+const dockerfiles = ['apps/api', 'apps/web', 'apps/site', 'services/worker-py'].map(
+  (d) => `${d}/Dockerfile`,
+);
 const images = new Set(
   [
     ...['docker-compose.yml', 'compose.permissive.yaml'].flatMap((f) => [
