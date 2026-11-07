@@ -5,6 +5,7 @@ import {
   Building2,
   Check,
   ChevronsUpDown,
+  Cookie,
   CreditCard,
   Eye,
   FolderKanban,
@@ -46,7 +47,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { identify, track } from '@/lib/analytics';
+import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
@@ -183,6 +184,11 @@ function UserMenu() {
         {user?.role === 'operator' && !session?.session.impersonatedBy && (
           <DropdownMenuItem onSelect={() => navigate({ to: '/admin' })}>
             <ShieldAlert className="size-4" /> Operator console
+          </DropdownMenuItem>
+        )}
+        {privacyChoicesLabel && (
+          <DropdownMenuItem onSelect={showPrivacyChoices}>
+            <Cookie className="size-4" /> {privacyChoicesLabel}
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />

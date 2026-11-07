@@ -276,6 +276,10 @@ services:
       SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
       # Origins of the enabled analytics sinks for the CSP, e.g. "https://*.posthog.com"
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
+      # Consent regime (docs/product-analytics.md#consent); defaults: opt-in everywhere
+      CONSENT_MODE: ${CONSENT_MODE:-opt-in}
+      CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
+      CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
       # Chatwoot widget origin for the CSP, e.g. "http://localhost:3300"
       SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
     depends_on: [api]
@@ -442,6 +446,9 @@ services:
         VITE_GA4_ID: ${VITE_GA4_ID:-}
     environment:
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
+      CONSENT_MODE: ${CONSENT_MODE:-opt-in}
+      CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
+      CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
     ports: ["127.0.0.1:${SITE_PORT:-8090}:8080"]
 
   # One-shots: role + database `postiz` on our Postgres server, namespace `postiz` in our

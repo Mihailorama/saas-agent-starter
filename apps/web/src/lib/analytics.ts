@@ -1,7 +1,8 @@
 // Product analytics: one typed `track()` that fans out to the sinks configured by env.
 // Every sink is optional; with no env set nothing loads and no request is made.
 // - Umami (self-hosted, cookieless): loads right away, gets every event.
-// - PostHog, GA4, Yandex Metrika (third parties): load only after the user consents,
+// - PostHog, GA4, Yandex Metrika (third parties): load only after the user consents
+//   (vanilla-cookieconsent; opt-out regime only where the deployment says so),
 //   never receive events marked `pii` in config/events.json.
 // Rage/dead clicks, web vitals and exceptions come from PostHog autocapture, not from here.
 // Catalog, tiers and replacement criteria: docs/product-analytics.md.
@@ -35,13 +36,21 @@ type Win = Window & {
 const w = window as Win;
 
 /** True when a third-party sink is configured, i.e. the consent banner has something to ask. */
-export const consentNeeded = Boolean(config.posthog.key || config.ga4 || config.ym.id);
-const CONSENT_KEY = 'analytics-consent';
-
-export function consent(): 'granted' | 'denied' | undefined {
-  const v = localStorage.getItem(CONSENT_KEY);
-  return v === 'granted' || v === 'denied' ? v : undefined;
-}
+const consentNeeded = Boolean(config.posthog.key || config.ga4 || config.ym.id);
+// Regime per request: nginx writes the meta tag from CONSENT_MODE or the edge's country header
+// (docs/product-analytics.md#consent). Anything else, the Vite dev server included: opt-in.
+const consentMode =
+  document.querySelector<HTMLMetaElement>('meta[name="consent-mode"]')?.content === 'opt-out'
+    ? 'opt-out'
+    : 'opt-in';
+/** Label of the link that reopens the consent choices; undefined when there is nothing to choose. */
+export const privacyChoicesLabel = !consentNeeded
+  ? undefined
+  : consentMode === 'opt-out'
+    ? 'Do Not Sell or Share My Personal Information'
+    : 'Cookie settings';
+export const showPrivacyChoices = async () =>
+  (await import('vanilla-cookieconsent')).showPreferences();
 
 const firstParty: Sink[] = [];
 const thirdParty: Sink[] = [];
@@ -107,6 +116,11 @@ function ga4Sink(): Sink {
     // biome-ignore lint/complexity/noArguments: required by gtag.js
     w.dataLayer!.push(arguments);
   };
+  // Google Consent Mode v2, basic mode: gtag.js loads only after consent, so analytics storage
+  // is granted when it runs. No ads category: the ad signals stay denied.
+  const denied = { ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied' };
+  w.gtag('consent', 'default', { ...denied, analytics_storage: 'denied' });
+  w.gtag('consent', 'update', { analytics_storage: 'granted' });
   w.gtag('js', new Date());
   w.gtag('config', id, { send_page_view: false });
   loadScript(`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`);
@@ -149,12 +163,76 @@ async function startThirdParty() {
   if (lastRoute) for (const send of thirdParty) send('page_view', { route: lastRoute });
 }
 
-/** Records the banner answer; granting loads the third-party sinks immediately. */
-export function setConsent(granted: boolean) {
-  localStorage.setItem(CONSENT_KEY, granted ? 'granted' : 'denied');
-  track('consent_set', { analytics: granted });
-  if (granted) void startThirdParty();
-  else posthog?.opt_out_capturing();
+/**
+ * Consent banner and preferences (vanilla-cookieconsent). opt-in: sinks start only after
+ * "Allow"; opt-out: they start right away unless the browser sends Global Privacy Control.
+ * Withdrawing clears the sinks' cookies and reloads the page, so nothing keeps running.
+ */
+async function startConsent() {
+  const [cc] = await Promise.all([
+    import('vanilla-cookieconsent'),
+    import('vanilla-cookieconsent/dist/cookieconsent.css'),
+  ]);
+  const apply = () => {
+    if (cc.acceptedCategory('analytics')) void startThirdParty();
+  };
+  const answered = () => {
+    track('consent_set', { analytics: cc.acceptedCategory('analytics') });
+    apply();
+  };
+  await cc.run({
+    mode: consentMode,
+    respectGpc: true,
+    categories: {
+      necessary: { enabled: true, readOnly: true },
+      analytics: {
+        enabled: consentMode === 'opt-out',
+        autoClear: {
+          cookies: [{ name: /^_ga/ }, { name: /^_ym/ }, { name: /^ph_/ }],
+          reloadPage: true,
+        },
+      },
+    },
+    onFirstConsent: answered,
+    onChange: answered,
+    language: {
+      default: 'en',
+      translations: {
+        en: {
+          consentModal: {
+            title: 'Usage analytics',
+            description:
+              'We use analytics to see where the product works and where it gets in your way.',
+            acceptAllBtn: 'Allow',
+            acceptNecessaryBtn: 'Only necessary',
+            showPreferencesBtn: 'Choose',
+          },
+          preferencesModal: {
+            title: 'Privacy choices',
+            acceptAllBtn: 'Allow all',
+            acceptNecessaryBtn: 'Only necessary',
+            savePreferencesBtn: 'Save choices',
+            closeIconLabel: 'Close',
+            sections: [
+              {
+                title: 'Necessary',
+                description: 'Sign-in and security. Always on.',
+                linkedCategory: 'necessary',
+              },
+              {
+                title: 'Usage analytics',
+                description:
+                  'Product analytics services (for example PostHog or Google Analytics) that see' +
+                  ' how the app is used. Turn this off to stop sharing your usage data with them.',
+                linkedCategory: 'analytics',
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+  apply();
 }
 
 // Email addresses and UUIDs never leave the browser in event props.
@@ -239,7 +317,7 @@ export async function aiFeedback(f: {
 /** Starts the sinks allowed so far. Called once from main.tsx. */
 export function initAnalytics() {
   if (config.umami.src && config.umami.websiteId) firstParty.push(umamiSink());
-  if (consent() === 'granted') void startThirdParty();
+  if (consentNeeded) void startConsent();
   // Browser validation that blocked a submit: field name and reason only, never the value.
   document.addEventListener(
     'invalid',

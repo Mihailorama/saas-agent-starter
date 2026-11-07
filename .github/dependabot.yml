@@ -22,7 +22,7 @@ updates:
     schedule: { interval: weekly }
     commit-message: { prefix: chore, include: scope }
   - package-ecosystem: docker
-    directories: [/apps/api, /apps/web, /services/worker-py]
+    directories: [/apps/api, /apps/web, /services/worker-py, /infra/backup]
     schedule: { interval: weekly }
     commit-message: { prefix: chore, include: scope }
     ignore:

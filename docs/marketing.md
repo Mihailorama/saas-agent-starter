@@ -62,7 +62,8 @@ then adds `xhtml:link` alternates. Only list a translation that exists.
 The site runs the web app's `track()` and consent code unchanged
 (`apps/web/src/lib/analytics.ts`, imported by `src/scripts/analytics.ts`), with the same
 `VITE_*` env and the same rules ([product-analytics.md](product-analytics.md)): nothing loads
-without env; PostHog/GA4 only after consent (the site has its own small banner); Umami
+without env; PostHog/GA4 only after consent (the same vanilla-cookieconsent banner and regime
+settings, `CONSENT_*` on the `site` container, plus a footer link to reopen the choices); Umami
 cookieless. Page views use the path as the route. Links with `data-cta="<id>"` send
 `site_cta_clicked` (catalogued in `config/events.json`, checked by `pnpm check:events`, which now
 also scans `apps/site/src`). The journey `site-to-signup` in `config/journeys.json` (CTA click,
