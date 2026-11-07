@@ -79,7 +79,7 @@ Notes:
   `postgres` image.
 - Product-analytics code dependencies (checked by the gate like every npm package):
   `posthog-js` is `Apache-2.0 AND MIT` (both permissive; ship the notices), `@langfuse/browser`
-  is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
+  is MIT, `vanilla-cookieconsent` (consent banner) is MIT with no dependencies. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
 - `ghcr.io/promptfoo/promptfoo`: Promptfoo itself is MIT, but its npm dependency tree is not
   (checked 2026-11-06 with `promptfoo@0.125.1`: `@img/sharp-libvips-*` LGPL-3.0-or-later,

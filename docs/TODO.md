@@ -131,6 +131,19 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **PII redaction with Microsoft Presidio: needs an ADR 0005 decision.** The support triage's
+  LLM output (`services/worker-py/worker/support.py` `scrub`), the feedback-to-issue hook
+  (`apps/api/src/routes/hooks.ts`) and the browser `track()` mask only emails (and UUIDs) with a
+  bounded regex. Presidio (MIT, `en_core_web_sm`) would also catch names, phones, cards, IBANs and
+  IPs, measured 2026-11-07 at ~165-200 MiB RSS for English (~360 MiB with a second language), but
+  `pnpm check:licenses` rejects 6 of its transitive packages: `numpy` (has a `Zlib` part), `regex`
+  (`CNRI-Python`), and `Jinja2`, `blis`, `requests-file`, `shellingham`, whose metadata strings
+  ("BSD License", "Apache 2.0", "ISC License") the gate does not map. The official
+  `mcr.microsoft.com/presidio-analyzer` image avoids the code gate but uses `en_core_web_lg`:
+  ~740 MiB RSS idle. Unblock: the owner adds `Zlib` and `CNRI-Python` to the allowlist and the
+  three strings as aliases (ADR 0005), then call Presidio in-process in the worker for
+  `support.py`, and from the API hook through an opt-in sidecar of the worker image (compose
+  profile `pii`) that fails closed. The browser keeps its regex (no Python there).
 - **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.
