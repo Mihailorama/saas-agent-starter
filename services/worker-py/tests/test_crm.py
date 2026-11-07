@@ -23,7 +23,7 @@ from tests.test_billing import PLANS, event, subscribe
 from worker import settings
 from worker.billing import BillingActivities
 from worker.crm import BOOKING_PREFIX, Booking, CrmActivities, CrmEvent, Twenty, load_config
-from worker.s3 import S3
+from worker.s3 import S3, NotFound
 from worker.support import Chatwoot
 from worker.workflows import BillingEventWorkflow, CrmSyncWorkflow
 
@@ -332,7 +332,7 @@ async def test_booking_notes_once_per_change_and_repair_targets(
         result = await acts.sync(
             CrmEvent("booking", f"cal:{trigger}:{uid}:{start}", bookingKey=key)
         )
-        with pytest.raises(httpx2.HTTPStatusError):  # the attendee's details are gone after use
+        with pytest.raises(NotFound):  # the attendee's details are gone after use
             await files.get(key)
         return result
 

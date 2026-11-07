@@ -23,7 +23,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from worker.billing import Plans
-from worker.s3 import S3
+from worker.s3 import S3, NotFound
 from worker.support import Chatwoot, SupportConversation, obj
 
 log = logging.getLogger(__name__)
@@ -414,9 +414,7 @@ class CrmActivities:
     async def _booking(self, crm: Crm, e: CrmEvent) -> str:
         try:
             doc = json.loads(await self.files.get(e.bookingKey))
-        except httpx2.HTTPStatusError as err:
-            if err.response.status_code != 404:
-                raise
+        except NotFound:
             return "gone"  # deleted after an earlier attempt wrote the note, or by retention
         b = Booking(**doc)
         if b.trigger not in BOOKING_TITLES:
