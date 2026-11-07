@@ -17,12 +17,15 @@ groups:
         annotations: { summary: "Temporal activities keep failing" }
   - name: ai
     rules:
-      - alert: AiScoreDrop
-        # ai_score_avg: mean eval/review score per purpose (metric names: AGENTS.md "Observability").
-        expr: avg by (purpose) (ai_score_avg) < 0.8 * avg by (purpose) (avg_over_time(ai_score_avg[7d] offset 1d))
-        for: 30m
+      # Quality (judge scores, user feedback) is alerted on in PostHog/Langfuse, not here (ADR 0009).
+      - alert: AiErrorRate
+        expr: |
+          sum by (purpose, model) (rate(ai_calls_total{status="error"}[15m]))
+            / sum by (purpose, model) (rate(ai_calls_total[15m])) > 0.1
+        for: 15m
         labels: { severity: ticket }
-        annotations: { summary: "AI score for {{ $labels.purpose }} dropped >20% vs last week" }
+        annotations:
+          { summary: "More than 10% of {{ $labels.purpose }} calls to {{ $labels.model }} fail" }
       - alert: AiCostSpike
         expr: sum(increase(ai_cost_usd_total[1h])) > 2 * sum(increase(ai_cost_usd_total[1h] offset 1d))
         for: 1h

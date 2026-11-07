@@ -1,7 +1,7 @@
 {
   "uid": "llm",
   "title": "LLM",
-  "description": "Placeholder until the worker emits the metric names agreed in AGENTS.md (Observability): ai_calls_total, ai_call_latency_seconds, ai_cost_usd_total, ai_score_avg.",
+  "description": "LLM calls, latency and spend from the worker (metric names in AGENTS.md \"Observability\"). Quality scores, evaluators and feedback live in PostHog or Langfuse (docs/adr/0009-llm-ops.md).",
   "tags": ["saas-agent-starter"],
   "schemaVersion": 41,
   "time": {
@@ -85,7 +85,7 @@
       "gridPos": {
         "x": 0,
         "y": 8,
-        "w": 12,
+        "w": 24,
         "h": 8
       },
       "fieldConfig": {
@@ -103,38 +103,6 @@
           },
           "expr": "sum by (purpose, model) (increase(ai_cost_usd_total[1h]))",
           "legendFormat": "{{purpose}} {{model}}"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "Average score by purpose",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 8,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "avg by (purpose) (ai_score_avg)",
-          "legendFormat": "{{purpose}}"
         }
       ]
     }

@@ -10,3 +10,6 @@ playwright-report/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+evals/**/.out/
+evals/**/.effective.json
+evals/**/pulled.jsonl

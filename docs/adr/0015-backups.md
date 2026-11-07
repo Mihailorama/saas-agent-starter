@@ -4,8 +4,8 @@ Status: accepted
 
 ## Context
 
-There were no backups: losing the disk lost every customer's data. All Postgres databases (app,
-Temporal, and GlitchTip/Umami when their profiles run) live on one Postgres server; uploaded
+There were no backups: losing the disk lost every customer's data. The app, Temporal, GlitchTip, Umami
+and Langfuse databases live on one Postgres server (Chatwoot runs its own); uploaded
 files and AI call content live in S3 buckets. A backup that has never been restored is a hope,
 so restores must be tested automatically and their absence must page someone.
 
@@ -69,6 +69,6 @@ so restores must be tested automatically and their absence must page someone.
   pages after 10 minutes.
 - The restore check needs free disk space for one more copy of the database in the
   `restorecheck` volume, and CPU/IO while it replays WAL.
-- Not covered: Redis (rate-limit counters, rebuilt on their own), Prometheus/Loki/Jaeger
-  telemetry, unlogged tables, and anything outside this Postgres server and these buckets
-  (docs/backups.md lists them).
+- Not covered: Chatwoot (own Postgres and file volume; follow-up in docs/TODO.md), ClickHouse
+  (Langfuse traces), Redis (rate-limit counters, queues), Prometheus/Loki/Jaeger telemetry and
+  unlogged tables. docs/backups.md lists them.

@@ -38,12 +38,12 @@ restore check within a minute, then the schedule below. Watch it with
 
 ## What is backed up
 
-| Data                                                                     | How                                               | Point in time            |
-| ------------------------------------------------------------------------ | ------------------------------------------------- | ------------------------ |
-| Postgres server, all databases: `app`, `temporal`, `temporal_visibility` | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
-| `glitchtip` (`glitchtip` profile), `umami` (`analytics` profile)         | same: they live on the same Postgres server       | same                     |
-| Any database a future profile creates on this server                     | same, automatically                               | same                     |
-| App buckets `attachments`, `ai-calls` (`BACKUP_APP_BUCKETS`)             | rclone, hourly encrypted copy + dated versions    | hourly                   |
+| Data                                                                                        | How                                               | Point in time            |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                    | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
+| `glitchtip` (`glitchtip` profile), `umami` (`analytics` profile), `langfuse` (`llmops`)     | same: they live on the same Postgres server       | same                     |
+| Any database a future profile creates on this server                                        | same, automatically                               | same                     |
+| App buckets `attachments`, `ai-calls`, `langfuse` (`BACKUP_APP_BUCKETS`; missing = skipped) | rclone, hourly encrypted copy + dated versions    | hourly                   |
 
 **Not backed up:**
 
@@ -52,13 +52,15 @@ restore check within a minute, then the schedule below. Watch it with
 - **Prometheus, Loki, Jaeger** (observability profile): telemetry, not customer data.
 - **Unlogged tables** on any database: Postgres does not write them to WAL, restores have them
   empty (the e2e test relies on this to prove the restore check fails on a difference).
-- **ClickHouse / Langfuse**: not part of this stack (the web uses Langfuse Cloud). A self-hosted
-  Langfuse keeps traces in ClickHouse and files in S3: its Postgres database is covered only if
-  you put it on this server, ClickHouse needs its own tool (e.g. `clickhouse-backup`), its bucket
-  must be added to `BACKUP_APP_BUCKETS`.
-- **Chatwoot** (or any other profile with its own storage): its database is covered if it lives
-  on this Postgres server; its Redis and its file storage are not, unless the files go to an
-  S3 bucket listed in `BACKUP_APP_BUCKETS`.
+- **ClickHouse** (`llmops` profile): Langfuse's traces and scores in the `clickhousedata`
+  volume. Langfuse's Postgres database and its `langfuse` bucket are covered (above); losing
+  ClickHouse loses trace history, not prompts or configuration. Back it up with ClickHouse's own
+  `BACKUP ... TO S3` if that history matters.
+- **Chatwoot** (`support` profile): **not covered.** It runs its own Postgres
+  (`chatwoot-postgres`, pgvector image, volume `chatwoot-pgdata`), not this server, plus
+  attachments in the `chatwoot-storage` volume and its queue in Redis db 2. Conversations with
+  customers live there: until it has its own backup (docs/TODO.md), take `pg_dump` of
+  `chatwoot-postgres` and a copy of `chatwoot-storage` on your own schedule.
 - Container images, `.env` and secrets: rebuild from git; secrets belong in your password manager.
 - The backup bucket itself: protect it with the provider's versioning / object lock and keep it
   in another account or region if you need to survive a compromised server.

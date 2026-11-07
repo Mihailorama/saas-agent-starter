@@ -79,7 +79,7 @@ services:
       RESTORE_CHECK_TABLES: ${RESTORE_CHECK_TABLES:-app.public.organization app.public.user app.public.projects app.public.audit_log}
       RESTORE_CHECK_TOLERANCE: ${RESTORE_CHECK_TOLERANCE:-0.05}
       BACKUP_PUSHGATEWAY_URL: ${BACKUP_PUSHGATEWAY_URL-http://pushgateway:9091}
-      BACKUP_APP_BUCKETS: ${BACKUP_APP_BUCKETS:-attachments ai-calls}
+      BACKUP_APP_BUCKETS: ${BACKUP_APP_BUCKETS:-attachments ai-calls langfuse}
       BACKUP_APP_S3_ENDPOINT: ${BACKUP_APP_S3_ENDPOINT:-http://s3:8333}
       BACKUP_APP_S3_REGION: ${BACKUP_APP_S3_REGION:-us-east-1}
       BACKUP_APP_S3_ACCESS_KEY_ID: ${BACKUP_APP_S3_ACCESS_KEY_ID:-local-dev-access-key}
