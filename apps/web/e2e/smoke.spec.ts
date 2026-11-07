@@ -41,5 +41,7 @@ test('AI transparency page is public', async ({ page }) => {
   await page.goto('/ai-transparency');
   await expect(page.getByRole('heading', { name: 'How we use AI' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Project summaries' })).toBeVisible();
-  await expect(page.getByText('claude-haiku-5-5', { exact: false })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Support request triage' })).toBeVisible();
+  // One model list per purpose.
+  await expect(page.getByText('claude-haiku-5-5', { exact: false })).toHaveCount(2);
 });
