@@ -46,6 +46,57 @@ export const ALIASES = {
   // The PSF License Agreement is the operative part of the Python-2.0 license stack.
   'PSF-2.0': 'Python-2.0',
 };
+// Reviewed packages whose metadata the gate cannot read (e.g. the full license text in the License
+// field). Exact name AND version: another version fails again until reviewed. `spdx` still has to
+// pass ALLOWED. Each needs owner approval and a line in ADR 0005 and docs/LICENSES.md.
+export const REVIEWED = [
+  {
+    ecosystem: 'PyPI',
+    name: 'tiktoken',
+    version: '0.14.0',
+    spdx: 'MIT',
+    reason:
+      'License field is the full MIT text; checked against its LICENSE file, owner approval 2026-11-07',
+  },
+];
+const reviewed = (ecosystem, name, version) =>
+  REVIEWED.find((r) => r.ecosystem === ecosystem && r.name === name && r.version === version);
+
+// A classifier naming a disallowed copyleft/source-available family vetoes an allowed-looking
+// field. MPL 2.0 is allowed; MPL 1.x is not.
+const copyleft =
+  /GPL|General Public License|Affero|MPL 1\.|Mozilla Public License 1\.|EUPL|SSPL|Server Side|Business Source|Commons Clause/i;
+const known = (v) => v && v !== 'UNKNOWN';
+const classifiers = (p) =>
+  known(p['License-Classifier']) ? p['License-Classifier'].split('; ') : [];
+
+/** License strings of one pip-licenses row that need a verdict. */
+export const pyLicenses = (p) => {
+  const r = reviewed('PyPI', p.Name, p.Version);
+  if (r) return [r.spdx];
+  return [p['License-Expression'], p['License-Metadata'], ...classifiers(p)].filter(known);
+};
+
+/**
+ * One pip-licenses row: [passes?, license as shown]. A reviewed package uses its entry's SPDX id. A
+ * PEP 639 License-Expression is authoritative; otherwise the declared License field or the trove
+ * classifiers must pass (the field is often an SPDX id like `Apache-2.0` while the classifier is
+ * the vaguer `Apache Software License`; free-text fields fall back to the classifiers). Several
+ * classifiers (joined by "; ") must all pass.
+ */
+export function pyVerdict(p, ok) {
+  const r = reviewed('PyPI', p.Name, p.Version);
+  if (r) return [ok.get(r.spdx) === true, `${r.spdx} (reviewed)`];
+  const expr = p['License-Expression'];
+  const [field, classifier] = [p['License-Metadata'], p['License-Classifier']];
+  const cls = classifiers(p);
+  const pass = known(expr)
+    ? ok.get(expr)
+    : !copyleft.test(classifier) &&
+      ((known(field) && ok.get(field)) || (cls.length > 0 && cls.every((c) => ok.get(c))));
+  return [pass === true, known(expr) ? expr : `${field} / ${classifier}`];
+}
+
 const run = (cmd, args, opts) =>
   execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 1e8, ...opts });
 
@@ -81,25 +132,13 @@ function main() {
 
   // JS: every installed package, dev included.
   const js = JSON.parse(run('pnpm', ['licenses', 'list', '--json']));
-  // Python: everything in the worker venv, tooling included. A PEP 639 License-Expression
-  // is authoritative; otherwise the declared License field or the trove classifiers must pass
-  // (the field is often an SPDX id like `Apache-2.0` while the classifier is the vaguer
-  // `Apache Software License`; free-text fields fall back to the classifiers). Several
-  // classifiers (joined by "; ") must all pass.
+  // Python: everything in the worker venv, tooling included (rules: pyVerdict).
   const py = JSON.parse(
     run('uv', ['run', '--locked', 'pip-licenses', '--format=json', '--from=all', '--with-system'], {
       cwd: 'services/worker-py',
     }),
   );
-  const known = (v) => v && v !== 'UNKNOWN';
-  const classifiers = (p) =>
-    known(p['License-Classifier']) ? p['License-Classifier'].split('; ') : [];
-  const ok = verdicts([
-    ...Object.keys(js),
-    ...py
-      .flatMap((p) => [p['License-Expression'], p['License-Metadata'], ...classifiers(p)])
-      .filter(known),
-  ]);
+  const ok = verdicts([...Object.keys(js), ...py.flatMap(pyLicenses)]);
 
   let jsCount = 0;
   for (const [license, pkgs] of Object.entries(js)) {
@@ -110,19 +149,8 @@ function main() {
       mpl.push(...pkgs.map((p) => `js  ${p.name}@${p.versions} (${license})`));
   }
 
-  // A classifier naming a disallowed copyleft/source-available family vetoes an allowed-looking
-  // field. MPL 2.0 is allowed; MPL 1.x is not.
-  const copyleft =
-    /GPL|General Public License|Affero|MPL 1\.|Mozilla Public License 1\.|EUPL|SSPL|Server Side|Business Source|Commons Clause/i;
   for (const p of py) {
-    const expr = p['License-Expression'];
-    const [field, classifier] = [p['License-Metadata'], p['License-Classifier']];
-    const cls = classifiers(p);
-    const pass = known(expr)
-      ? ok.get(expr)
-      : !copyleft.test(classifier) &&
-        ((known(field) && ok.get(field)) || (cls.length > 0 && cls.every((c) => ok.get(c))));
-    const shown = known(expr) ? expr : `${field} / ${classifier}`;
+    const [pass, shown] = pyVerdict(p, ok);
     inventory.push(['PyPI', p.Name, p.Version, shown]);
     if (!pass) bad.push(`py  ${p.Name}@${p.Version} (${shown})`);
     else if (isMpl(shown)) mpl.push(`py  ${p.Name}@${p.Version} (${shown})`);

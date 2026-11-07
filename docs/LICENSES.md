@@ -212,6 +212,11 @@ Notes:
   (`Apache-2.0 AND CNRI-Python`). Zlib and CNRI-Python were added to the allowlist for the last
   two (owner decision 2026-11-07, ADR 0005), and the aliases "BSD License" (`Jinja2`, `blis`),
   "Apache 2.0" (`requests-file`) and "ISC License" (`shellingham`).
+- LiteLLM gateway (ADR 0024): `litellm` (MIT) pulls `tiktoken` 0.14.0, whose metadata has no
+  License-Expression and no classifiers; its License field is the full MIT text. Checked against
+  its LICENSE file and accepted as `MIT` through a reviewed-package entry pinned to that exact
+  version (`REVIEWED` in `scripts/license-check.mjs`, owner approval 2026-11-07, ADR 0005); any
+  other version fails the gate again until reviewed.
 - License gate tooling (dev group of the worker, not in the image): `license-expression`
   (Apache-2.0, parses the SPDX expressions) with `boolean.py` (BSD-2-Clause). Its wheel also
   carries the ScanCode LicenseDB index (`license_expression/data/scancode-licensedb-index.json`),
