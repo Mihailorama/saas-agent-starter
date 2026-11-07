@@ -208,20 +208,22 @@ Not provided. The images, env contract and health endpoints are ready for it; wh
   services or their own operators/charts (Temporal publishes an official Helm chart).
 - Rolling updates require expand/contract (section 5), which the gate already enforces.
 
-### Customer on-prem and the RU contour
+### Customer on-prem, data-residency and air-gapped installs
 
 - Same core: the customer runs `compose.prod.yaml` on their host (tier S/M) or the Kubernetes
-  path. They need the images, not this repository's CI: mirror them into a registry they control,
-  for the RU contour a registry inside the Russian Federation (Harbor, GitLab or Nexus registry,
-  or a cloud registry in-country): `crane copy ghcr.io/<owner>/<repo>/api@sha256:... <mirror>/api:v1.4.0`
-  (crane, Apache-2.0, copies the manifest unchanged, so the digest stays the same). Set `IMAGE_REPO` to the mirror. Air-gapped: `docker save`/`docker load`
-  and `DEPLOY_HOST=local`, which resolves digests from the local daemon.
+  path. They need the images, not this repository's CI. Data-residency or air-gapped customers:
+  mirror the images to a registry in the required jurisdiction or inside their network (Harbor,
+  GitLab or Nexus registry, a cloud registry in that region):
+  `crane copy ghcr.io/<owner>/<repo>/api@sha256:... <mirror>/api:v1.4.0` (crane, Apache-2.0,
+  copies the manifest unchanged, so the digest stays the same), and set `IMAGE_REPO` to the
+  mirror. Fully offline: `docker save`/`docker load` and `DEPLOY_HOST=local`, which resolves
+  digests from the local daemon.
 - Infrastructure images (Postgres, Redis/Valkey, Temporal, Caddy, SeaweedFS) are mirrored the same
   way; list them with `docker compose -f compose.prod.yaml config --images`.
-- No traffic leaves the contour if you keep it so: ACME needs outbound access to Let's Encrypt;
-  without it use `CADDY_TLS=internal` and distribute Caddy's root, or mount the customer's
-  certificate (`tls /path/cert.pem /path/key.pem` in the Caddyfile). Analytics: Umami
-  (docs/product-analytics.md); AI: `AI_CONTOUR=ru` with an in-country endpoint (README "AI").
+- Without outbound access to an ACME CA use `CADDY_TLS=internal` and distribute Caddy's root, or
+  mount the customer's certificate (`tls /path/cert.pem /path/key.pem` in the Caddyfile).
+  Self-hosted analytics: Umami (docs/product-analytics.md); AI: a self-hosted or in-region
+  OpenAI-compatible endpoint (README "AI").
 - Licenses for the delivery: docs/LICENSES.md, SBOMs from `pnpm run sbom`; AGPL-free with
   `REDIS_IMAGE=valkey/valkey:9.1-alpine`.
 

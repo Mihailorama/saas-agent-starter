@@ -7,7 +7,8 @@ Status: accepted (owner decision 2026-11-07: the deploy path is not tied to Cool
 The starter ran in production only as "any Docker host / Coolify": images were built on the
 server, secrets lived in whatever the host offered, there was no TLS, no rollback and no rule
 for schema changes. Deliveries range from one small VPS to customer Kubernetes and on-prem
-installs inside the RU contour, so the path must not depend on one provider or panel.
+installs with data-residency or air-gap requirements, so the path must not depend on one
+provider or panel.
 
 ## Decision
 
