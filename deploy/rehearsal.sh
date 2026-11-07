@@ -86,6 +86,7 @@ docker build -q -f apps/web/Dockerfile --build-arg VITE_RELEASE=v1 -t "$REPO/web
 ctx=$work/ctx
 mkdir -p "$ctx"
 journal=packages/db/migrations/meta/_journal.json
+base=$(jq '.entries | length' "$journal") # migrations in this checkout (v1)
 add_migration() { # <from image> <to tag> <tag of migration> <sql>
   local now
   now=$(date +%s%3N)
@@ -112,24 +113,24 @@ for v in v1 v2 v3; do echo "$v api $(digest_of "api:$v")"; done
 step "deploy v1"
 node scripts/deploy.mjs rehearsal --version v1
 expect_api v1
-expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" 2 "applied migrations"
+expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" "$base" "applied migrations"
 
 step "upgrade to v2 (migrate runs before api/worker start)"
 node scripts/deploy.mjs rehearsal --version v2
 expect_api v2
-expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" 3 "applied migrations"
+expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" $((base + 1)) "applied migrations"
 expect_eq "$(sql "select count(*) from information_schema.columns where column_name = 'rehearsal_note'")" 1 \
   "expand column present"
 
 step "rollback to v1 (old code on the expanded schema)"
 node scripts/deploy.mjs rehearsal --rollback
 expect_api v1
-expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" 3 "applied migrations"
+expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" $((base + 1)) "applied migrations"
 
 step "deploy v3 with a failing migration: stopped before anything restarts, v1 keeps serving"
 if node scripts/deploy.mjs rehearsal --version v3; then echo "FAIL: v3 deployed" >&2; exit 1; fi
 expect_api v1
-expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" 3 "applied migrations"
+expect_eq "$(sql 'select count(*) from drizzle.__drizzle_migrations')" $((base + 1)) "applied migrations"
 expect_eq "$(sed -n 's/^RELEASE_VERSION=//p' "$server/release.env")" v1 "current release"
 probe
 node scripts/deploy.mjs rehearsal --status

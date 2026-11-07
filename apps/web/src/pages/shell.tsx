@@ -1,5 +1,5 @@
-import { useQueryClient } from '@tanstack/react-query';
-import { Link, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, Navigate, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import {
   Bug,
   Building2,
@@ -14,6 +14,7 @@ import {
   Moon,
   Plus,
   ScrollText,
+  ShieldCheck,
   Sparkles,
   Sun,
 } from 'lucide-react';
@@ -45,6 +46,7 @@ import { authClient } from '@/lib/auth';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
+import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
 
 const initials = (s: string) =>
   s
@@ -167,6 +169,9 @@ function UserMenu() {
           {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
           {theme === 'dark' ? 'Light mode' : 'Dark mode'}
         </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate({ to: '/settings/security' })}>
+          <ShieldCheck className="size-4" /> Security
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={async () => {
@@ -223,6 +228,10 @@ export function Shell() {
     if (userId) identify(userId);
   }, [userId]);
   const onAiCalls = useLocation({ select: (l) => l.pathname.startsWith('/ai-calls') });
+  const onSecurity = useLocation({ select: (l) => l.pathname === '/settings/security' });
+  // Org requires 2FA and this user has none: the API refuses tenant data, so enrol first.
+  const policy = useQuery({ ...policyQuery, enabled: Boolean(orgs?.length) });
+  const mustEnrol = policy.error?.message === TWO_FACTOR_REQUIRED;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
 
@@ -233,6 +242,8 @@ export function Shell() {
       </div>
     );
   }
+
+  if (mustEnrol && !onSecurity) return <Navigate to="/settings/security" />;
 
   if (!orgs?.length) {
     return (
@@ -262,7 +273,7 @@ export function Shell() {
           <OrgSwitcher />
         </div>
         <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, !onAiCalls && navActive)}>
+          <Link to="/" className={cn(navLink, !onAiCalls && !onSecurity && navActive)}>
             <FolderKanban className="size-4" /> Projects
           </Link>
           {isAdmin && (

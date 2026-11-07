@@ -239,18 +239,18 @@ kept serving and stayed the current release;
 then it tears everything down (`KEEP=1` keeps it). Needs `sops`, `age-keygen`, `docker`, `curl`,
 `jq`, `ss`. CI runs it on every push (`deploy-rehearsal` job).
 
-Result on the devserver, 2026-11-07 (Docker 29.6.2 with the containerd image store, Compose
+Result on the devserver, 2026-11-07 (Docker 29.6.2, Compose
 5.3.1, sops 3.13.3, age 1.3.2, Caddy 2.11.9), `REHEARSAL PASSED`, then torn down:
 
-- Secrets: 43 encrypted entries (values and comments); the plaintext copy deleted right after
+- Secrets: every value (and comment) of the env encrypted; the plaintext copy deleted right after
   encryption.
-- v1 deploy: migrations applied (2), health `https://app.localhost:28443/api/auth/ok` ->
-  `{"ok":true}` through Caddy's internal CA; `api` runs the v1 digest.
-- v2 upgrade: the expand migration applied (3) before `api`/`worker` restarted; `api` runs v2.
-- `--rollback`: `api` back on the v1 digest, healthy on the v2 schema (the expand column stays).
+- v1 deploy: all migrations of the checkout applied (N), health `https://app.localhost:28443/api/auth/ok` ->
+  `{"ok":true}` through Caddy's internal CA; `api` runs the v1 image.
+- v2 upgrade: the expand migration applied (N+1) before `api`/`worker` restarted; `api` runs v2.
+- `--rollback`: `api` back on the v1 image, healthy on the v2 schema (the expand column stays).
 - v3 with a broken migration (`ADD COLUMN ... no_such_type`): the deploy stopped with
   "migration failed: nothing was restarted", `api` kept running v1 (container not recreated), the
-  migration count stayed 3, the current release stayed v1 and the site kept answering.
+  migration count stayed N+1, the current release stayed v1 and the site kept answering.
 - Each deploy took about 40 s wall time on a warm image cache (`deploy.log`).
 - Headers through Caddy: HTTP/2 200, `strict-transport-security`, `content-security-policy` (from
   nginx), `x-content-type-options`, `referrer-policy`, `alt-svc: h3`, no `Server` header;

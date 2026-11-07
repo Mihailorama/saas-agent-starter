@@ -21,6 +21,7 @@ import { allowedOrigins, env } from './env.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
 import { hookRoutes } from './routes/hooks.ts';
 import { projectRoutes } from './routes/projects.ts';
+import { securityRoutes } from './routes/security.ts';
 import { supportHookRoutes, supportRoutes } from './routes/support.ts';
 import { redactUrl } from './sentry.ts';
 
@@ -107,6 +108,9 @@ export async function buildApp() {
   const authHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     const headers = fromNodeHeaders(req.headers);
     headers.delete('content-length');
+    // Better Auth reads the client IP from here (sessions, audit_log in mfa.ts): use Fastify's
+    // TRUST_PROXY-aware value, never a header the client made up.
+    headers.set('x-forwarded-for', req.ip);
     const res = await auth.handler(
       new Request(new URL(req.url, env.BETTER_AUTH_URL), {
         method: req.method,
@@ -135,12 +139,16 @@ export async function buildApp() {
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
   authRoute('/api/auth/sign-up/*', 10, ['POST']);
+  // Second factors and passkey sign-in (the twoFactor plugin also locks the account itself).
+  authRoute('/api/auth/two-factor/*', 10, ['POST']);
+  authRoute('/api/auth/passkey/verify-authentication', 10, ['POST']);
   authRoute('/api/auth/request-password-reset', 10, ['POST']);
   authRoute('/api/auth/send-verification-email', 10, ['POST']);
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
   await app.register(hookRoutes, { prefix: '/api/hooks' });
+  await app.register(securityRoutes, { prefix: '/api/security' });
   await app.register(supportHookRoutes, { prefix: '/api/hooks' });
   await app.register(supportRoutes, { prefix: '/api/support' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());

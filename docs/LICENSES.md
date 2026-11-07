@@ -106,6 +106,13 @@ Notes:
   a provider over SMTP instead. Email code dependencies: `@react-email/render` (MIT; React
   Email's renderer, `react`/`react-dom` MIT); the worker sends with Python's standard
   `smtplib`, no package.
+- Two-factor and passkey code dependencies ([ADR 0017](adr/0017-two-factor-and-passkeys.md)),
+  checked by the gate like every npm package: `@better-auth/passkey` (MIT) with
+  `@simplewebauthn/server` and `@simplewebauthn/browser` (MIT; the server's transitive deps are
+  `@peculiar/*`, `@hexagon/base64`, `@levischuck/tiny-cbor`, `pvtsutils`, `tsyringe` (MIT),
+  `asn1js` (BSD-3-Clause), `reflect-metadata` (Apache-2.0), `tslib` 1.x (0BSD)), `qrcode.react`
+  (ISC) for the enrolment QR code, and `otpauth` (MIT, tests only) to generate TOTP codes. The
+  TOTP plugin itself ships inside `better-auth` (MIT).
 
 - `chatwoot/chatwoot` (service desk, [docs/support.md](support.md)): the repository's
   [LICENSE](https://github.com/chatwoot/chatwoot/blob/develop/LICENSE) puts everything outside

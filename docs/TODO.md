@@ -1,5 +1,8 @@
 # Known limitations / backlog
 
+- **2FA/passkey audit rows are not atomic with the change** (`apps/api/src/mfa.ts`): written
+  after Better Auth commits, so a crash in between loses the row. Fix if it matters: Better Auth
+  database hooks inside its transaction once they cover plugin models.
 - **Transactional outbox for workflow starts.** `POST /api/projects` starts the Temporal
   workflow after commit; if Temporal is unreachable at that moment the start is logged and lost
   (`apps/api/src/routes/projects.ts`). Fix: write an outbox row in the same transaction and have a
