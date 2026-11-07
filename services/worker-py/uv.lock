@@ -1166,6 +1166,7 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "saas-core" },
     { name = "sentry-sdk" },
+    { name = "standardwebhooks" },
     { name = "temporalio" },
 ]
 
@@ -1176,7 +1177,6 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
-    { name = "standardwebhooks" },
 ]
 
 [package.metadata]
@@ -1190,6 +1190,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.45" },
     { name = "saas-core", directory = "../../crates/core" },
     { name = "sentry-sdk", specifier = ">=2.74" },
+    { name = "standardwebhooks", specifier = ">=1.1" },
     { name = "temporalio", specifier = ">=1.35" },
 ]
 
@@ -1200,5 +1201,4 @@ dev = [
     { name = "pytest", specifier = ">=9.2" },
     { name = "pytest-asyncio", specifier = ">=1.4" },
     { name = "ruff", specifier = ">=0.17" },
-    { name = "standardwebhooks", specifier = ">=1.1" },
 ]

@@ -69,11 +69,11 @@ Notes:
   an on-prem client gets none of them unless it sets their env vars.
 
 - Public API and webhooks (ADR 0018) add no container. Code dependencies, checked by the gate:
-  `@better-auth/api-key` (MIT) and, for tests only, the Standard Webhooks reference library
-  `standardwebhooks` (PyPI, MIT, no dependencies). The worker uses `cryptography` (Apache-2.0 OR
-  BSD-3-Clause; with `cffi` MIT-0 and `pycparser` BSD-3-Clause) to decrypt webhook signing
-  secrets. Self-hosted Svix (`svix/svix-server`, MIT) was
-  evaluated and not added: its open-source edition has no customer app portal.
+  `@better-auth/api-key` (MIT); in the worker, the official Standard Webhooks library
+  `standardwebhooks` (PyPI, MIT, no dependencies), which signs deliveries, and `cryptography`
+  (Apache-2.0 OR BSD-3-Clause; with `cffi` MIT-0 and `pycparser` BSD-3-Clause), which decrypts
+  the signing secrets. Self-hosted Svix (`svix/svix-server`, MIT) was evaluated and not added:
+  its open-source edition has no customer app portal.
 
 ## Permissive twin (replacement map)
 

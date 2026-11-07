@@ -1,8 +1,9 @@
 """Outbound webhooks: one delivery attempt per activity run, retried by Temporal with backoff.
 
 Signed per Standard Webhooks (webhook-id / webhook-timestamp / webhook-signature, HMAC-SHA256
-over `id.timestamp.body`). Before connecting, the host is resolved and every address checked:
-private, loopback, link-local and other non-global ranges are refused, then we connect to the
+over `id.timestamp.body`) with the official `standardwebhooks` library. Before connecting, the
+host is resolved and every address checked: private, loopback, link-local and other non-global
+ranges are refused, then we connect to the
 checked IP (Host header and TLS SNI keep the hostname), so DNS cannot swap the target between
 check and connect. Redirects are not followed and response bodies are never read.
 
@@ -14,7 +15,6 @@ apps/api/src/webhook-secret.ts, which only encrypts.
 import asyncio
 import base64
 import hashlib
-import hmac
 import os
 import socket
 import time
@@ -28,6 +28,7 @@ import asyncpg
 import httpx2
 from asyncpg.pool import PoolConnectionProxy
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from standardwebhooks import Webhook
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -101,9 +102,7 @@ def decrypt_secret(stored: str, endpoint_id: str, keys: Mapping[str, bytes]) -> 
 
 def sign(secret: str, msg_id: str, timestamp: int, body: str) -> str:
     """One Standard Webhooks `v1` signature; `secret` is `whsec_<base64>`."""
-    key = base64.b64decode(secret.removeprefix("whsec_"))
-    mac = hmac.new(key, f"{msg_id}.{timestamp}.{body}".encode(), hashlib.sha256).digest()
-    return f"v1,{base64.b64encode(mac).decode()}"
+    return Webhook(secret).sign(msg_id, datetime.fromtimestamp(timestamp, UTC), body)
 
 
 def is_blocked(ip: IPv4Address | IPv6Address, allowed: Sequence[Network] = ()) -> bool:

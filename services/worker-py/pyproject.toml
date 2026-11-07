@@ -14,6 +14,7 @@ dependencies = [
   "opentelemetry-sdk>=1.45",
   "saas-core",
   "sentry-sdk>=2.74",
+  "standardwebhooks>=1.1",
   "temporalio>=1.35",
 ]
 
@@ -24,7 +25,6 @@ dev = [
   "pytest>=9.2",
   "pytest-asyncio>=1.4",
   "ruff>=0.17",
-  "standardwebhooks>=1.1",
 ]
 
 [tool.uv]

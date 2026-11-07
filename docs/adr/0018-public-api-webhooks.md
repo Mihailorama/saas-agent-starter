@@ -53,8 +53,9 @@ datastore, so delivery runs on Temporal, which the stack already has.**
   Operators see every delivery in the Temporal UI; customers see attempts in Settings ->
   Webhooks, where they can replay.
 - Signing per [Standard Webhooks](https://www.standardwebhooks.com/) (HMAC-SHA256, `whsec_`
-  secrets, `webhook-*` headers), 15 lines of stdlib code; tests verify it with the reference
-  library (`standardwebhooks`, MIT, dev dependency). Rotation keeps the previous secret signing
+  secrets, `webhook-*` headers) with the official library (`standardwebhooks` on PyPI, MIT, no
+  dependencies; owner decision 2026-11-07); tests verify what receivers get with the same
+  reference library. Rotation keeps the previous secret signing
   for 24 h.
 - Secrets at rest: AES-256-GCM (`v1:<key id>:...`, endpoint id as additional data) with keys
   from `WEBHOOK_ENCRYPTION_KEYS`; the API only encrypts and shows a secret once, the worker's
