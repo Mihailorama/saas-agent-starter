@@ -103,9 +103,9 @@ Notes:
   ([LICENSE](https://github.com/langfuse/langfuse/blob/main/LICENSE),
   [license key](https://langfuse.com/self-hosting/license-key)).
 - Feature-flag code dependencies ([docs/feature-flags.md](feature-flags.md), checked by the gate):
-  `posthog-node` (MIT, API); `posthog-js` (above) in the web. The worker calls PostHog's `/flags`
-  HTTP API with the existing `httpx2`: the `posthog` PyPI SDK (MIT) depends on `distro`, whose
-  metadata says "Apache License, Version 2.0", a string the gate does not map to `Apache-2.0`.
+  `posthog-node` (MIT, API); `posthog-js` (above) in the web; the official `posthog` Python SDK
+  (MIT) in the worker, with `requests` (Apache-2.0), `backoff` (MIT) and `distro` (declares
+  "Apache License, Version 2.0", an alias for `Apache-2.0` since 2026-11-07).
 - GitHub Actions for releases ([docs/releases.md](releases.md)), CI tooling, not shipped and not
   scanned by the gate, pinned by commit SHA: `googleapis/release-please-action` v5.0.0
   ([Apache-2.0](https://github.com/googleapis/release-please-action/blob/main/LICENSE)) and
@@ -168,6 +168,23 @@ Notes:
     above) that the code gate rejects; nothing of it ships with the app.
   - External services, not shipped software: Google Search Console, Bing Webmaster Tools /
     IndexNow, the social networks Postiz posts to, the SERP scraper SerpBear is configured with.
+
+- PII redaction ([docs/support.md](support.md#personal-data)) adds no new image: the `pii`
+  profile runs the worker image with another command. Code dependencies, checked by the gate:
+  `presidio-analyzer` and `presidio-anonymizer` (Microsoft Presidio, MIT), spaCy 3.8 (MIT) with
+  `thinc`, `blis`, `srsly`, `cymem`, `preshed`, `murmurhash`, `wasabi`, `weasel`, `confection`,
+  `catalogue` (MIT or BSD), the English model `en_core_web_sm` 3.8.0 (MIT, installed from its
+  GitHub release wheel, pinned in `uv.lock` by hash), `phonenumbers` (Apache-2.0), `tldextract`
+  (BSD-3-Clause), `numpy` (`BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`) and `regex`
+  (`Apache-2.0 AND CNRI-Python`). Zlib and CNRI-Python were added to the allowlist for the last
+  two (owner decision 2026-11-07, ADR 0005), and the aliases "BSD License" (`Jinja2`, `blis`),
+  "Apache 2.0" (`requests-file`) and "ISC License" (`shellingham`).
+- License gate tooling (dev group of the worker, not in the image): `license-expression`
+  (Apache-2.0, parses the SPDX expressions) with `boolean.py` (BSD-2-Clause). Its wheel also
+  carries the ScanCode LicenseDB index (`license_expression/data/scancode-licensedb-index.json`),
+  which its `.ABOUT` file marks CC-BY-4.0 and whose license text ships next to it; the package
+  metadata the gate reads says Apache-2.0. It is a data file of a dev tool, run unmodified and
+  never shipped.
 
 ## Permissive twin (replacement map)
 

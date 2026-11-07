@@ -19,7 +19,7 @@ from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.runtime import OpenTelemetryConfig, Runtime, TelemetryConfig
 from temporalio.worker import Worker
 
-from worker import settings
+from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import PROVIDERS, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
@@ -171,6 +171,8 @@ async def main() -> None:
         ai_org_id=settings.SUPPORT_AI_ORG_ID,
         notify=settings.SUPPORT_NOTIFY,
     )
+    if chatwoot and triage_model and ai:
+        await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -227,6 +229,7 @@ async def main() -> None:
     await s3.close()
     if posthog:
         await posthog.close()
+    flags.close()
     await pool.close()
 
 

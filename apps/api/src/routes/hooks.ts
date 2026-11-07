@@ -9,6 +9,8 @@ import { env } from '../env.ts';
  * - `$insight_alert_firing` (a journey funnel fell below its threshold) -> label `cjm-regression`
  * - `survey sent` from the "Report a problem" survey -> label `from-users`
  * Without GITHUB_TOKEN/GITHUB_REPO it is a dry run: the response shows the planned issue.
+ * Survey answers are redacted first: by the Presidio sidecar when PII_REDACT_URL is set (compose
+ * profile `pii`, docs/support.md "Personal data"), otherwise only emails are masked.
  */
 const Hook = z.object({
   event: z.object({
@@ -20,9 +22,35 @@ const Hook = z.object({
 type Issue = { title: string; label: string; body: string };
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
-// Bounded, unambiguous pattern (no polynomial backtracking on hostile input).
+// Fallback without the sidecar. Bounded, unambiguous pattern (no polynomial backtracking).
 const EMAIL = /[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})+/g;
-const scrub = (s: string) => s.slice(0, 10_000).replace(EMAIL, '[email]');
+export class RedactionUnavailable extends Error {}
+
+/** PII-free copies of `texts`. Throws RedactionUnavailable if the sidecar does not answer. */
+export async function redact(texts: string[]): Promise<string[]> {
+  const cut = texts.map((t) => t.slice(0, 10_000));
+  if (!env.PII_REDACT_URL) return cut.map((t) => t.replace(EMAIL, '[email]'));
+  if (!cut.length) return cut;
+  try {
+    const res = await fetch(`${env.PII_REDACT_URL}/redact`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ texts: cut }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const out = res.ok ? ((await res.json()) as { texts?: unknown }).texts : undefined;
+    if (
+      Array.isArray(out) &&
+      out.length === cut.length &&
+      out.every((t) => typeof t === 'string')
+    ) {
+      return out;
+    }
+    throw new Error(`status ${res.status}`);
+  } catch (err) {
+    throw new RedactionUnavailable(`PII redaction failed: ${(err as Error).name}`);
+  }
+}
 const posthogUrl = (path: string) =>
   env.POSTHOG_APP_HOST && env.POSTHOG_PROJECT_ID
     ? `${env.POSTHOG_APP_HOST}/project/${env.POSTHOG_PROJECT_ID}/${path}`
@@ -36,7 +64,7 @@ const agentHint = [
 ];
 
 /** Maps a PostHog event to the issue it should produce, or undefined to ignore it. */
-export function toIssue(e: z.infer<typeof Hook>['event']): Issue | undefined {
+export async function toIssue(e: z.infer<typeof Hook>['event']): Promise<Issue | undefined> {
   const p = e.properties;
   if (e.event === '$insight_alert_firing') {
     const insight = posthogUrl(`insights/${str(p.insight_id)}`);
@@ -61,11 +89,14 @@ export function toIssue(e: z.infer<typeof Hook>['event']): Issue | undefined {
   // Thumbs on AI answers ($ai_trace_id) stay in PostHog AI observability; only free-text
   // reports from the feedback survey become issues.
   if (e.event === 'survey sent' && !p.$ai_trace_id) {
-    const answers = (Array.isArray(p.$survey_questions) ? p.$survey_questions : [])
-      .map((q: { question?: string; response?: unknown }) => ({
-        q: str(q.question),
-        a: scrub(str(q.response)).trim(),
-      }))
+    const questions: { question?: string; response?: unknown }[] = Array.isArray(
+      p.$survey_questions,
+    )
+      ? p.$survey_questions
+      : [];
+    const redacted = await redact(questions.map((q) => str(q.response)));
+    const answers = questions
+      .map((q, i) => ({ q: str(q.question), a: redacted[i]!.trim() }))
       .filter((x) => x.a);
     if (!answers.length) return undefined;
     const replay = p.$session_id ? posthogUrl(`replay/${str(p.$session_id)}`) : undefined;
@@ -139,7 +170,15 @@ export const hookRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!sameSecret(req.headers['x-webhook-secret'] as string | undefined)) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
-      const issue = toIssue(req.body.event);
+      let issue: Issue | undefined;
+      try {
+        issue = await toIssue(req.body.event);
+      } catch (err) {
+        if (!(err instanceof RedactionUnavailable)) throw err;
+        // Fail closed: no unredacted text goes anywhere. PostHog shows the failed delivery.
+        req.log.warn('posthog hook: PII redaction sidecar unavailable, nothing filed');
+        return reply.code(503).send({ error: 'pii redaction unavailable' });
+      }
       if (!issue) return { action: 'ignored' };
       if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return { action: 'dry-run', ...issue };
       const result = await upsertIssue(issue);
