@@ -21,11 +21,15 @@ tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do no
 ## Setup
 
 ```sh
-docker compose up -d --wait postgres redis s3 temporal-ui   # infra only
+docker compose up -d --wait postgres redis s3 temporal-ui mailpit   # infra only
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
-pnpm worker     # Python Temporal worker
+pnpm worker     # Python Temporal worker (also delivers mail; Mailpit UI :8025)
 ```
+
+`pnpm check` needs the worker running: the auth tests read the mails it sends from Mailpit.
+CI runs it with `TEMPORAL_TASK_QUEUE` pointed elsewhere, so only the `email` queue is served
+and the API tests' project workflows stay untouched.
 
 Tools: Node 22.18+ (runs `.ts` directly), pnpm, Docker, uv, Rust (rustup) and
 `cargo install --locked cargo-deny`. Config comes from env: real env > `.env` (gitignored,
@@ -40,6 +44,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/temporal.ts     Temporal client + workflow contracts with the worker
+  src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
   src/telemetry.ts    OpenTelemetry (preloaded, env-toggled)
   test/               integration tests against the real compose services
@@ -53,6 +58,7 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/prompts.py   versioned prompt loader (prompts/<purpose>/<name>.v<N>.md)
   worker/posthog.py   each LLM call as a PostHog `$ai_generation` (when POSTHOG_* is set)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
+  worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code)
@@ -94,6 +100,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
+- Transactional mail: React Email's renderer in the API, delivery by a Temporal activity
+  with stdlib `smtplib` over one `SMTP_URL` (any provider), Mailpit in dev (ADR 0014).
 - PostHog Cloud for product analytics, replay, surveys, AI feedback; Umami (MIT) self-hosted
   where data must stay in place (ADR 0012).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday

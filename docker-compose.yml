@@ -64,6 +64,20 @@ services:
       interval: 2s
       retries: 30
 
+  # Mailpit (MIT): catches every outgoing mail in dev. UI + REST API on :8025, SMTP on :1025.
+  # Production: point SMTP_URL at a real provider (docs/email.md).
+  mailpit:
+    logging: *logging
+    mem_limit: 64m
+    image: axllent/mailpit:v1.33.0
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      retries: 30
+
   # Temporal, per temporalio/samples-server compose (postgres variant), on our Postgres server.
   temporal-setup:
     logging: *logging
@@ -174,6 +188,8 @@ services:
       # With --profile llmops: spans to Langfuse (see .env.example, "LLM-ops Full").
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${WORKER_OTEL_TRACES_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${WORKER_OTEL_TRACES_HEADERS:-}
+      SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025?tls=none}
+      MAIL_FROM: ${MAIL_FROM:-Workspace <no-reply@example.com>}
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
       AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}

@@ -27,6 +27,7 @@ on an image that is not. Their primary software licenses:
 | `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0           |
 | `python`                               | worker runtime                                     | Python-2.0 (PSF)            |
 | `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                         |
+| `axllent/mailpit`                      | catches outgoing mail in dev (UI/API :8025)        | MIT                         |
 | `ghcr.io/promptfoo/promptfoo`          | eval engine for `pnpm eval` (eval profile)         | MIT                         |
 | `langfuse/langfuse`                    | Langfuse web (llmops profile)                      | MIT core + `ee/` commercial |
 | `langfuse/langfuse-worker`             | Langfuse worker (llmops profile)                   | MIT core + `ee/` commercial |
@@ -81,6 +82,12 @@ Notes:
   scores, prompt management) is in the MIT core
   ([LICENSE](https://github.com/langfuse/langfuse/blob/main/LICENSE),
   [license key](https://langfuse.com/self-hosting/license-key)).
+
+- `axllent/mailpit` ([MIT](https://github.com/axllent/mailpit/blob/develop/LICENSE)): local
+  SMTP catcher for transactional email, see [docs/email.md](email.md). Production sends through
+  a provider over SMTP instead. Email code dependencies: `@react-email/render` (MIT; React
+  Email's renderer, `react`/`react-dom` MIT); the worker sends with Python's standard
+  `smtplib`, no package.
 
 ## Permissive twin (replacement map)
 

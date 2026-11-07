@@ -22,10 +22,11 @@ from worker.activities import Activities, ModelChoice
 from worker.ai import PROVIDERS, Gateway, load_registry
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
+from worker.mail import send_email
 from worker.posthog import PostHogAi
 from worker.s3 import S3
 from worker.text import backend
-from worker.workflows import ProjectCreatedWorkflow
+from worker.workflows import ProjectCreatedWorkflow, SendEmailWorkflow
 
 log = logging.getLogger("worker")
 
@@ -106,7 +107,17 @@ async def main() -> None:
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],
     )
-    async with worker:  # leaving the block finishes in-flight activities, then stops
+    # Own queue: a mail backlog never waits behind slow AI work (and the reverse).
+    mail_worker = Worker(
+        client,
+        task_queue=settings.EMAIL_TASK_QUEUE,
+        workflows=[SendEmailWorkflow],
+        activities=[send_email],
+        graceful_shutdown_timeout=timedelta(seconds=10),
+        interceptors=[ErrorInterceptor()],
+    )
+    # Leaving the block finishes in-flight activities, then stops.
+    async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s)",
             backend,
