@@ -123,10 +123,14 @@ See `.env.example`; put local overrides in `.env` (gitignored). In production se
 
 ## AI
 
-Off until you pick a model: set `AI_PROJECT_SUMMARY_PROVIDER=anthropic`,
-`AI_PROJECT_SUMMARY_MODEL=claude-haiku-5-5` and `ANTHROPIC_API_KEY` (or `openai_compatible` with
-`OPENAI_BASE_URL` / `OPENAI_API_KEY` and a model registered for your `AI_CONTOUR` in
-`config/ai-models.json`), then restart the worker. New projects with a description get an
+Off until you pick a model. The default mode is a vendor CLI subscription: put a Claude Code
+login token in `.secrets/llm-cli/claude-1.token` (`claude setup-token`), start the `llm-cli`
+container and set `AI_PROJECT_SUMMARY_PROVIDER=claude_cli`,
+`AI_PROJECT_SUMMARY_MODEL=claude-haiku-5-5`. Any other provider works the same way: API keys
+(Anthropic, OpenAI, Gemini, xAI, Moonshot), OpenRouter, a custom OpenAI-compatible endpoint, or
+self-hosted vLLM/Ollama (`--profile local-llm`); organizations can bring their own key. Pick a
+provider/model registered for your `AI_CONTOUR` in `config/ai-models.json`, then restart the
+worker ([docs/llm-providers.md](docs/llm-providers.md)). New projects with a description get an
 AI-generated summary that members can confirm or correct; admins see every call under
 "AI calls". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
 
@@ -143,9 +147,9 @@ Details: [docs/product-analytics.md](docs/product-analytics.md).
 ## Service desk
 
 Off until you set env. `docker compose --profile support up -d` runs Chatwoot (MIT core, `-ce`
-image) with its own pgvector Postgres. Set the website inbox token and HMAC token for the Help
-menu, the webhook secret for triage, and a model for `support.triage`; tickets stay in Chatwoot,
-backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
+image) on the stack's Postgres (own database) and S3 (own bucket), so backups cover it. Set the
+website inbox token and HMAC token for the Help menu, the webhook secret for triage, and a model
+for `support.triage`; tickets stay in Chatwoot, backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
 Details: [docs/support.md](docs/support.md).
 
 ## CRM and booking

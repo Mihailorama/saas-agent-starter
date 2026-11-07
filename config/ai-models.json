@@ -1,26 +1,114 @@
 {
-  "$comment": "Models the AI gateway (services/worker-py/worker/ai.py) may call, per contour (AI_CONTOUR) and purpose. Anything not listed is refused. Prices are per 1,000 tokens, used to compute ai_calls.cost and the per-org LLM spend limit (docs/billing.md). A model with pricePer1kTokens null is refused unless it also has \"unmetered\": true, which exempts it from cost tracking and spend limits (pnpm check:ai-prices warns about both). Anthropic prices: list prices for the first-party API as of 2026-10-06 (Haiku 5.5: prompts up to 100K tokens) - verify against the provider's price page before relying on them. The ru entry is a placeholder for a self-hosted or in-country OpenAI-compatible endpoint (OPENAI_BASE_URL): replace the model id with the one your endpoint serves.",
+  "$comment": "What the AI gateway (services/worker-py/worker/ai.py) may call; docs/llm-providers.md. `providers`: how to reach each provider. `kind` cli = a vendor CLI subscription run by the llm-cli container (claude, codex, gemini, or any `command` set in its config); api/aggregator/custom/local = LiteLLM with the `litellm` provider prefix, the key from `apiKeyEnv` and the base URL from `baseUrlEnv` (custom, local) or `baseUrl` (api, aggregator: the vendor's endpoint, always passed explicitly so LiteLLM never falls back to a base URL from the environment). `contours` (AI_CONTOUR): the provider/model pairs allowed per purpose; anything not listed is refused. Price: `pricePer1kTokens` is an explicit override; without it the gateway uses LiteLLM's model cost map (USD). A model with neither is refused unless it is marked \"unmetered\": true (CLI subscriptions and self-hosted models), which exempts it from the money limit; unmetered calls count against the plan's llmUsageMonthly calls/tokens instead (docs/billing.md). `fallback`: provider/model to call when this one answers rate-limited (HTTP 429), if that provider is configured. The ru entry is a placeholder for a self-hosted OpenAI-compatible endpoint: replace the model id with the one your endpoint serves.",
+  "providers": {
+    "claude_cli": { "kind": "cli", "cli": "claude" },
+    "codex_cli": { "kind": "cli", "cli": "codex" },
+    "gemini_cli": { "kind": "cli", "cli": "gemini" },
+    "anthropic": {
+      "kind": "api",
+      "litellm": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKeyEnv": "ANTHROPIC_API_KEY"
+    },
+    "openai": {
+      "kind": "api",
+      "litellm": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    "gemini": {
+      "kind": "api",
+      "litellm": "gemini",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKeyEnv": "GEMINI_API_KEY"
+    },
+    "xai": {
+      "kind": "api",
+      "litellm": "xai",
+      "baseUrl": "https://api.x.ai/v1",
+      "apiKeyEnv": "XAI_API_KEY"
+    },
+    "moonshot": {
+      "kind": "api",
+      "litellm": "moonshot",
+      "baseUrl": "https://api.moonshot.ai/v1",
+      "apiKeyEnv": "MOONSHOT_API_KEY"
+    },
+    "openrouter": {
+      "kind": "aggregator",
+      "litellm": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    },
+    "openai_compatible": {
+      "kind": "custom",
+      "litellm": "openai",
+      "baseUrlEnv": "OPENAI_COMPATIBLE_BASE_URL",
+      "apiKeyEnv": "OPENAI_COMPATIBLE_API_KEY"
+    },
+    "vllm": {
+      "kind": "local",
+      "litellm": "hosted_vllm",
+      "baseUrlEnv": "VLLM_BASE_URL",
+      "apiKeyEnv": "VLLM_API_KEY"
+    },
+    "ollama": { "kind": "local", "litellm": "ollama_chat", "baseUrlEnv": "OLLAMA_BASE_URL" }
+  },
   "contours": {
     "eu": [
       {
-        "provider": "anthropic",
+        "provider": "claude_cli",
         "model": "claude-haiku-5-5",
         "purposes": ["project.summary", "support.triage"],
-        "pricePer1kTokens": {
-          "input": 0.0001,
-          "output": 0.0005,
-          "currency": "USD"
-        }
+        "unmetered": true,
+        "fallback": { "provider": "anthropic", "model": "claude-haiku-5-5" }
+      },
+      {
+        "provider": "claude_cli",
+        "model": "claude-sonnet-5-5",
+        "purposes": ["project.summary", "support.triage"],
+        "unmetered": true,
+        "fallback": { "provider": "anthropic", "model": "claude-sonnet-5-5" }
+      },
+      {
+        "provider": "claude_cli",
+        "model": "claude-opus-5-5",
+        "purposes": ["judge"],
+        "unmetered": true
+      },
+      {
+        "provider": "codex_cli",
+        "model": "gpt-5.5",
+        "purposes": ["project.summary", "support.triage"],
+        "unmetered": true
+      },
+      {
+        "provider": "gemini_cli",
+        "model": "gemini-3.5-flash",
+        "purposes": ["project.summary", "support.triage"],
+        "unmetered": true
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-haiku-5-5",
+        "purposes": ["project.summary", "support.triage"]
       },
       {
         "provider": "anthropic",
         "model": "claude-sonnet-5-5",
-        "purposes": ["project.summary", "judge", "support.triage"],
-        "pricePer1kTokens": {
-          "input": 0.002,
-          "output": 0.01,
-          "currency": "USD"
-        }
+        "purposes": ["project.summary", "judge", "support.triage"]
+      },
+      {
+        "provider": "vllm",
+        "model": "Qwen/Qwen3-0.6B",
+        "purposes": ["project.summary"],
+        "unmetered": true
+      },
+      {
+        "provider": "ollama",
+        "model": "qwen3:0.6b",
+        "purposes": ["project.summary"],
+        "unmetered": true
       }
     ],
     "ru": [

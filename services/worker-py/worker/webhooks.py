@@ -8,7 +8,8 @@ checked IP (Host header and TLS SNI keep the hostname), so DNS cannot swap the t
 check and connect. Redirects are not followed and response bodies are never read.
 
 Signing secrets are stored encrypted (AES-256-GCM, `v1:<key id>:<iv>:<ciphertext+tag>`, bound
-to the endpoint id); this module is the only place that decrypts them. Twin of
+to the endpoint id); this module holds the only decryption code (the AI gateway uses it for
+organization-owned provider keys, bound to org and row id). Twin of
 apps/api/src/webhook-secret.ts, which only encrypts.
 """
 
@@ -362,7 +363,8 @@ class WebhookActivities:
     @activity.defn(name="reencrypt_webhook_secrets")
     async def reencrypt_webhook_secrets(self) -> int:
         """After a key rotation (new key first in WEBHOOK_ENCRYPTION_KEYS), moves secrets that are
-        still under an older key to the active one, so the old key can then be removed."""
+        still under an older key to the active one, so the old key can then be removed. Covers
+        the API keys of organization-owned AI providers too (same key ring)."""
         active_id, active_key = next(iter(self.keys.items()))
         prefix = f"v1:{active_id}:"
         moved = 0
@@ -395,6 +397,24 @@ class WebhookActivities:
                         " where id = $3",
                         new[0],
                         new[1],
+                        r["id"],
+                    )
+                    moved += 1
+                # AI provider keys: bound to org and row id (apps/api/src/routes/ai-providers.ts).
+                for r in await conn.fetch(
+                    "select id::text as id, api_key from ai_providers"
+                    " where api_key not like $1 for update",
+                    f"{prefix}%",
+                ):
+                    aad = f"{org_id}/{r['id']}"
+                    try:
+                        plain = decrypt_secret(r["api_key"], aad, self.keys)
+                    except Exception:  # unreadable: its calls already fail visibly
+                        activity.logger.warning("cannot re-encrypt ai provider %s", r["id"])
+                        continue
+                    await conn.execute(
+                        "update ai_providers set api_key = $1 where id = $2",
+                        encrypt_secret(plain, aad, active_id, active_key),
                         r["id"],
                     )
                     moved += 1

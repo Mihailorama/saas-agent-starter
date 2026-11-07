@@ -47,10 +47,20 @@ docker compose --profile support up -d      # chatwoot (UI :3300), chatwoot-side
   docs/LICENSES.md).
 - `chatwoot-prepare` (one-shot) runs `rails db:chatwoot_prepare` (creates or migrates the schema),
   then `chatwoot` (Rails, port `CHATWOOT_PORT`) and `chatwoot-sidekiq` (jobs) start.
-- Database: its own `chatwoot-postgres` (`pgvector/pgvector:0.8.7-pg16`, the version Chatwoot's
-  own compose uses). Not the stack's Postgres: Chatwoot's schema enables the `vector` extension,
-  which `postgres:17-alpine` does not have; swapping the stack's image for pgvector would change
-  the app database for every user of the template.
+- Database: `chatwoot` (role `chatwoot`) on the stack's Postgres server, created by the
+  `chatwoot-db` one-shot together with the `vector` and `pg_stat_statements` extensions
+  (Chatwoot's schema enables them; neither may be created by a non-superuser). The stack's
+  image is `postgres:17-alpine` plus the pgvector extension files (`infra/backup/Dockerfile`,
+  target `postgres`); databases that do not create the extension are unaffected. The backup
+  overlay therefore covers Chatwoot like every other database (docs/backups.md).
+- Attachments: in S3, Chatwoot's `s3_compatible` storage service, bucket `chatwoot` on the
+  stack's SeaweedFS by default (`CHATWOOT_STORAGE_ENDPOINT`, `_REGION`, `_BUCKET`,
+  `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY` for another S3; create the bucket first there). The
+  backup overlay copies the bucket hourly (`BACKUP_APP_BUCKETS`). `infra/chatwoot/storage-proxy.rb`
+  (mounted as an initializer) makes Chatwoot serve files itself instead of redirecting browsers
+  to presigned S3 URLs, so the endpoint can stay internal. Channels that fetch an agent's
+  attachment by URL (Telegram, WhatsApp, Facebook, SMS) still get a presigned S3 URL: for those,
+  `CHATWOOT_STORAGE_ENDPOINT` must be reachable from the internet.
 - Redis: the stack's `redis`, database 2 (GlitchTip uses 1, rate limits 0). Its default
   `noeviction` policy is what Sidekiq needs. With `compose.permissive.yaml` it is Valkey 9 (same
   protocol), measured below.
@@ -60,9 +70,21 @@ docker compose --profile support up -d      # chatwoot (UI :3300), chatwoot-side
 - `SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true`: Chatwoot blocks webhooks to private addresses by
   default, and the API is `http://api:3000` on the compose network. Turn it off when the API has
   a public URL.
-- Production: set `CHATWOOT_SECRET_KEY_BASE` (`openssl rand -hex 64`), `CHATWOOT_FRONTEND_URL`
+- Production: set `CHATWOOT_DB_PASSWORD` (its database shares the server with app data),
+  `CHATWOOT_SECRET_KEY_BASE` (`openssl rand -hex 64`), `CHATWOOT_FRONTEND_URL`
   (its public HTTPS URL; Telegram and email need it) and the SMTP variables. Put it behind the
   same reverse proxy as the app.
+
+**Upgrading an install that ran the earlier layout** (own `chatwoot-postgres`, files in the
+`chatwoot-storage` volume). Before updating the checkout, dump the database:
+`docker compose --profile support exec -T chatwoot-postgres pg_dump -U chatwoot -Fc chatwoot > chatwoot.dump`.
+After it: `docker compose --profile support up -d --wait chatwoot-db`, then
+`docker compose exec -T postgres pg_restore -U postgres -d chatwoot --no-owner --role chatwoot < chatwoot.dump`,
+then start the profile. Attachments uploaded before the switch keep `service_name = 'local'` in
+`active_storage_blobs`; Rails reads each blob from the service it was stored with, so they show
+only while the old volume is mounted at `/app/storage` (add `chatwoot-storage:/app/storage` to the
+Chatwoot services), and they are not in the backup until copied to the bucket and their
+`service_name` set to `s3_compatible`.
 
 ## Set up Chatwoot (UI, once)
 
@@ -261,7 +283,7 @@ Chats, emails and Telegram messages are personal data. Deployments with data-res
 requirements self-host Chatwoot (this profile) in the required jurisdiction instead of using
 Chatwoot Cloud, and keep the rest of the path there too: a self-hosted tracker (Plane, not
 GitHub), a triage model served from an allowed endpoint (a contour in `config/ai-models.json`
-with an OpenAI-compatible `OPENAI_BASE_URL`), and the Chatwoot version check blocked if nothing
+with a self-hosted or custom OpenAI-compatible endpoint, docs/llm-providers.md), and the Chatwoot version check blocked if nothing
 may leave. Telegram messages transit Telegram's own servers; that is the user's choice of channel,
 but Chatwoot's copy stays where you host it.
 
@@ -273,15 +295,19 @@ Measured on this repo (2026-11-07, `docker stats`, Chatwoot v4.19.1-ce, 8 CPU ho
 | --------------------------------- | ------------------ | --------------- | ------------------- |
 | `chatwoot` (Rails/Puma)           | ~411 MiB           | ~442 MiB        | 1 GiB               |
 | `chatwoot-sidekiq`                | ~445 MiB           | ~572 MiB        | 1 GiB               |
-| `chatwoot-postgres` (pgvector 16) | ~70 MiB            | ~110 MiB        | 512 MiB             |
 | `redis` (shared, whole instance)  | ~6 MiB             | ~14 MiB         | 64 MiB (unchanged)  |
+| `postgres` (shared, whole server) | ~71 MiB (+46 MiB)  | not re-measured | 512 MiB (unchanged) |
 
 Load: 46 conversations with 3 customer messages each through Chatwoot's public client API
 (an API inbox, 10 concurrent senders, ~3 messages/s, 0 errors), each one signed-webhooked to the
 API, triaged by the worker (fake LLM) and answered with one private note: 46 of 46 triaged,
 exactly one note each, the 2 later messages per conversation rejected as duplicate workflow
-starts. Memory does not fall back after the load (Ruby keeps its heap): plan **~1.2 GiB** for the
-profile, or about 1.0 GiB idle. The last 5 conversations ran on the permissive twin (Valkey 9
+starts. Memory does not fall back after the load (Ruby keeps its heap): plan **~1.1 GiB** for the
+Chatwoot containers plus the shared Postgres's growth, about 0.9 GiB idle. Until 2026-11-07
+Chatwoot had its own `chatwoot-postgres` (~90 MiB idle, ~110 MiB under that load, 512 MiB
+limit); on the shared server the same idle state costs ~46 MiB (25 -> 71 MiB, measured with
+postgres + redis + s3 + chatwoot + chatwoot-sidekiq, ~3 minutes after start), ~44 MiB less in
+total. The last 5 conversations ran on the permissive twin (Valkey 9
 instead of Redis 8) with the same result. Fits the 8 CPU / 24 GB S server next to the app.
 
 ## Replacement criteria

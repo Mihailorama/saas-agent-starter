@@ -43,6 +43,13 @@
       "when": 1794058999861,
       "tag": "0005_privacy_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794062569735,
+      "tag": "0006_ai_providers",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import {
   Check,
   ChevronsUpDown,
   Cookie,
+  Cpu,
   CreditCard,
   FolderKanban,
   KeyRound,
@@ -272,6 +273,7 @@ export function Shell() {
   const mustEnrol = policy.error?.message === TWO_FACTOR_REQUIRED;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
+  const byoProviders = useFlag('byo-llm-providers');
 
   if (isPending) {
     return (
@@ -339,6 +341,15 @@ export function Shell() {
               >
                 <Webhook className="size-4" /> Webhooks
               </Link>
+              {byoProviders && (
+                <Link
+                  to="/settings/ai-providers"
+                  className={navLink}
+                  activeProps={{ className: navActive }}
+                >
+                  <Cpu className="size-4" /> AI providers
+                </Link>
+              )}
             </>
           )}
         </nav>

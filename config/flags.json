@@ -6,6 +6,12 @@
       "owner": "@Mihailorama",
       "default": false,
       "expires": "2027-05-31"
+    },
+    "byo-llm-providers": {
+      "description": "Settings page where organization admins add their own AI provider (API key or OpenAI-compatible endpoint).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-03-31"
     }
   }
 }

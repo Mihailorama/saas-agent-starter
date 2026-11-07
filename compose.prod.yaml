@@ -4,6 +4,7 @@
 # `docker compose up -d --wait`. Nothing is built here: api, worker and web are the images CI
 # pushed on a `v*` tag, pinned by digest. Optional on-box services are profiles, enabled with
 # COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback),
+# llm-cli (vendor CLI subscriptions, an image you build yourself: docs/llm-providers.md),
 # booking (Cal.diy, image built by CI from a pinned upstream commit, IMAGE_CALDIY).
 # Licenses of every image: docs/LICENSES.md.
 
@@ -142,9 +143,23 @@ services:
       - AI_CONTENT_RETENTION_DAYS
       - AI_PROJECT_SUMMARY_PROVIDER
       - AI_PROJECT_SUMMARY_MODEL
+      # providers (docs/llm-providers.md): CLI subscriptions via llm-cli, the rest via LiteLLM
+      - LLM_CLI_URL=${LLM_CLI_URL:-http://llm-cli:8080}
+      - LLM_CLI_TOKEN
+      - AI_REQUEST_TIMEOUT_SECONDS
+      - AI_CLI_TIMEOUT_SECONDS
       - ANTHROPIC_API_KEY
       - OPENAI_API_KEY
-      - OPENAI_BASE_URL
+      - GEMINI_API_KEY
+      - XAI_API_KEY
+      - MOONSHOT_API_KEY
+      - OPENROUTER_API_KEY
+      - OPENAI_COMPATIBLE_BASE_URL
+      - OPENAI_COMPATIBLE_API_KEY
+      - VLLM_BASE_URL
+      - VLLM_API_KEY
+      - OLLAMA_BASE_URL
+      - AI_BYO_ALLOWED_CIDRS
       - EMAIL_TASK_QUEUE
       - SMTP_URL
       - MAIL_FROM
@@ -226,6 +241,25 @@ services:
       retries: 12
 
   # Static files + /api proxy; sets CSP/HSTS/nosniff/Referrer-Policy (apps/web/nginx.conf.template).
+  # Vendor CLI subscriptions for the worker (docs/llm-providers.md). Enable with COMPOSE_PROFILES
+  # containing llm-cli and IMAGE_LLM_CLI (repo@sha256:...) in the env file: the image contains the
+  # proprietary Claude Code CLI, so CI does not publish it; build services/llm-cli/Dockerfile
+  # yourself and push it to a private registry. Logins: files in LLM_CLI_SECRETS_DIR on the host
+  # (mode 600), named in its config. Internal only: no ports.
+  llm-cli:
+    profiles: [llm-cli]
+    image: ${IMAGE_LLM_CLI:-set-IMAGE_LLM_CLI}
+    logging: *logging
+    mem_limit: 2g
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      - LLM_CLI_TOKEN
+      - LLM_CLI_CONFIG=${LLM_CLI_CONFIG:-/etc/llm-cli/config.json}
+    volumes:
+      - ${LLM_CLI_SECRETS_DIR:-./llm-cli-secrets}:/run/secrets/llm-cli:ro
+
   web:
     image: ${IMAGE_WEB:?no release, deploy with scripts/deploy.mjs}
     logging: *logging

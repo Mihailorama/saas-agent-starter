@@ -3,6 +3,7 @@
 # With logs/traces/metrics:  docker compose --profile observability up -d   (Grafana :3001)
 # Permissive-only twin:      add -f docker-compose.yml -f compose.permissive.yaml (ADR 0010)
 # With LLM-ops Full (Langfuse, ADR 0009): docker compose --profile llmops up -d
+# Self-hosted models (vLLM on GPU + Ollama): --profile local-llm; no GPU: --profile local-llm-cpu
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
 
 # Every service: the json-file log driver stamps compose project + service into each line,
@@ -34,7 +35,9 @@ services:
   postgres:
     logging: *logging
     mem_limit: 512m
-    image: postgres:17-alpine
+    # postgres:17-alpine + the pgvector extension files (Chatwoot needs them, docs/support.md).
+    image: saas-agent-starter-postgres:local
+    build: { context: infra/backup, target: postgres }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -58,11 +61,13 @@ services:
       retries: 30
 
   # S3-compatible object storage for local dev (SeaweedFS). Production: any S3 via env.
+  # Each bucket takes 7 volumes; the default limit (14 slots on 4.52) fits only two buckets, and
+  # a third (attachments, ai-calls, langfuse, chatwoot) fails with HTTP 500. Volumes are sparse.
   s3:
     logging: *logging
     mem_limit: 256m
     image: chrislusf/seaweedfs:4.52
-    command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0
+    command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -volume.max=64
     ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
     volumes:
       - s3data:/data
@@ -223,9 +228,26 @@ services:
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
       AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}
+      # Providers (docs/llm-providers.md, `providers` in config/ai-models.json). CLI subscriptions
+      # via the llm-cli container; API keys, aggregators, custom and local endpoints via LiteLLM.
+      LLM_CLI_URL: ${LLM_CLI_URL:-http://llm-cli:8080}
+      LLM_CLI_TOKEN: ${LLM_CLI_TOKEN:-local-dev-llm-cli-token-change-me-0123456789}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
+      AI_CLI_TIMEOUT_SECONDS: ${AI_CLI_TIMEOUT_SECONDS:-330}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      MOONSHOT_API_KEY: ${MOONSHOT_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
+      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
+      # With --profile local-llm: http://vllm:8000/v1 and http://ollama:11434
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_API_KEY: ${VLLM_API_KEY:-local-dev-vllm-key}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      # Organization-owned providers: private CIDRs a custom base URL may use (on-prem servers).
+      AI_BYO_ALLOWED_CIDRS: ${AI_BYO_ALLOWED_CIDRS:-}
       # Service desk triage (docs/support.md). Tokens empty = dry run (logs only).
       CHATWOOT_URL: ${CHATWOOT_URL:-} # with --profile support: http://chatwoot:3000
       CHATWOOT_PUBLIC_URL: ${CHATWOOT_PUBLIC_URL:-}
@@ -260,6 +282,90 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }
+
+  # Vendor CLI subscriptions (Claude Code, Codex, Gemini CLI) behind an internal OpenAI-compatible
+  # endpoint for the worker (docs/llm-providers.md). Logins: files in ./.secrets/llm-cli (gitignored),
+  # see infra/llm-cli/config.json; a subscription without its file is skipped. Not published.
+  llm-cli:
+    logging: *logging
+    mem_limit: 2g
+    build:
+      context: .
+      dockerfile: services/llm-cli/Dockerfile
+    environment:
+      LLM_CLI_TOKEN: ${LLM_CLI_TOKEN:-local-dev-llm-cli-token-change-me-0123456789}
+    volumes:
+      - ./infra/llm-cli/config.json:/etc/llm-cli/config.json:ro
+      - ./.secrets/llm-cli:/run/secrets/llm-cli:ro
+    read_only: true
+    tmpfs: [/tmp]
+
+  # Self-hosted models (`--profile local-llm`, docs/llm-providers.md "On-prem"). vLLM is the
+  # multi-user server (continuous batching, needs an NVIDIA GPU and the NVIDIA container runtime);
+  # `vllm-embed` serves an embeddings model the same way. Bound to localhost only; set VLLM_API_KEY.
+  vllm:
+    profiles: [local-llm]
+    logging: *logging
+    image: vllm/vllm-openai:v0.33.0
+    command:
+      - ${VLLM_MODEL:-Qwen/Qwen3-0.6B}
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    ipc: host
+    ports: ["127.0.0.1:${VLLM_PORT:-8000}:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  vllm-embed:
+    profiles: [local-llm]
+    logging: *logging
+    image: vllm/vllm-openai:v0.33.0
+    command:
+      - ${VLLM_EMBED_MODEL:-BAAI/bge-small-en-v1.5}
+      - --runner=pooling
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --gpu-memory-utilization=${VLLM_EMBED_GPU_MEMORY_UTILIZATION:-0.1}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    ipc: host
+    ports: ["127.0.0.1:${VLLM_EMBED_PORT:-8001}:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  # No GPU (CI, laptops): the same OpenAI-compatible server on CPU, for tiny models and smoke
+  # tests only (`--profile local-llm-cpu`; x86 with AVX-512 recommended, AVX2 limited).
+  vllm-cpu:
+    profiles: [local-llm-cpu]
+    logging: *logging
+    image: vllm/vllm-openai-cpu:v0.33.0-x86_64
+    command:
+      - ${VLLM_CPU_MODEL:-Qwen/Qwen3-0.6B}
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-4096}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      VLLM_CPU_KVCACHE_SPACE: ${VLLM_CPU_KVCACHE_SPACE:-2}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    shm_size: 1g # vLLM's workers share tensors through /dev/shm (Docker's default is 64 MiB)
+    ports: ["127.0.0.1:${VLLM_PORT:-8000}:8000"]
+
+  # Ollama: dev and single user (one request per model at a time by default, OLLAMA_NUM_PARALLEL).
+  # Pull models into it: docker compose exec ollama ollama pull qwen3:0.6b (and an embedding model).
+  ollama:
+    profiles: [local-llm]
+    logging: *logging
+    image: ollama/ollama:0.40.15
+    volumes: ["ollama:/root/.ollama"]
+    ports: ["127.0.0.1:${OLLAMA_PORT:-11434}:11434"]
 
   # PII redaction for the API's feedback hook (Presidio, docs/support.md "Personal data"): the
   # worker image, another command. Set PII_REDACT_URL on the API to use it.
@@ -580,19 +686,32 @@ services:
     ports: ["127.0.0.1:${SERPBEAR_PORT:-3200}:3000"]
   # --- support profile: Chatwoot CE (MIT; `-ce` images are built with enterprise/ removed) as
   # the service desk. docker compose --profile support up -d ; docs/support.md, ADR 0013.
-  # Own Postgres: Chatwoot's schema needs the pgvector extension, which postgres:17-alpine lacks.
-  # Redis is the stack's (db 2; GlitchTip has db 1); the permissive twin swaps in Valkey.
-  chatwoot-postgres:
-    profiles: [support]
-    image: pgvector/pgvector:0.8.7-pg16
+  # Database `chatwoot` on our Postgres server (pgvector is in the stack's image), attachments in
+  # our S3 (bucket `chatwoot`), so the backup overlay covers both. Redis is the stack's (db 2;
+  # GlitchTip has db 1); the permissive twin swaps in Valkey.
+  chatwoot-db:
     logging: *logging
-    mem_limit: 512m
-    environment: { POSTGRES_USER: chatwoot, POSTGRES_PASSWORD: chatwoot, POSTGRES_DB: chatwoot }
-    volumes: [chatwoot-pgdata:/var/lib/postgresql/data]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chatwoot -d chatwoot"]
-      interval: 2s
-      retries: 30
+    profiles: [support]
+    image: postgres:17-alpine # psql only
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      {
+        PGHOST: postgres,
+        PGUSER: postgres,
+        PGPASSWORD: postgres,
+        CHATWOOT_DB_PASSWORD: &cwpw "${CHATWOOT_DB_PASSWORD:-local-dev-chatwoot}",
+      }
+    entrypoint: ["/bin/sh", "-c"]
+    # Extensions as superuser: `vector` and `pg_stat_statements` are not trusted extensions.
+    # The password is (re)set on every run, so changing CHATWOOT_DB_PASSWORD takes effect.
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'chatwoot'" | grep -q 1 ||
+         psql -c "create role chatwoot login") &&
+        echo "alter role chatwoot password :'pw'" | psql -v pw="$$CHATWOOT_DB_PASSWORD" &&
+        (psql -tAc "select 1 from pg_database where datname = 'chatwoot'" | grep -q 1 ||
+         psql -c "create database chatwoot owner chatwoot") &&
+        psql -d chatwoot -c "create extension if not exists vector" -c "create extension if not exists pg_stat_statements"
 
   chatwoot-prepare: # one-shot: create or migrate the schema (Chatwoot's db:chatwoot_prepare)
     profiles: [support]
@@ -605,14 +724,22 @@ services:
         INSTALLATION_ENV: docker
         SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE:-local-dev-chatwoot-secret-key-base}
         FRONTEND_URL: ${CHATWOOT_FRONTEND_URL:-http://localhost:${CHATWOOT_PORT:-3300}}
-        POSTGRES_HOST: chatwoot-postgres
+        POSTGRES_HOST: postgres
         POSTGRES_USERNAME: chatwoot
-        POSTGRES_PASSWORD: chatwoot
+        POSTGRES_PASSWORD: *cwpw
         POSTGRES_DATABASE: chatwoot
         REDIS_URL: redis://redis:6379/2
         RAILS_LOG_TO_STDOUT: "true"
         ENABLE_ACCOUNT_SIGNUP: "false" # first admin via the onboarding page, then invite agents
-        ACTIVE_STORAGE_SERVICE: local
+        # Attachments in S3 (Chatwoot's `s3_compatible` service); locally the stack's SeaweedFS,
+        # which creates the bucket on first upload. Elsewhere create the bucket first.
+        ACTIVE_STORAGE_SERVICE: s3_compatible
+        STORAGE_ENDPOINT: ${CHATWOOT_STORAGE_ENDPOINT:-http://s3:8333}
+        STORAGE_REGION: ${CHATWOOT_STORAGE_REGION:-us-east-1}
+        STORAGE_BUCKET_NAME: ${CHATWOOT_STORAGE_BUCKET:-chatwoot}
+        STORAGE_ACCESS_KEY_ID: ${CHATWOOT_STORAGE_ACCESS_KEY_ID:-local-dev-access-key}
+        STORAGE_SECRET_ACCESS_KEY: ${CHATWOOT_STORAGE_SECRET_ACCESS_KEY:-local-dev-secret-key}
+        STORAGE_FORCE_PATH_STYLE: "true"
         DISABLE_TELEMETRY: "true" # no instance metrics to Chatwoot's hub (a version check remains)
         ENABLE_PUSH_RELAY_SERVER: "false" # no mobile push relay through chatwoot.com
         # Webhooks go to the API on the compose network (http://api:3000), a private address.
@@ -625,11 +752,14 @@ services:
         SMTP_ENABLE_STARTTLS_AUTO: ${CHATWOOT_SMTP_STARTTLS:-false}
         SMTP_USERNAME: ${CHATWOOT_SMTP_USERNAME:-}
         SMTP_PASSWORD: ${CHATWOOT_SMTP_PASSWORD:-}
-      volumes: [chatwoot-storage:/app/storage]
+      # Files are served through Chatwoot (proxy), not by redirect to S3: the endpoint (s3:8333
+      # locally) need not be reachable from browsers.
+      volumes: [./infra/chatwoot/storage-proxy.rb:/app/config/initializers/storage_proxy.rb:ro]
     mem_limit: 768m
     depends_on:
-      chatwoot-postgres: { condition: service_healthy }
+      chatwoot-db: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
+      s3: { condition: service_healthy }
     command: ["bundle", "exec", "rails", "db:chatwoot_prepare"]
 
   chatwoot:
@@ -874,13 +1004,13 @@ services:
       PROMPTFOO_DISABLE_UPDATE: "1"
 
 volumes:
+  hfcache:
+  ollama:
   pgdata:
   s3data:
   lokidata:
   postiz-config:
   postiz-uploads:
   serpbear-data:
-  chatwoot-pgdata:
-  chatwoot-storage:
   twenty-data:
   clickhousedata:

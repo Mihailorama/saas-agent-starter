@@ -39,12 +39,13 @@ restore check within a minute, then the schedule below. Watch it with
 
 ## What is backed up
 
-| Data                                                                                                                                    | How                                               | Point in time            |
-| --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
-| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                                                                | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
+| Data                                                                                                | How                                               | Point in time            |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                            | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
 | `glitchtip` (`glitchtip`), `umami` (`analytics`), `langfuse` (`llmops`), `postiz` (`marketing`), `twenty` (`crm`), `caldiy` (`booking`) | same: they live on the same Postgres server       | same                     |
-| Any database a future profile creates on this server                                                                                    | same, automatically                               | same                     |
-| App buckets `attachments`, `ai-calls`, `langfuse` (`BACKUP_APP_BUCKETS`; missing = skipped)                                             | rclone, hourly encrypted copy + dated versions    | hourly                   |
+| `chatwoot` (`support`): conversations, contacts, messages                                           | same                                              | same                     |
+| Any database a future profile creates on this server                                                | same, automatically                               | same                     |
+| Buckets `attachments`, `ai-calls`, `langfuse`, `chatwoot` (`BACKUP_APP_BUCKETS`; missing = skipped) | rclone, hourly encrypted copy + dated versions    | hourly                   |
 
 **Not backed up:**
 
@@ -57,11 +58,8 @@ restore check within a minute, then the schedule below. Watch it with
   volume. Langfuse's Postgres database and its `langfuse` bucket are covered (above); losing
   ClickHouse loses trace history, not prompts or configuration. Back it up with ClickHouse's own
   `BACKUP ... TO S3` if that history matters.
-- **Chatwoot** (`support` profile): **not covered.** It runs its own Postgres
-  (`chatwoot-postgres`, pgvector image, volume `chatwoot-pgdata`), not this server, plus
-  attachments in the `chatwoot-storage` volume and its queue in Redis db 2. Conversations with
-  customers live there: until it has its own backup (docs/TODO.md), take `pg_dump` of
-  `chatwoot-postgres` and a copy of `chatwoot-storage` on your own schedule.
+- **Chatwoot's queue** (`support` profile): Sidekiq jobs in Redis db 2 (jobs in flight, e.g.
+  a notification email, are lost). Its conversations and attachments are covered (above).
 - **Marketing profile files**: Postiz uploads (`postiz-uploads` volume, `STORAGE_PROVIDER=local`)
   and SerpBear's SQLite data (`serpbear-data` volume). Postiz's database is covered (above).
   Copy those two volumes yourself if they matter, or point Postiz storage at a bucket listed in
@@ -83,7 +81,9 @@ Measured with this repository's scripts (e2e numbers in the CI log of the `backu
 - **RPO (Postgres): at most `BACKUP_ARCHIVE_TIMEOUT` (60 s) of commits.** A busy server ships
   each 16 MB WAL segment as soon as it is full; a quiet one ships a partial segment every 60 s.
   Measured in the e2e runs: a commit on a quiet server reached the repository after 53-56 s.
-- **RPO (objects): up to 1 hour** (`BACKUP_OBJECTS_CRON`, hourly).
+- **RPO (objects): up to 1 hour** (`BACKUP_OBJECTS_CRON`, hourly). A file uploaded after the
+  last copy (an app attachment, a Chatwoot attachment) can come back as a database row without
+  its file.
 - **RTO (Postgres)**, measured locally (repository on the same host, docs/STACK.md): a 784 MB
   database restored to a new instance in 24 s (the pgBackRest restore itself 14 s, about
   55 MB/s); the e2e in-place disaster restore of a small database, including stopping and
@@ -96,18 +96,18 @@ Measured with this repository's scripts (e2e numbers in the CI log of the `backu
 
 ## Schedule and settings
 
-| Variable                        | Default                                             | Meaning                                     |
-| ------------------------------- | --------------------------------------------------- | ------------------------------------------- |
-| `BACKUP_FULL_CRON`              | `0 2 * * 0`                                         | full backup (Sunday 02:00, container time)  |
-| `BACKUP_DIFF_CRON`              | `0 2 * * 1-6`                                       | differential backup, other days             |
-| `BACKUP_OBJECTS_CRON`           | `15 * * * *`                                        | app bucket copy                             |
-| `RESTORE_CHECK_CRON`            | `0 4 * * 0`                                         | restore check                               |
-| `BACKUP_RETENTION_FULL`         | `4`                                                 | full backups kept (and the WAL they need)   |
-| `BACKUP_OBJECTS_RETENTION_DAYS` | `30`                                                | overwritten/deleted object versions kept    |
-| `BACKUP_ARCHIVE_TIMEOUT`        | `60`                                                | max seconds before a WAL segment is shipped |
-| `BACKUP_PROCESS_MAX`            | `4`                                                 | parallel file transfers in backup/restore   |
-| `RESTORE_CHECK_TABLES`          | `app.public.{organization,user,projects,audit_log}` | row counts compared                         |
-| `RESTORE_CHECK_TOLERANCE`       | `0.05`                                              | allowed relative difference per table       |
+| Variable                        | Default                                                                                         | Meaning                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `BACKUP_FULL_CRON`              | `0 2 * * 0`                                                                                     | full backup (Sunday 02:00, container time)                     |
+| `BACKUP_DIFF_CRON`              | `0 2 * * 1-6`                                                                                   | differential backup, other days                                |
+| `BACKUP_OBJECTS_CRON`           | `15 * * * *`                                                                                    | app bucket copy                                                |
+| `RESTORE_CHECK_CRON`            | `0 4 * * 0`                                                                                     | restore check                                                  |
+| `BACKUP_RETENTION_FULL`         | `4`                                                                                             | full backups kept (and the WAL they need)                      |
+| `BACKUP_OBJECTS_RETENTION_DAYS` | `30`                                                                                            | overwritten/deleted object versions kept                       |
+| `BACKUP_ARCHIVE_TIMEOUT`        | `60`                                                                                            | max seconds before a WAL segment is shipped                    |
+| `BACKUP_PROCESS_MAX`            | `4`                                                                                             | parallel file transfers in backup/restore                      |
+| `RESTORE_CHECK_TABLES`          | `app.public.{organization,user,projects,audit_log}`, `chatwoot.public.{conversations,messages}` | row counts compared (tables of a missing database are skipped) |
+| `RESTORE_CHECK_TOLERANCE`       | `0.05`                                                                                          | allowed relative difference per table                          |
 
 Alert thresholds in `infra/otel/alerts.yml` assume these schedules; change both together.
 
