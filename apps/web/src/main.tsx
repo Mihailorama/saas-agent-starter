@@ -17,6 +17,7 @@ import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
+import { BillingPage } from '@/pages/billing';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { Shell } from '@/pages/shell';
@@ -75,11 +76,17 @@ const aiCallsRoute = createRoute({
   component: AiCallsPage,
 });
 
+const billingRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/billing',
+  component: BillingPage,
+});
+
 const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
     aiTransparencyRoute,
-    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute]),
+    appRoute.addChildren([projectsRoute, projectRoute, aiCallsRoute, billingRoute]),
   ]),
 });
 

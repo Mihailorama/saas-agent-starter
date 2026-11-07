@@ -119,6 +119,15 @@ services:
     environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_UI_PORT: "8233" }
     ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8233"]
 
+  # Stripe's official API mock (MIT), for tests and local dev only (`--profile billing`).
+  # It validates requests against Stripe's OpenAPI spec and returns fixtures; no webhooks.
+  stripe-mock:
+    logging: *logging
+    mem_limit: 128m
+    image: stripe/stripe-mock:v0.206.0
+    profiles: [billing]
+    ports: ["127.0.0.1:${STRIPE_MOCK_PORT:-12111}:12111"]
+
   migrate:
     logging: *logging
     mem_limit: 256m
@@ -141,6 +150,13 @@ services:
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-}
+      # Billing (docs/billing.md); empty keys = checkout answers 503.
+      BILLING_CONTOUR: ${BILLING_CONTOUR:-en}
+      AI_CONTOUR: ${AI_CONTOUR:-eu}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
+      YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
       # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1
@@ -172,6 +188,9 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      # YooKassa renewals (autopayments) are charged by the worker.
+      YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
+      YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }

@@ -1,0 +1,13 @@
+{
+  "type": "notification",
+  "event": "payment.succeeded",
+  "object": {
+    "id": "2f1b2c3d-000f-5000-8000-1a2b3c4d5e6f",
+    "status": "succeeded",
+    "paid": true,
+    "amount": { "value": "2490.00", "currency": "RUB" },
+    "created_at": "2026-11-01T10:00:00.000Z",
+    "metadata": { "orgId": "{{orgId}}", "planId": "pro", "kind": "initial" },
+    "test": true
+  }
+}

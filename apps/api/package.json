@@ -35,6 +35,7 @@
     "fastify-type-provider-zod": "^7.0.0",
     "import-in-the-middle": "^3.5.3",
     "ioredis": "^6.0.0",
+    "stripe": "^23.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

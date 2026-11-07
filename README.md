@@ -14,6 +14,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
   endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
+- **Billing**: plans with limits in `config/plans.json`, prices per currency, Stripe (EN) and
+  YooKassa (RU) behind one provider interface, webhooks via Temporal, per-org LLM spend limit
+  enforced in the AI gateway. See [docs/billing.md](docs/billing.md).
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
 - **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,

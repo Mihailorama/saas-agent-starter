@@ -44,6 +44,35 @@ export type Attachment = {
   createdAt: string;
 };
 
+export type Billing = {
+  planId: string;
+  planName: string;
+  status: 'incomplete' | 'active' | 'past_due' | 'canceled' | null;
+  provider: string;
+  currency: string;
+  periodStart: string;
+  periodEnd: string;
+  cancelAtPeriodEnd: boolean;
+  canManage: boolean;
+  usage: Record<'seats' | 'projects', { used: number; limit: number }>;
+  llmSpend: {
+    currency: string;
+    spent: number;
+    limit: number;
+    max: number;
+    level: 'ok' | 'warning' | 'blocked';
+  }[];
+  features: Record<string, boolean>;
+  plans: {
+    id: string;
+    name: string;
+    seats: number;
+    projects: number;
+    llmSpendMonthly: number | null;
+    price: { amount: string; interval: string } | null;
+  }[];
+};
+
 /** JSON fetch against our API. Throws with the server's error message on non-2xx. */
 export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const method = init?.method ?? 'GET';

@@ -28,3 +28,9 @@ groups:
         for: 1h
         labels: { severity: ticket }
         annotations: { summary: "AI spend this hour is more than twice the same hour yesterday" }
+      - alert: LlmSpendLimitHit
+        # billing_llm_blocked_total: AI calls refused by the plan's LLM spend limit (docs/billing.md).
+        expr: sum by (plan) (increase(billing_llm_blocked_total[1h])) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations: { summary: "Orgs on plan {{ $labels.plan }} hit their LLM spend limit" }

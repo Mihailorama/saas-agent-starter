@@ -21,6 +21,7 @@ tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do no
 
 ```sh
 docker compose up -d --wait postgres redis s3 temporal-ui   # infra only
+docker compose --profile billing up -d stripe-mock          # Stripe API mock (API tests)
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
 pnpm worker     # Python Temporal worker
@@ -37,6 +38,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/tenant.ts       requireRole() + withTenant(): RBAC, RLS transaction, audit log
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log
+  src/billing/        plans config, entitlements() + requireEntitlement, payment providers
+                      (Stripe, YooKassa) behind one interface (docs/billing.md)
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/s3.ts           S3 client, presigned upload/download URLs
   src/telemetry.ts    OpenTelemetry (preloaded, env-toggled)
@@ -49,7 +52,9 @@ packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
+  worker/billing.py   LLM spend limit, provider events -> subscriptions, YooKassa renewals
 config/             ai-models.json (allowed models per contour/purpose, prices),
+                    plans.json (plans, limits, prices per currency, billing contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)

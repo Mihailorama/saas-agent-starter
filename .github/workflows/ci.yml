@@ -30,7 +30,7 @@ jobs:
         with:
           tool: cargo-deny
       - name: Start infra
-        run: docker compose up -d --wait postgres redis s3 temporal-ui
+        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui stripe-mock
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web exec playwright install --with-deps chromium
       - run: pnpm db:migrate
@@ -59,7 +59,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - name: Start infra (${{ matrix.kv }})
-        run: docker compose up -d --wait postgres redis s3 temporal-ui
+        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui stripe-mock
       - name: Check the store image
         run: docker compose images redis | tee /dev/stderr | grep -q "${{ matrix.kv }}"
       - run: pnpm install --frozen-lockfile

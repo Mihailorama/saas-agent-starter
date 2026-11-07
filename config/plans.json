@@ -1,0 +1,46 @@
+{
+  "$comment": "Plans, limits and prices (docs/billing.md). Read by the API (entitlements, checkout, billing page) and the worker (LLM spend limit, YooKassa renewals). Bump `version` when you change a plan; existing subscriptions keep their plan id. `contours` pick the payment provider and the currencies offered. Prices are per currency; `providerPriceId` is the provider's price object (Stripe price id, created in the Stripe dashboard) or null where the provider takes the amount per payment (YooKassa). `amount` is a decimal string in major units. `llmSpendMonthly` caps what an organization's AI calls may cost per billing period, per cost currency of config/ai-models.json; `llmSpendMax` is how far an admin may raise it (needs the `llmLimitRaise` feature). A `past_due` subscription keeps its plan for `pastDueGraceDays` after the paid period ends, then falls back to `defaultPlan`. The example price ids are placeholders: replace them with your own.",
+  "version": 1,
+  "defaultPlan": "free",
+  "pastDueGraceDays": 7,
+  "contours": {
+    "en": { "provider": "stripe", "currencies": ["USD", "EUR"] },
+    "ru": { "provider": "yookassa", "currencies": ["RUB"] }
+  },
+  "plans": {
+    "free": {
+      "name": "Free",
+      "limits": {
+        "seats": 3,
+        "projects": 3,
+        "llmSpendMonthly": { "USD": 1, "EUR": 1, "RUB": 100 }
+      },
+      "llmSpendMax": { "USD": 1, "EUR": 1, "RUB": 100 },
+      "features": { "llmLimitRaise": false },
+      "prices": {}
+    },
+    "pro": {
+      "name": "Pro",
+      "limits": {
+        "seats": 20,
+        "projects": 100,
+        "llmSpendMonthly": { "USD": 20, "EUR": 20, "RUB": 2000 }
+      },
+      "llmSpendMax": { "USD": 200, "EUR": 200, "RUB": 20000 },
+      "features": { "llmLimitRaise": true },
+      "prices": {
+        "USD": {
+          "amount": "29.00",
+          "interval": "month",
+          "providerPriceId": "price_example_pro_usd"
+        },
+        "EUR": {
+          "amount": "27.00",
+          "interval": "month",
+          "providerPriceId": "price_example_pro_eur"
+        },
+        "RUB": { "amount": "2490.00", "interval": "month", "providerPriceId": null }
+      }
+    }
+  }
+}

@@ -52,6 +52,17 @@ const schema = z
     GITHUB_TOKEN: z.string().optional(),
     /** owner/name of the repository that receives the issues. */
     GITHUB_REPO: z.string().optional(),
+    // Billing (docs/billing.md). Contour of new subscriptions; config/plans.json `contours`.
+    BILLING_CONTOUR: z.string().default('en'),
+    /** Contour of config/ai-models.json: which cost currencies the billing page shows. */
+    AI_CONTOUR: z.string().default(''),
+    STRIPE_SECRET_KEY: z.string().optional(),
+    STRIPE_WEBHOOK_SECRET: z.string().optional(),
+    /** Only for stripe-mock in tests/dev, e.g. http://localhost:12111; empty = api.stripe.com. */
+    STRIPE_API_URL: z.union([z.url(), z.literal('')]).optional(),
+    YOOKASSA_SHOP_ID: z.string().optional(),
+    YOOKASSA_SECRET_KEY: z.string().optional(),
+    YOOKASSA_API_URL: z.url().default('https://api.yookassa.ru/v3'),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
@@ -63,6 +74,14 @@ const schema = z
       message: 'POSTHOG_WEBHOOK_SECRET still has the example value',
       path: ['POSTHOG_WEBHOOK_SECRET'],
     },
+  )
+  .refine(
+    (e) =>
+      e.NODE_ENV !== 'production' ||
+      ![e.STRIPE_SECRET_KEY, e.STRIPE_WEBHOOK_SECRET, e.YOOKASSA_SECRET_KEY].some(
+        (v) => v === 'sk_test_123' || v?.includes('local_dev'),
+      ),
+    { message: 'a billing secret still has the example value', path: ['STRIPE_SECRET_KEY'] },
   );
 
 const parsed = schema.safeParse(process.env);

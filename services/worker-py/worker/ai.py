@@ -32,6 +32,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
 from worker import settings
+from worker.billing import Plans, check_llm_budget
 from worker.s3 import S3
 
 log = logging.getLogger(__name__)
@@ -116,8 +117,9 @@ class Gateway:
         registry: Registry,
         providers: dict[str, Provider],
         retention_days: int,
+        plans: Plans | None = None,
     ) -> None:
-        self.pool, self.s3, self.contour = pool, s3, contour
+        self.pool, self.s3, self.contour, self.plans = pool, s3, contour, plans
         self.registry, self.providers = registry, providers
         self.retention = timedelta(days=retention_days)
 
@@ -137,7 +139,9 @@ class Gateway:
         """One LLM call, logged. The span joins the current OTel trace (Temporal propagates it).
 
         Raises ModelNotAllowed (non-retryable) if (provider, model, purpose) is not registered
-        for this contour; provider errors are logged as status=error and re-raised.
+        for this contour, SpendLimitExceeded (non-retryable) if the org's LLM spend in this
+        billing period reached its plan limit; provider errors are logged as status=error and
+        re-raised. Calls of unpriced models (price null) are not counted against the limit.
         """
         allowed = self.registry.get((provider, model))
         call = self.providers.get(provider)
@@ -145,6 +149,9 @@ class Gateway:
             raise ModelNotAllowed(
                 f"{provider}/{model} is not allowed for {purpose!r} in contour {self.contour!r}"
             )
+
+        if self.plans is not None and allowed.price is not None:
+            await check_llm_budget(self.pool, self.plans, org_id, allowed.price.currency)
 
         call_id = uuid.uuid4()
         now = datetime.now(UTC)

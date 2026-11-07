@@ -64,3 +64,22 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Billing: no retry after a failed YooKassa renewal.** `charge_renewal`
+  (`services/worker-py/worker/billing.py`) charges once per period; a declined autopayment sets
+  `past_due` and the plan lapses after `pastDueGraceDays`. Fix: on `payment.failed` for a
+  renewal, schedule 2-3 more `charge_renewal` attempts over the grace period (new idempotence
+  key per attempt), and email the admins (needs the `email` branch).
+- **Billing: YooKassa 54-FZ receipts.** Shops that fiscalize through YooKassa must send a
+  `receipt` (customer contact, items with VAT code) with each payment; neither the checkout
+  (`apps/api/src/billing/yookassa.ts`) nor the renewal body does. Add it from org billing
+  contact data once the deployment's fiscal setup is known.
+- **Billing: YooKassa IP ranges are hard-coded** (`YOOKASSA_IPS` in
+  `apps/api/src/billing/yookassa.ts`, from yookassa.ru/developers/using-api/webhooks, checked
+  2026-11-07). Re-check on each release; if YooKassa adds a range, notifications from it are
+  rejected (400) and YooKassa retries for 24 hours.
+- **Billing: plan changes for YooKassa.** An active RU subscription cannot switch plans (checkout
+  answers 409 until canceled); Stripe does it in its portal. Add an upgrade path that charges the
+  difference or switches at the next renewal when a second paid plan exists.
+- **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
+  ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
+  transaction (ADR 0019 "Alternatives").

@@ -27,6 +27,7 @@ on an image that is not. Their primary software licenses:
 | `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0        |
 | `python`                               | worker runtime                                     | Python-2.0 (PSF)         |
 | `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                      |
+| `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                      |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -67,6 +68,12 @@ Notes:
   `posthog-js` is `Apache-2.0 AND MIT` (both permissive; ship the notices), `@langfuse/browser`
   is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
+
+- `stripe/stripe-mock` ([MIT](https://github.com/stripe/stripe-mock/blob/master/LICENSE),
+  Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
+  never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
+  dependencies). YooKassa is called over its REST API with `fetch`/`httpx2`, no SDK. Details in
+  [docs/billing.md](billing.md).
 
 ## Permissive twin (replacement map)
 
