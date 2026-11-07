@@ -35,14 +35,29 @@ export async function ensureBucket() {
 }
 
 /** LLM request/response JSON written by the worker; null when gone (retention expired). */
-export async function getAiContent(key: string): Promise<unknown> {
+export const getAiContent = (key: string) => getJson(env.AI_CONTENT_BUCKET, key);
+
+/** A JSON object, or null when it is gone. */
+export async function getJson(bucket: string, key: string): Promise<unknown> {
   try {
-    const res = await s3.send(new GetObjectCommand({ Bucket: env.AI_CONTENT_BUCKET, Key: key }));
+    const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
     return JSON.parse((await res.Body?.transformToString()) ?? 'null');
   } catch (err) {
     if ((err as { name?: string }).name === 'NoSuchKey') return null;
     throw err;
   }
+}
+
+/** A JSON object in the uploads bucket, e.g. a tracker item for the worker (routes/hooks.ts). */
+export async function putJson(key: string, value: unknown) {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: env.S3_BUCKET,
+      Key: key,
+      Body: JSON.stringify(value),
+      ContentType: 'application/json',
+    }),
+  );
 }
 
 const EXPIRES = 300;

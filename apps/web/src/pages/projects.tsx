@@ -41,9 +41,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { track } from '@/lib/analytics';
-import { api, formatDate, type Project } from '@/lib/api';
+import { client, formatDate, ok, type Project } from '@/lib/api';
 
-const projectsQuery = { queryKey: ['projects'], queryFn: () => api<Project[]>('/api/projects') };
+const projectsQuery = { queryKey: ['projects'], queryFn: () => ok(client.GET('/api/projects/')) };
 
 function SortButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
@@ -63,7 +63,7 @@ function NewProjectDialog({
   const queryClient = useQueryClient();
   const create = useMutation({
     mutationFn: (json: { name: string; description: string }) =>
-      api<Project>('/api/projects', { method: 'POST', json }),
+      ok(client.POST('/api/projects/', { body: json })),
     onSuccess: (project) => {
       track('project_created', { has_description: Boolean(project.description) });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -135,7 +135,8 @@ export function ProjectsPage() {
   const [filter, setFilter] = useState('');
 
   const remove = useMutation({
-    mutationFn: (p: Project) => api(`/api/projects/${p.id}`, { method: 'DELETE' }),
+    mutationFn: (p: Project) =>
+      ok(client.DELETE('/api/projects/{id}', { params: { path: { id: p.id } } })),
     onSuccess: (_, p) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast.success(`Deleted ${p.name}`);

@@ -1,8 +1,8 @@
 """Service desk triage (docs/support.md, docs/adr/0013-service-desk-chatwoot.md).
 
-Tickets live in Chatwoot, backlog items in the tracker (GitHub Issues or Plane Intake). We store
-neither: the conversation <-> issue link is the conversation URL written into the issue (body or
-"+1" comment) plus the `tracker_issue_url` custom attribute on the conversation. The bot only
+Tickets live in Chatwoot, backlog items in the tracker (worker/tracker.py, Plane by default). We
+store neither: the conversation <-> issue link is the conversation URL written into the issue (body
+or "+1" comment) plus the `tracker_issue_url` custom attribute on the conversation. The bot only
 writes private notes; it never answers a customer on its own (except the opt-in "resolved"
 message, SUPPORT_NOTIFY_ON_CLOSE=true|release).
 """
@@ -12,8 +12,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
-from urllib.parse import quote
+from typing import Any
 
 import httpx2
 from temporalio import activity
@@ -21,6 +20,7 @@ from temporalio import activity
 from worker import pii, prompts
 from worker.activities import ModelChoice
 from worker.ai import Gateway, Message
+from worker.tracker import GitHub, Item, Tracker, obj
 
 log = logging.getLogger(__name__)
 
@@ -29,8 +29,8 @@ PURPOSE = "support.triage"
 TRIAGE_PROMPT = ("support.triage/system", 1)
 DUPLICATE_PROMPT = ("support.triage/duplicate", 1)
 CATEGORIES = ("question", "bug", "feature_request", "billing", "spam")
-FILED = ("bug", "feature_request")
-LABELS = {"bug": "bug", "feature_request": "feature-request"}
+# Filed categories -> tracker producer (config/tracker.json: labels, Plane state or Intake).
+FILED = {"bug": "support-bug", "feature_request": "support-feature-request"}
 # The conversation URL is the link: it survives tracker HTML sanitizers and humans can click it.
 CONVERSATION_URL = re.compile(r"/app/accounts/(\d+)/conversations/(\d+)")
 # Widget context (apps/web/src/lib/support.ts) that is copied into the issue.
@@ -54,21 +54,8 @@ class SupportIssueClosed:
 
     tracker: str  # github | plane
     issueId: str
-    release: str = ""  # tag from the "Released in vX.Y.Z" comment (GitHub), "" for a close
-
-
-@dataclass(frozen=True)
-class Item:
-    ref: str
-    url: str
-    title: str = ""
-
-
-@dataclass(frozen=True)
-class Closed:
-    url: str
-    resolved: bool  # done, as opposed to "not planned" / cancelled
-    texts: list[str]  # body + comments: where the conversation links are
+    release: str = ""  # tag from the "Released in vX.Y.Z" comment (GitHub or Plane), "" for a close
+    author: str = ""  # Plane: the release comment's author; only our own token's comments count
 
 
 @dataclass(frozen=True)
@@ -78,11 +65,6 @@ class Triage:
     summary: str
     search: str
     answer: str
-
-
-def obj(value: object) -> dict[str, Any]:
-    """A JSON object from an API response, or {} for anything else."""
-    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
 def triage_input(kind_hint: str, transcript: str) -> str:
@@ -156,153 +138,6 @@ class Chatwoot:
 
     async def reply(self, c: SupportConversation, text: str) -> None:
         await self._call("POST", c, "/messages", content=text, message_type="outgoing")
-
-
-class Tracker(Protocol):
-    name: str
-
-    async def search(self, query: str) -> list[Item]: ...
-    async def create(self, title: str, body: str, kind: str) -> Item: ...
-    async def comment(self, ref: str, body: str) -> None: ...
-    async def closed(self, ref: str) -> Closed | None: ...
-
-
-class GitHubIssues:
-    """Same headers and labels as the PostHog hook in apps/api/src/routes/hooks.ts."""
-
-    name = "github"
-
-    def __init__(self, repo: str, token: str, http: httpx2.AsyncClient) -> None:
-        self.repo, self.http = repo, http
-        self.headers = {
-            "authorization": f"Bearer {token}",
-            "accept": "application/vnd.github+json",
-            "x-github-api-version": "2022-11-28",
-        }
-
-    async def _call(self, method: str, path: str, body: object = None) -> Any:
-        res = await self.http.request(
-            method, f"https://api.github.com{path}", headers=self.headers, json=body
-        )
-        res.raise_for_status()
-        return res.json()
-
-    async def search(self, query: str) -> list[Item]:
-        q = quote(f"repo:{self.repo} is:issue is:open {query}")
-        found = await self._call("GET", f"/search/issues?per_page=5&q={q}")
-        return [Item(str(i["number"]), i["html_url"], i["title"]) for i in found["items"]]
-
-    async def create(self, title: str, body: str, kind: str) -> Item:
-        labels = ["from-users", "support", LABELS[kind]]
-        i = await self._call(
-            "POST", f"/repos/{self.repo}/issues", {"title": title, "body": body, "labels": labels}
-        )
-        return Item(str(i["number"]), i["html_url"], title)
-
-    async def comment(self, ref: str, body: str) -> None:
-        await self._call("POST", f"/repos/{self.repo}/issues/{ref}/comments", {"body": body})
-        # The API's return-path hook only reacts to issues with this label.
-        await self._call("POST", f"/repos/{self.repo}/issues/{ref}/labels", {"labels": ["support"]})
-
-    async def closed(self, ref: str) -> Closed | None:
-        i = await self._call("GET", f"/repos/{self.repo}/issues/{ref}")
-        if i["state"] != "closed":
-            return None
-        comments = await self._call("GET", f"/repos/{self.repo}/issues/{ref}/comments?per_page=100")
-        texts = [str(i.get("body") or ""), *(str(c.get("body") or "") for c in comments)]
-        return Closed(i["html_url"], i.get("state_reason") == "completed", texts)
-
-
-class PlaneIntake:
-    """Plane REST API v1 (header X-API-Key): new items go to the project's Intake for triage."""
-
-    name = "plane"
-
-    def __init__(
-        self,
-        *,
-        api_url: str,
-        app_url: str,
-        workspace: str,
-        project_id: str,
-        token: str,
-        http: httpx2.AsyncClient,
-    ) -> None:
-        self.base = f"{api_url.rstrip('/')}/api/v1/workspaces/{workspace}"
-        self.project = f"{self.base}/projects/{project_id}"
-        self.app = f"{app_url.rstrip('/')}/{workspace}/projects/{project_id}/issues"
-        self.http, self.headers = http, {"x-api-key": token}
-
-    async def _call(self, method: str, url: str, body: object = None) -> Any:
-        res = await self.http.request(method, url, headers=self.headers, json=body)
-        res.raise_for_status()
-        return res.json()
-
-    async def _item(self, ref: str) -> dict[str, Any]:
-        return await self._call("GET", f"{self.project}/work-items/{ref}/?expand=state")
-
-    async def search(self, query: str) -> list[Item]:
-        project_id = self.project.rsplit("/", 1)[1]
-        found = await self._call(
-            "GET",
-            f"{self.base}/work-items/search/?limit=5&project_id={project_id}&search={quote(query)}",
-        )
-        items: list[Item] = []
-        for i in found["issues"]:  # search has no state filter: drop finished ones
-            state = obj((await self._item(i["id"])).get("state"))
-            if state.get("group") not in ("completed", "cancelled"):
-                items.append(Item(i["id"], f"{self.app}/{i['id']}", i["name"]))
-        return items
-
-    async def create(self, title: str, body: str, kind: str) -> Item:
-        html = "".join(f"<p>{line}</p>" for line in _html_escape(body).split("\n") if line)
-        res = await self._call(
-            "POST",
-            f"{self.project}/intake-issues/",
-            {"issue": {"name": title, "description_html": html}},
-        )
-        issue: object = res["issue"]  # the docs show an object; older servers return the id
-        ref = str(obj(issue).get("id") or issue)
-        return Item(ref, f"{self.app}/{ref}", title)
-
-    async def comment(self, ref: str, body: str) -> None:
-        html = "".join(f"<p>{line}</p>" for line in _html_escape(body).split("\n") if line)
-        await self._call(
-            "POST", f"{self.project}/work-items/{ref}/comments/", {"comment_html": html}
-        )
-
-    async def closed(self, ref: str) -> Closed | None:
-        i = await self._item(ref)
-        group = obj(i.get("state")).get("group")
-        if group not in ("completed", "cancelled"):
-            return None
-        comments = await self._call("GET", f"{self.project}/work-items/{ref}/comments/")
-        texts = [str(i.get("description_html") or "")]
-        texts += [str(c.get("comment_html") or "") for c in comments.get("results", [])]
-        return Closed(f"{self.app}/{ref}", group == "completed", texts)
-
-
-def _html_escape(s: str) -> str:
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-class DryRunTracker:
-    """No tracker credentials: nothing is created, the note says what would have happened."""
-
-    name = "dry-run"
-
-    async def search(self, query: str) -> list[Item]:
-        return []
-
-    async def create(self, title: str, body: str, kind: str) -> Item:
-        log.info("dry run: would create a %s tracker item", kind)
-        return Item("dry-run", "", title)
-
-    async def comment(self, ref: str, body: str) -> None:
-        log.info("dry run: would comment on tracker item %s", ref)
-
-    async def closed(self, ref: str) -> Closed | None:
-        return None
 
 
 class SupportActivities:
@@ -401,7 +236,7 @@ class SupportActivities:
         """A "+1" comment on an open duplicate, or a new tracker item."""
         assert self.chatwoot is not None
         link = self.chatwoot.link(c)
-        candidates = await self.tracker.search(t.search) if t.search else []
+        candidates = (await self.tracker.search(t.search))[:5] if t.search else []
         if candidates:
             listing = "\n".join(f"{n}. {i.title}" for n, i in enumerate(candidates, 1))
             answer = await self._llm(
@@ -416,6 +251,8 @@ class SupportActivities:
                 await self.tracker.comment(
                     dup.ref, f"+1 user: {t.summary}\n\nSupport conversation: {link}"
                 )
+                if isinstance(self.tracker, GitHub):  # its return-path hook needs the label
+                    await self.tracker.label(dup.ref, "support")
                 return dup, True
         details = await asyncio.to_thread(
             lambda: [f"- {k}: {scrub(context[k])}" for k in CONTEXT_KEYS if context.get(k)]
@@ -433,7 +270,7 @@ class SupportActivities:
                 "link is how the reporter is told when this closes; keep it in the issue.",
             ]
         )
-        return await self.tracker.create(t.title, body, t.category), False
+        return await self.tracker.create(FILED[t.category], t.title, body), False
 
     @activity.defn(name="support_issue_closed")
     async def issue_closed(self, e: SupportIssueClosed) -> int:
@@ -441,20 +278,25 @@ class SupportActivities:
         if e.tracker != self.tracker.name:
             log.info("ignored %s close event: tracker here is %s", e.tracker, self.tracker.name)
             return 0
-        closed = await self.tracker.closed(e.issueId)
-        if closed is None:  # reopened since, or not finished
+        if e.release and not await self.tracker.is_own(e.author):
+            log.info("ignored release comment on %s: not by our integration user", e.issueId)
             return 0
-        conversations = linked_conversations(closed.texts)
+        item = await self.tracker.read(e.issueId)
+        # A release comment means shipped, whatever the state; a close event needs a closed item.
+        if item is None or (not e.release and item.group == "open"):  # reopened since, or not ours
+            return 0
+        resolved = bool(e.release) or item.group == "completed"
+        conversations = linked_conversations(item.texts)
         if self.chatwoot is None:
             log.info("dry run: would notify %d conversations", len(conversations))
             return len(conversations)
         if e.release:
-            note = f"Linked issue {closed.url} is live in {e.release}."
-        elif closed.resolved:
-            note = f"Linked issue {closed.url} was resolved."
+            note = f"Linked issue {item.url} is live in {e.release}."
+        elif resolved:
+            note = f"Linked issue {item.url} was resolved."
         else:
-            note = f"Linked issue {closed.url} was closed without a fix (not planned)."
-        tell = closed.resolved and self.notify == ("release" if e.release else "close")
+            note = f"Linked issue {item.url} was closed without a fix (not planned)."
+        tell = resolved and self.notify == ("release" if e.release else "close")
         for c in conversations:
             await self.chatwoot.note(c, note)
             if tell:

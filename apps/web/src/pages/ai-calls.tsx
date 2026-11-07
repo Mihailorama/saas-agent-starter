@@ -16,7 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { type AiCall, api } from '@/lib/api';
+import { type AiCall, client, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
 const PAGE = 50;
@@ -95,14 +95,18 @@ export function AiCallsPage() {
     to: '',
   });
   const [offset, setOffset] = useState(0);
-  const query = new URLSearchParams(
-    Object.entries(filters).filter(([, v]) => v) as [string, string][],
-  );
+  const query = Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Partial<
+    Omit<Filters, 'status'> & { status: AiCall['status'] }
+  >;
   const base = `/api/orgs/${org?.id}/ai-calls`;
   const calls = useQuery({
-    queryKey: ['ai-calls', org?.id, query.toString(), offset],
+    queryKey: ['ai-calls', org?.id, query, offset],
     queryFn: () =>
-      api<{ items: AiCall[]; total: number }>(`${base}?${query}&limit=${PAGE}&offset=${offset}`),
+      ok(
+        client.GET('/api/orgs/{orgId}/ai-calls/', {
+          params: { path: { orgId: org!.id }, query: { ...query, limit: PAGE, offset } },
+        }),
+      ),
     enabled: Boolean(org),
     placeholderData: keepPreviousData,
   });

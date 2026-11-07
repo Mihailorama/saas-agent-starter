@@ -1,104 +1,86 @@
+import createClient, { type Middleware } from 'openapi-fetch';
 import { track } from '@/lib/analytics';
+import type { paths } from '@/lib/api.gen';
 
-export type AiStatus = 'generated' | 'confirmed' | 'corrected';
-export type Project = {
-  id: string;
-  name: string;
-  description: string | null;
-  fingerprint: string | null;
-  aiSummary: string | null;
-  aiStatus: AiStatus | null;
-  aiCallId: string | null;
-  /** OpenTelemetry trace of the AI call; feedback scores attach to it (Langfuse, PostHog). */
-  aiTraceId: string | null;
-  reviewedBy: string | null;
-  reviewedAt: string | null;
-  createdAt: string;
-};
-export type AiCall = {
-  id: string;
-  actorId: string | null;
-  purpose: string;
-  provider: string;
-  requestModel: string;
-  responseModel: string | null;
-  promptTemplateId: string;
-  promptTemplateVersion: string;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  totalTokens: number | null;
-  cost: number | null;
-  costCurrency: string | null;
-  latencyMs: number;
-  status: 'ok' | 'error';
-  errorClass: string | null;
-  traceId: string | null;
-  contour: string;
-  createdAt: string;
-};
-export type Attachment = {
-  id: string;
-  filename: string;
-  contentType: string;
-  size: number;
-  createdAt: string;
-};
+type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
+/** The 200 JSON body of an API operation, from the generated types (`pnpm api:types`). */
+export type Ok<P extends keyof paths, M extends Method> = paths[P][M] extends {
+  responses: { 200: { content: { 'application/json': infer T } } };
+}
+  ? T
+  : never;
+/** The JSON request body of an API operation. */
+export type Body<P extends keyof paths, M extends Method> = paths[P][M] extends {
+  requestBody?: { content: { 'application/json': infer T } };
+}
+  ? T
+  : never;
+export type Project = Ok<'/api/projects/{id}', 'get'>;
+export type AiStatus = NonNullable<Project['aiStatus']>;
+export type AiCall = Ok<'/api/orgs/{orgId}/ai-calls/', 'get'>['items'][number];
+export type Attachment = Ok<'/api/projects/{id}/attachments', 'get'>[number];
 
-export type Billing = {
-  planId: string;
-  planName: string;
-  status: 'incomplete' | 'active' | 'past_due' | 'canceled' | null;
-  provider: string;
-  currency: string;
-  periodStart: string;
-  periodEnd: string;
-  cancelAtPeriodEnd: boolean;
-  canManage: boolean;
-  usage: Record<'seats' | 'projects', { used: number; limit: number }>;
-  llmSpend: {
-    currency: string;
-    spent: number;
-    limit: number;
-    max: number;
-    level: 'ok' | 'warning' | 'blocked';
-  }[];
-  features: Record<string, boolean>;
-  plans: {
-    id: string;
-    name: string;
-    seats: number;
-    projects: number;
-    llmSpendMonthly: number | null;
-    price: { amount: string; interval: string } | null;
-  }[];
-};
 let lastTrace: string | null = null;
 /** Trace id of the latest API response (`x-trace-id`), attached to support requests. */
 export const lastTraceId = () => lastTrace;
 
-/** JSON fetch against our API. Throws with the server's error message on non-2xx. */
-export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+const failed = (method: string, schemaPath: string, status: number, traceId: string | null) =>
+  track('api_error', {
+    method,
+    path: schemaPath.replace(/\{\w+\}/g, ':id'),
+    status,
+    trace_id: traceId ?? '',
+  });
+const errors: Middleware = {
+  onResponse({ request, response, schemaPath }) {
+    lastTrace = response.headers.get('x-trace-id') ?? lastTrace;
+    if (!response.ok) {
+      failed(request.method, schemaPath, response.status, response.headers.get('x-trace-id'));
+    }
+  },
+  onError({ request, schemaPath }) {
+    failed(request.method, schemaPath, 0, null);
+  },
+};
+
+/** Typed client for our API: paths, params and bodies come from its OpenAPI document. */
+export const client = createClient<paths>({ credentials: 'include' });
+client.use(errors);
+
+/** The data of a client call; throws with the server's error message on non-2xx. */
+export async function ok<T>(
+  call: Promise<{ data?: T; error?: unknown; response: Response }>,
+): Promise<T> {
+  const { data, error, response } = await call;
+  if (!response.ok) {
+    const body = (error ?? {}) as { error?: string; message?: string };
+    throw new Error(body.error ?? body.message ?? `Request failed (${response.status})`);
+  }
+  return data as T;
+}
+
+/**
+ * JSON call to an endpoint hidden from the OpenAPI document (operator console, `schema.hide`),
+ * which therefore has no generated types. Everything else goes through `client`.
+ */
+export async function api<T>(path: string, init?: { method?: string; json?: unknown }): Promise<T> {
   const method = init?.method ?? 'GET';
-  const failed = (status: number, traceId: string | null) =>
-    track('api_error', {
-      method,
-      path: path.split('?')[0]!.replace(/[0-9a-f-]{36}/gi, ':id'),
-      status,
-      trace_id: traceId ?? '',
-    });
+  const route = path.split('?')[0]!.replace(/[0-9a-f-]{36}/gi, '{id}');
   const res = await fetch(path, {
-    ...init,
+    method,
     credentials: 'include',
-    headers: init?.json === undefined ? init?.headers : { 'content-type': 'application/json' },
-    body: init?.json === undefined ? init?.body : JSON.stringify(init.json),
+    ...(init?.json !== undefined && {
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(init.json),
+    }),
   }).catch((err) => {
-    failed(0, null);
+    failed(method, route, 0, null);
     throw err;
   });
   lastTrace = res.headers.get('x-trace-id') ?? lastTrace;
   if (!res.ok) {
-    failed(res.status, res.headers.get('x-trace-id'));
-    const body = await res.json().catch(() => ({}));
+    failed(method, route, res.status, res.headers.get('x-trace-id'));
+    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
     throw new Error(body.error ?? body.message ?? `Request failed (${res.status})`);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
