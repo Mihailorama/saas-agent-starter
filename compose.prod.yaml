@@ -208,7 +208,7 @@ services:
   # Temporal on the same Postgres server (as in docker-compose.yml). Temporal Cloud or a
   # dedicated cluster: point TEMPORAL_ADDRESS elsewhere and drop these three services.
   temporal-setup:
-    image: temporalio/admin-tools:1.32.0
+    image: temporalio/admin-tools:1.32.2
     logging: *logging
     mem_limit: 128m
     environment:
@@ -244,7 +244,7 @@ services:
       temporal-setup: { condition: service_completed_successfully }
 
   temporal-namespace:
-    image: temporalio/admin-tools:1.32.0
+    image: temporalio/admin-tools:1.32.2
     logging: *logging
     mem_limit: 128m
     restart: on-failure:10
