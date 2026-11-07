@@ -551,7 +551,12 @@ services:
     image: postgres:17-alpine # psql only
     depends_on: { postgres: { condition: service_healthy } }
     environment:
-      { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres, CHATWOOT_DB_PASSWORD: &cwpw "${CHATWOOT_DB_PASSWORD:-local-dev-chatwoot}" }
+      {
+        PGHOST: postgres,
+        PGUSER: postgres,
+        PGPASSWORD: postgres,
+        CHATWOOT_DB_PASSWORD: &cwpw "${CHATWOOT_DB_PASSWORD:-local-dev-chatwoot}",
+      }
     entrypoint: ["/bin/sh", "-c"]
     # Extensions as superuser: `vector` and `pg_stat_statements` are not trusted extensions.
     # The password is (re)set on every run, so changing CHATWOOT_DB_PASSWORD takes effect.
