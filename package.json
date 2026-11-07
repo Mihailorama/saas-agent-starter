@@ -43,12 +43,11 @@
     "seo:report": "node scripts/seo-report.mjs",
     "seo:indexnow": "node scripts/indexnow.mjs",
     "geo:check": "node scripts/geo-check.mjs",
-    "api:types": "node --env-file=.env.example --env-file-if-exists=.env scripts/api-types.mjs",
+    "api:types": "node --env-file=.env.example --env-file-if-exists=.env packages/api-types/generate.mjs",
     "check:api-types": "pnpm api:types --check"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.5",
-    "openapi-typescript": "^7.13.0",
     "pyright": "1.1.414",
     "tsrs": "0.22.0-ts7.1.0-beta",
     "typescript": "7.0.2"

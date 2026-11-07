@@ -175,10 +175,11 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
       const v1 = !version && !event_id;
       // The release comment (scripts/released.mjs) means the fix is live. A v2 comment payload
       // carries no project id; the worker reads the item in its own project and ignores others.
-      const comment = v1
-        ? event === 'issue_comment' && action === 'created' && data.comment_stripped
-        : event === 'workitem.comment.created' && data.comment?.comment_stripped;
-      const release = comment && comment.match(RELEASED)?.[1];
+      const comment =
+        (v1
+          ? event === 'issue_comment' && action === 'created' && data.comment_stripped
+          : event === 'workitem.comment.created' && data.comment?.comment_stripped) || '';
+      const release = comment.match(RELEASED)?.[1];
       // Otherwise a state change on a work item of our project; the worker checks the state group.
       const stateChanged = v1
         ? event === 'issue' && action === 'updated' && req.body.activity?.field === 'state_id'

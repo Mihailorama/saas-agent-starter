@@ -43,5 +43,3 @@ overrides:
   "@fastify/otel>minimatch": ^11.0.1
   # plane-node-sdk 0.3.1 pins axios 1.16.0 (GHSA-x97p-jq2g-jp4f and others, fixed in 1.20.0).
   "@makeplane/plane-node-sdk>axios": ^1.20.0
-  # openapi-typescript prints with the TypeScript 5 JS API, which TypeScript 7 (Go) no longer ships.
-  "openapi-typescript>typescript": 5.9.3

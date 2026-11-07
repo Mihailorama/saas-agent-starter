@@ -1,0 +1,10 @@
+{
+  "name": "@app/api-types",
+  "private": true,
+  "type": "module",
+  "description": "pnpm api:types: the web app's API types from the API's OpenAPI document. Its own package because openapi-typescript needs the TypeScript 5 JS API, which the repo's TypeScript 7 no longer ships.",
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "5.9.3"
+  }
+}
