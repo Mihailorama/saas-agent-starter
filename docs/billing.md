@@ -38,12 +38,14 @@ preHandler: [requireRole('admin'), requireEntitlement('llmLimitRaise')]; // feat
 A blocked request gets `402 {"error": "plan limit reached: projects"}`. Seats are enforced by
 Better Auth's `membershipLimit` (add member, accept invitation), fed from the same function.
 A feature flag that no plan defines fails at startup, so typos do not silently pass.
+An operator may override seats and projects for one organization up to the plan's optional
+`limitsMax` (`organization.limit_overrides`, docs/admin.md); `entitlements()` applies it.
 
 ## LLM spend limit
 
 Before every AI call the gateway sums `ai_calls.cost` of the org for the current billing period
 (the paid period, else the calendar month in UTC) in the model's cost currency, and compares it
-with the plan's `llmSpendMonthly` (or the admin-raised value, capped by `llmSpendMax`):
+with the plan's `llmSpendMonthly` (or the admin- or operator-raised value, capped by `llmSpendMax`):
 
 - from 80%: a warning in the worker log and on the billing page;
 - at 100%: the call is refused with the non-retryable `SpendLimitExceeded`; the project summary
@@ -141,7 +143,9 @@ Nothing in the interface is Stripe-shaped.
    stable `eventId` so redeliveries are deduplicated). Verify webhooks with the provider's
    documented mechanism: a signature if it signs, otherwise what it documents instead (for
    example sender address ranges, and re-reading the object from its API and trusting only the
-   re-read copy). Throw `WebhookRejected` when verification fails.
+   re-read copy). Throw `WebhookRejected` when verification fails. `dashboardUrl` links the
+   subscription (or customer) in the provider's own dashboard for operators (docs/admin.md), or
+   `null`.
 2. **Wiring**: env vars in `apps/api/src/env.ts` (no real values in `.env.example`), a branch
    in `registry.ts`, a contour in `config/plans.json` with its currencies, prices per currency
    (`providerPriceId: null` if the provider takes the amount with each payment).

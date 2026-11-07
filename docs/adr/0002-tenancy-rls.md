@@ -22,5 +22,6 @@ Agents write a lot of queries; review will miss one eventually.
 
 - Isolation does not depend on every query being right. No setting means no rows.
 - Every tenant query is in a transaction; fine for OLTP. Cross-tenant admin/reporting jobs need
-  an explicit separate role and code path.
+  an explicit separate role and code path: the operator console's read-only `withOperatorRead`
+  is that path (ADR 0025).
 - Auth tables (users, sessions, memberships) are not tenant-scoped; Better Auth reads them by user.

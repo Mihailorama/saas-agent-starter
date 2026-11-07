@@ -8,6 +8,7 @@ import {
   Cookie,
   Cpu,
   CreditCard,
+  Eye,
   FolderKanban,
   KeyRound,
   Layers,
@@ -19,6 +20,7 @@ import {
   Moon,
   Plus,
   ScrollText,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Sun,
@@ -54,6 +56,9 @@ import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { setTheme, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
+
+/** API error text for members of a suspended organization (apps/api/src/operator-guard.ts). */
+const ORG_SUSPENDED = 'organization suspended';
 
 const initials = (s: string) =>
   s
@@ -182,6 +187,11 @@ function UserMenu() {
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/privacy' })}>
           <Lock className="size-4" /> Privacy
         </DropdownMenuItem>
+        {user?.role === 'operator' && !session?.session.impersonatedBy && (
+          <DropdownMenuItem onSelect={() => navigate({ to: '/admin' })}>
+            <ShieldAlert className="size-4" /> Operator console
+          </DropdownMenuItem>
+        )}
         {privacyChoicesLabel && (
           <DropdownMenuItem onSelect={showPrivacyChoices}>
             <Cookie className="size-4" /> {privacyChoicesLabel}
@@ -230,6 +240,59 @@ function HelpMenu({ className }: { className?: string }) {
   );
 }
 
+/** Persistent while an operator views the app as this user (docs/admin.md). */
+function ImpersonationBanner({ name, email, until }: { name: string; email: string; until: Date }) {
+  const [pending, setPending] = useState(false);
+  async function stop() {
+    setPending(true);
+    const res = await fetch('/api/impersonation/stop', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const body = (await res.json().catch(() => ({}))) as { userId?: string };
+    // Full reload: every cached query belongs to the viewed user.
+    window.location.assign(body.userId ? `/admin/users/${body.userId}` : '/admin');
+  }
+  return (
+    <div
+      role="status"
+      className="sticky top-0 z-50 flex flex-wrap items-center justify-center gap-3 bg-amber-500 px-4 py-2 text-sm font-medium text-black"
+    >
+      <Eye className="size-4" />
+      <span>
+        Viewing as {name} ({email}). Read-only: changes are blocked. Ends at{' '}
+        {until.toLocaleTimeString(undefined, { timeStyle: 'short' })}.
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 bg-white"
+        onClick={stop}
+        disabled={pending}
+      >
+        Stop viewing
+      </Button>
+    </div>
+  );
+}
+
+/** What members of a suspended organization see instead of its pages. */
+function SuspendedNotice() {
+  return (
+    <Card className="mx-auto mt-8 max-w-md">
+      <CardHeader>
+        <CardTitle className="text-xl">This organization is suspended</CardTitle>
+        <CardDescription>
+          Its data and API keys are not available right now. Nothing has been deleted. Contact
+          support to find out why and how to restore access, or switch to another organization.
+        </CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
 const navLink =
   'flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground';
 const navActive = 'bg-accent font-medium text-foreground!';
@@ -239,9 +302,11 @@ export function Shell() {
   const { data: member } = authClient.useActiveMember();
   const { data: session } = authClient.useSession();
   const userId = session?.user.id;
+  // An operator viewing as the user: their browsing must not join the user's analytics person.
+  const viewedBy = session?.session.impersonatedBy;
   useEffect(() => {
-    if (userId) identify(userId);
-  }, [userId]);
+    if (userId && !viewedBy) identify(userId);
+  }, [userId, viewedBy]);
   const onProjects = useLocation({
     select: (l) => l.pathname === '/' || l.pathname.startsWith('/projects'),
   });
@@ -249,9 +314,18 @@ export function Shell() {
   // Org requires 2FA and this user has none: the API refuses tenant data, so enrol first.
   const policy = useQuery({ ...policyQuery, enabled: Boolean(orgs?.length) });
   const mustEnrol = policy.error?.message === TWO_FACTOR_REQUIRED;
+  const suspended = policy.error?.message === ORG_SUSPENDED;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const byoProviders = useFlag('byo-llm-providers');
+
+  const banner = viewedBy && session && (
+    <ImpersonationBanner
+      name={session.user.name}
+      email={session.user.email}
+      until={new Date(session.session.expiresAt)}
+    />
+  );
 
   if (isPending) {
     return (
@@ -265,98 +339,102 @@ export function Shell() {
 
   if (!orgs?.length) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle className="text-xl">Create your organization</CardTitle>
-            <CardDescription>
-              Projects, members and files live inside an organization.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <CreateOrgForm />
-          </CardContent>
-        </Card>
-      </main>
+      <>
+        {banner}
+        <main className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+          <Card className="w-full max-w-sm">
+            <CardHeader>
+              <CardTitle className="text-xl">Create your organization</CardTitle>
+              <CardDescription>
+                Projects, members and files live inside an organization.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <CreateOrgForm />
+            </CardContent>
+          </Card>
+        </main>
+      </>
     );
   }
 
   return (
-    <div className="flex min-h-screen">
-      <aside className="hidden w-64 shrink-0 flex-col border-r bg-muted/30 md:flex">
-        <div className="flex h-14 items-center gap-2 px-4 font-semibold">
-          <Layers className="size-5 text-primary" /> Workspace
-        </div>
-        <div className="px-2">
-          <OrgSwitcher />
-        </div>
-        <nav className="mt-4 flex-1 space-y-1 px-2">
-          <Link to="/" className={cn(navLink, onProjects && navActive)}>
-            <FolderKanban className="size-4" /> Projects
-          </Link>
-          {isAdmin && (
-            <Link to="/ai-calls" className={navLink} activeProps={{ className: navActive }}>
-              <ScrollText className="size-4" /> AI calls
+    <div className="flex min-h-screen flex-col">
+      {banner}
+      <div className="flex flex-1">
+        <aside className="hidden w-64 shrink-0 flex-col border-r bg-muted/30 md:flex">
+          <div className="flex h-14 items-center gap-2 px-4 font-semibold">
+            <Layers className="size-5 text-primary" /> Workspace
+          </div>
+          <div className="px-2">
+            <OrgSwitcher />
+          </div>
+          <nav className="mt-4 flex-1 space-y-1 px-2">
+            <Link to="/" className={cn(navLink, onProjects && navActive)}>
+              <FolderKanban className="size-4" /> Projects
             </Link>
-          )}
-          <Link to="/settings/billing" className={navLink} activeProps={{ className: navActive }}>
-            <CreditCard className="size-4" /> Billing
-          </Link>
-          {isAdmin && (
-            <>
-              <p className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground">Settings</p>
-              <Link
-                to="/settings/api-keys"
-                className={navLink}
-                activeProps={{ className: navActive }}
-              >
-                <KeyRound className="size-4" /> API keys
+            {isAdmin && (
+              <Link to="/ai-calls" className={navLink} activeProps={{ className: navActive }}>
+                <ScrollText className="size-4" /> AI calls
               </Link>
-              <Link
-                to="/settings/webhooks"
-                className={navLink}
-                activeProps={{ className: navActive }}
-              >
-                <Webhook className="size-4" /> Webhooks
-              </Link>
-              {byoProviders && (
+            )}
+            <Link to="/settings/billing" className={navLink} activeProps={{ className: navActive }}>
+              <CreditCard className="size-4" /> Billing
+            </Link>
+            {isAdmin && (
+              <>
+                <p className="px-2 pt-4 pb-1 text-xs font-medium text-muted-foreground">Settings</p>
                 <Link
-                  to="/settings/ai-providers"
+                  to="/settings/api-keys"
                   className={navLink}
                   activeProps={{ className: navActive }}
                 >
-                  <Cpu className="size-4" /> AI providers
+                  <KeyRound className="size-4" /> API keys
                 </Link>
-              )}
-            </>
+                <Link
+                  to="/settings/webhooks"
+                  className={navLink}
+                  activeProps={{ className: navActive }}
+                >
+                  <Webhook className="size-4" /> Webhooks
+                </Link>
+                {byoProviders && (
+                  <Link
+                    to="/settings/ai-providers"
+                    className={navLink}
+                    activeProps={{ className: navActive }}
+                  >
+                    <Cpu className="size-4" /> AI providers
+                  </Link>
+                )}
+              </>
+            )}
+          </nav>
+          {supportEnabled && !viewedBy && (
+            <HelpMenu className="mx-2 mb-1 h-auto py-2 text-sm font-normal text-muted-foreground" />
           )}
-        </nav>
-        {supportEnabled && (
-          <HelpMenu className="mx-2 mb-1 h-auto py-2 text-sm font-normal text-muted-foreground" />
-        )}
-        <Link
-          to="/ai-transparency"
-          className="mx-2 mb-2 flex items-center gap-3 rounded-md px-2 py-2 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <Sparkles className="size-3.5" /> How we use AI
-        </Link>
-        <div className="border-t p-2">
-          <UserMenu />
-        </div>
-      </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-2 border-b px-4 md:hidden">
-          <div className="min-w-0 flex-1">
-            <OrgSwitcher />
-          </div>
-          {supportEnabled && <HelpMenu />}
-          <div className="w-44">
+          <Link
+            to="/ai-transparency"
+            className="mx-2 mb-2 flex items-center gap-3 rounded-md px-2 py-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Sparkles className="size-3.5" /> How we use AI
+          </Link>
+          <div className="border-t p-2">
             <UserMenu />
           </div>
-        </header>
-        <main className="flex-1 p-4 md:p-8">
-          <Outlet />
-        </main>
+        </aside>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-14 items-center gap-2 border-b px-4 md:hidden">
+            <div className="min-w-0 flex-1">
+              <OrgSwitcher />
+            </div>
+            {supportEnabled && !viewedBy && <HelpMenu />}
+            <div className="w-44">
+              <UserMenu />
+            </div>
+          </header>
+          <main className="flex-1 p-4 md:p-8">{suspended ? <SuspendedNotice /> : <Outlet />}</main>
+        </div>
       </div>
     </div>
   );

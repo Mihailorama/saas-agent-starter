@@ -23,7 +23,7 @@ const aiModels = JSON.parse(
 type AiModel = { pricePer1kTokens?: { currency: string } | null; unmetered?: boolean };
 export const costCurrency = (m: AiModel) =>
   m.unmetered ? null : (m.pricePer1kTokens?.currency ?? 'USD');
-const costCurrencies = [
+export const costCurrencies = [
   ...new Set((aiModels.contours[env.AI_CONTOUR] ?? []).flatMap((m) => costCurrency(m) ?? [])),
 ];
 /** Soft warning from this share of the limit on; calls are refused at 1 (worker/billing.py). */
