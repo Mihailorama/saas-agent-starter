@@ -269,6 +269,22 @@ export function page(route: string) {
 export const sessionReplayUrl = () =>
   posthog?.get_session_replay_url({ withTimestamp: true }) ?? '';
 
+/**
+ * GA4 client id of this browser (gtag's documented `get`), for GA4 user deletion when the user
+ * deletes their account (docs/privacy.md). Undefined when GA4 is not loaded (no consent/config).
+ */
+export function gaClientId(): Promise<string | undefined> {
+  const gtag = w.gtag;
+  if (!gtag || !config.ga4) return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), 1000);
+    gtag('get', config.ga4, 'client_id', (id: unknown) => {
+      clearTimeout(timer);
+      resolve(typeof id === 'string' && id ? id : undefined);
+    });
+  });
+}
+
 /** Ties later events to the signed-in user (internal id only) in PostHog. */
 export function identify(userId: string | undefined) {
   if (userId) posthog?.identify(userId);
