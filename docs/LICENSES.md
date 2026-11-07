@@ -24,6 +24,7 @@ on an image that is not. Their primary software licenses:
 | `glitchtip/glitchtip`                  | error tracking, Sentry API (glitchtip profile)     | MIT                         |
 | `node`                                 | API runtime and web build                          | MIT                         |
 | `nginxinc/nginx-unprivileged`          | web static files + `/api` proxy                    | BSD-2-Clause                |
+| `caddy`                                | TLS + ingress in `compose.prod.yaml` (ADR 0016)    | Apache-2.0                  |
 | `ghcr.io/astral-sh/uv`                 | worker build stage                                 | MIT OR Apache-2.0           |
 | `python`                               | worker runtime                                     | Python-2.0 (PSF)            |
 | `ghcr.io/umami-software/umami`         | product analytics (`analytics` profile)            | MIT                         |
@@ -34,6 +35,9 @@ on an image that is not. Their primary software licenses:
 | `clickhouse/clickhouse-server`         | Langfuse trace store (llmops profile)              | Apache-2.0                  |
 | `chatwoot/chatwoot`                    | service desk, `-ce` tag only (`support` profile)   | MIT                         |
 | `pgvector/pgvector`                    | Chatwoot's database (`support` profile)            | PostgreSQL                  |
+| `ghcr.io/gitroomhq/postiz-app`         | social post scheduling (`marketing` profile)       | AGPL-3.0                    |
+| `towfiqi/serpbear`                     | keyword rank tracking (`marketing` profile)        | MIT                         |
+| `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -64,6 +68,12 @@ Notes:
   used: it depends on the `sentry` CLI package (FSL-1.1-Apache-2.0), which the code license gate
   rejects.
 - Tooling, not part of the stack: `anchore/syft` (Apache-2.0) generates the SBOMs (`pnpm run sbom`).
+- Deploy tooling on the operator machine or CI runner, not part of the stack or the images:
+  [SOPS](https://github.com/getsops/sops) (MPL-2.0, run unmodified as a CLI) and
+  [age](https://github.com/FiloSottile/age) (BSD-3-Clause) for the encrypted env files
+  (docs/deploy.md).
+- `caddy` is Apache-2.0 ([LICENSE](https://github.com/caddyserver/caddy/blob/master/LICENSE)),
+  already permissive: the production stack needs no twin for it.
 
 - `ghcr.io/umami-software/umami` (Umami 3, [MIT](https://github.com/umami-software/umami/blob/master/LICENSE)):
   self-hosted product analytics, see [docs/product-analytics.md](product-analytics.md). For an
@@ -72,7 +82,7 @@ Notes:
   `postgres` image.
 - Product-analytics code dependencies (checked by the gate like every npm package):
   `posthog-js` is `Apache-2.0 AND MIT` (both permissive; ship the notices), `@langfuse/browser`
-  is MIT. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
+  is MIT, `vanilla-cookieconsent` (consent banner) is MIT with no dependencies. PostHog Cloud, GA4 and Yandex Metrika are external services, not shipped software:
   an on-prem client gets none of them unless it sets their env vars.
 - `ghcr.io/promptfoo/promptfoo`: Promptfoo itself is MIT, but its npm dependency tree is not
   (checked 2026-11-06 with `promptfoo@0.125.1`: `@img/sharp-libvips-*` LGPL-3.0-or-later,
@@ -124,6 +134,47 @@ Notes:
 - `pgvector/pgvector`: the official Postgres image plus the pgvector extension (PostgreSQL
   License, [LICENSE](https://github.com/pgvector/pgvector/blob/master/LICENSE)). Chatwoot's schema
   enables `vector`, which `postgres:17-alpine` does not ship, so Chatwoot gets this server.
+- `stripe/stripe-mock` ([MIT](https://github.com/stripe/stripe-mock/blob/master/LICENSE),
+  Stripe's official API mock, v0.206.0, checked 2026-11-07): tests and local development only,
+  never deployed. Billing code dependency: `stripe` (official Node SDK, MIT, no runtime
+  dependencies). Details in [docs/billing.md](billing.md).
+
+- Marketing layer ([docs/marketing.md](marketing.md), [ADR 0021](adr/0021-marketing-layer.md)),
+  `marketing` profile, all run unmodified:
+  - `ghcr.io/gitroomhq/postiz-app` (Postiz,
+    [AGPL-3.0](https://github.com/gitroomhq/postiz-app/blob/main/LICENSE)): social post
+    scheduling. Not distributed with the app; the permissive twin disables it. Its `postiz-db`
+    and `postiz-namespace` one-shots reuse the `postgres` and `temporalio/admin-tools` images.
+  - `towfiqi/serpbear` (SerpBear, [MIT](https://github.com/towfiqi/serpbear/blob/main/LICENSE)):
+    keyword rank tracking, SQLite in a volume.
+  - The site image (`apps/site/Dockerfile`) is built from `node` and `nginxinc/nginx-unprivileged`,
+    like the web app. Site code dependencies (checked by the gate): `astro`, `@astrojs/mdx`,
+    `@astrojs/rss`, `@astrojs/sitemap` (MIT), Tailwind (MIT) as in the web. Astro's optional
+    `sharp` is not installed (`ignoredOptionalDependencies` in `pnpm-workspace.yaml`): its
+    `@img/sharp-libvips-*` binaries are LGPL-3.0-or-later; the site uses Astro's passthrough
+    image service instead.
+  - CI tooling, not a dependency: Lighthouse CI (`@lhci/cli` 0.16.0,
+    [Apache-2.0](https://github.com/GoogleChrome/lighthouse-ci/blob/main/LICENSE)) runs through
+    `pnpm dlx` in `.github/workflows/site.yml`. It is not in `package.json` because `lighthouse`
+    depends on `@sentry/node` 11, which pulls the FSL-licensed `sentry` CLI (see the Sentry note
+    above) that the code gate rejects; nothing of it ships with the app.
+  - External services, not shipped software: Google Search Console, Bing Webmaster Tools /
+    IndexNow, the social networks Postiz posts to, the SERP scraper SerpBear is configured with.
+
+- UI kit ([docs/ui.md](ui.md), [ADR 0023](adr/0023-ui-kit-and-checks.md)); code dependencies,
+  checked by the gate: `radix-ui` (MIT; the shadcn/ui primitives, replacing the separate
+  `@radix-ui/react-*` packages), `react-hook-form` and `@hookform/resolvers` (MIT), `zod` (MIT),
+  `cmdk` (MIT, command palette and combobox), `react-day-picker` (MIT, calendar; brings
+  `date-fns`/`@date-fns/tz`, MIT), and `@axe-core/playwright` with `axe-core` (MPL-2.0, tests
+  only, unmodified; see ADR 0005). shadcn/ui itself is MIT and copied into the repo by its CLI,
+  not installed. Not added: Storybook 10.6.6 and Ladle 5.1.1, which fail the gate through
+  `caniuse-lite` (CC-BY-4.0) and, for Ladle, `only` (no license declared); the dev gallery at `/dev/ui`
+  replaces them.
+  - CI tooling, not dependencies: Lighthouse CI runs through `pnpm dlx` exactly as for the site
+    (note above), in `.github/workflows/ui.yml`. The `impeccable` design detector
+    ([Apache-2.0](https://github.com/pbakaus/impeccable/blob/main/LICENSE)) runs as the
+    upstream release binary, pinned by version and SHA-256 in the same workflow; the impeccable
+    skill is installed by developers who want it, not vendored.
 
 ## Permissive twin (replacement map)
 
@@ -143,6 +194,7 @@ docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observ
 | Dashboards/alerts UI | Grafana (AGPL-3.0)                         | Prometheus UI (graphs, `/alerts`) + Jaeger UI (traces), both Apache-2.0                   | Provisioned dashboards, one pane across logs/metrics/traces, Grafana alerting UI. Alert rules still evaluate in Prometheus (`infra/otel/alerts.yml`); add Alertmanager (Apache-2.0) for notifications. |
 | Error tracking       | GlitchTip (MIT), already permissive        | (Sentry SaaS / self-hosted is FSL: a bigger, not a more permissive, option)               | n/a                                                                                                                                                                                                    |
 | Object storage       | SeaweedFS (Apache-2.0), already permissive | n/a                                                                                       | n/a                                                                                                                                                                                                    |
+| Social posting       | Postiz (AGPL-3.0, `marketing` profile)     | none in compose: post natively, or run Mixpost Lite (MIT, Laravel + MySQL) separately     | One calendar for every network, scheduling, team approval. SerpBear (MIT) and the site are unaffected.                                                                                                 |
 
 SBOMs and notices for a delivery: `pnpm run sbom` writes one CycloneDX SBOM per image (both
 twins, all profiles) and `THIRD_PARTY_NOTICES.md` to `dist/sbom/` (also a CI artifact on

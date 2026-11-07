@@ -8,6 +8,11 @@
         "route": "string"
       }
     },
+    "site_cta_clicked": {
+      "description": "A call to action on the marketing site (apps/site) was clicked. `cta` is the link's data-cta id (hero_start, nav_sign_in...).",
+      "pii": false,
+      "props": { "cta": "string" }
+    },
     "signup_started": {
       "description": "The sign-up form was opened on the sign-in page.",
       "pii": false,
@@ -60,6 +65,16 @@
     },
     "org_created": {
       "description": "An organization was created from the onboarding card or the org switcher.",
+      "pii": false,
+      "props": {}
+    },
+    "billing_checkout_started": {
+      "description": "An admin started checkout for a paid plan on the billing page. `plan` is the plan id from config/plans.json.",
+      "pii": false,
+      "props": { "plan": "string" }
+    },
+    "billing_canceled": {
+      "description": "An admin canceled the paid plan (it ends at the period end).",
       "pii": false,
       "props": {}
     },

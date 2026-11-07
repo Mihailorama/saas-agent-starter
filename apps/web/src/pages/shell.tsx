@@ -12,6 +12,8 @@ import {
   Building2,
   Check,
   ChevronsUpDown,
+  Cookie,
+  CreditCard,
   FolderKanban,
   KeyRound,
   LifeBuoy,
@@ -49,7 +51,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
-import { identify, track } from '@/lib/analytics';
+import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
@@ -170,6 +172,11 @@ function UserMenu() {
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/security' })}>
           <ShieldCheck className="size-4" /> Security
         </DropdownMenuItem>
+        {privacyChoicesLabel && (
+          <DropdownMenuItem onSelect={showPrivacyChoices}>
+            <Cookie className="size-4" /> {privacyChoicesLabel}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={async () => {
@@ -268,6 +275,7 @@ export function Shell() {
           active: (p) => p === '/' || p.startsWith('/projects'),
         },
         ...(isAdmin ? [{ label: 'AI calls', icon: ScrollText, to: '/ai-calls' as const }] : []),
+        { label: 'Billing', icon: CreditCard, to: '/settings/billing' as const },
       ],
     },
     ...(isAdmin

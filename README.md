@@ -7,13 +7,19 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 
 - **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
-- **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
+- **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode; a UI kit of shadcn/ui
+  components and page patterns (app shell, data table, forms, empty/loading/error states,
+  command palette), a dev gallery, and CI checks for accessibility, visual regressions and
+  design anti-patterns ([docs/ui.md](docs/ui.md)).
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
   Rust hot paths via PyO3 with a pure-Python fallback.
 - **AI layer**: one logged gateway for every LLM call (Anthropic, any OpenAI-compatible
   endpoint), model registry per contour, append-only `ai_calls` audit table, OpenTelemetry
   GenAI spans, human confirm/correct, admin log + JSONL export, `/ai-transparency` page.
   See [docs/ai-act.md](docs/ai-act.md) for what this does and does not cover.
+- **Billing**: plans with limits in `config/plans.json`, prices per currency, Stripe behind a
+  swappable provider interface (one provider per contour), webhooks via Temporal, per-org LLM
+  spend limit enforced in the AI gateway. See [docs/billing.md](docs/billing.md).
 - **Public API**: organization API keys with scopes (Better Auth API key plugin), per-key
   rate limits, OpenAPI; outbound webhooks signed per Standard Webhooks, retried by Temporal,
   with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).
@@ -22,7 +28,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 - **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and
   Telegram; AI triage writes private notes and files or "+1"s GitHub / Plane Intake items, and
   closed items are reported back to the conversation.
-- **Ops**: Docker Compose (or any Docker host / Coolify), OpenTelemetry everywhere,
+- **Ops**: Docker Compose locally; production from versioned images (GHCR, by digest) with
+  Caddy auto-TLS, SOPS-encrypted env files and one-command deploy/rollback over SSH, Coolify or
+  Kubernetes as options ([docs/deploy.md](docs/deploy.md)), OpenTelemetry everywhere,
   `observability` profile (Grafana + Loki + Prometheus + Jaeger, logs linked to traces,
   dashboards, alert rules), Sentry-protocol error tracking (GlitchTip profile), a
   permissive-license twin of the whole stack, SBOMs + third-party notices, CI with gitleaks,
@@ -89,8 +97,27 @@ pnpm check
 
 Format, lint, typecheck, tests (TS, Python, Rust; integration tests hit the real compose
 services, including a test proving tenant A cannot read tenant B even with a buggy query),
-license gate across npm, PyPI and crates.io, and a Playwright smoke test.
+license gate across npm, PyPI and crates.io, and Playwright end-to-end tests with axe
+accessibility checks.
 `pnpm bench` prints the Rust vs Python speedup of the example hot path.
+
+## UI
+
+`pnpm dev`, then http://localhost:5173/dev/ui: every component and pattern of the kit in light
+and dark, plus reference screens (list, detail, form, settings, empty, loading, error) in the
+app shell. Build new screens from them; [DESIGN.md](DESIGN.md) has the tokens and rules,
+[docs/ui.md](docs/ui.md) the screen checklist. CI checks every page with axe (WCAG 2.2 AA, light
+and dark), compares screenshots with a baseline from `main` (kept as a workflow artifact, not in
+git; accept an intended change with the `visual-change-approved` label), runs Lighthouse on the
+public pages and the [impeccable](https://github.com/pbakaus/impeccable) design detector.
+Agents with the impeccable skill installed read [PRODUCT.md](PRODUCT.md) and DESIGN.md.
+
+## Deploy
+
+Tag a release (`git tag v1.0.0 && git push origin v1.0.0`): CI pushes the images to GHCR. Then
+`pnpm run deploy -- production --version v1.0.0` runs migrations, starts the stack behind Caddy
+with automatic HTTPS and checks health; `pnpm run deploy -- production --rollback` goes back to
+the previous digests. Setup, secrets, other targets: [docs/deploy.md](docs/deploy.md).
 
 ## Configuration
 
@@ -138,6 +165,16 @@ and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (priv
 the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
 (`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
 (about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
+
+## Marketing: site, SEO, social posting
+
+`apps/site` is an Astro static site and Markdown/MDX blog with the SEO basics built in (canonical,
+hreflang, Open Graph, schema.org JSON-LD, sitemap, robots.txt, RSS, `llms.txt`), the web app's
+design tokens and analytics, and Lighthouse budgets in CI: `pnpm --filter site dev`.
+`docker compose --profile marketing up -d` adds Postiz (social posting) and SerpBear (rank
+tracking); `pnpm seo:report` (Search Console), `pnpm seo:indexnow` (Bing/IndexNow after a deploy)
+and `pnpm geo:check` (is the product named in AI answers?). Details:
+[docs/marketing.md](docs/marketing.md).
 
 ## Feature flags and releases
 

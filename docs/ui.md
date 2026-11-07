@@ -2,21 +2,21 @@
 
 The web app (`apps/web`) ships a component catalog, page patterns, a dev gallery and automated
 checks so that every product built on the starter gets a conventional, clean interface without
-a designer. Why it is built this way: [ADR 0022](adr/0022-ui-kit-and-checks.md). Visual rules
+a designer. Why it is built this way: [ADR 0023](adr/0023-ui-kit-and-checks.md). Visual rules
 (tokens, type, spacing, do/don't): [DESIGN.md](../DESIGN.md). Product context for design
 tools: [PRODUCT.md](../PRODUCT.md).
 
 ## What is where
 
-| Path                                  | What                                                                                       |
-| ------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `apps/web/src/index.css`              | Design tokens (CSS variables for light and dark, radius). The only place colors are set.   |
-| `apps/web/src/components/ui/`         | shadcn/ui components, copied source (Radix, Tailwind 4, cva). Edit freely, keep the API.   |
-| `apps/web/src/components/patterns/`   | Page building blocks: `AppShell`, `PageHeader`, `DataTable`, `EmptyState`, `ErrorState`, `QueryView`, `ConfirmDialog`, `SettingsSection`, `CommandMenu`, `Combobox`, `DatePicker`, `ThemeToggle`. |
-| `apps/web/src/dev/`                   | The UI gallery and reference screens, development builds only.                            |
-| `apps/web/e2e/a11y.spec.ts`           | axe accessibility checks of every page and the gallery.                                   |
-| `apps/web/e2e/visual.spec.ts`         | Screenshot comparisons (gallery, reference screens, public pages).                        |
-| `apps/web/lighthouserc.cjs`           | Lighthouse CI budgets.                                                                     |
+| Path                                | What                                                                                                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/index.css`            | Design tokens (CSS variables for light and dark, radius). The only place colors are set.                                                                                                          |
+| `apps/web/src/components/ui/`       | shadcn/ui components, copied source (Radix, Tailwind 4, cva). Edit freely, keep the API.                                                                                                          |
+| `apps/web/src/components/patterns/` | Page building blocks: `AppShell`, `PageHeader`, `DataTable`, `EmptyState`, `ErrorState`, `QueryView`, `ConfirmDialog`, `SettingsSection`, `CommandMenu`, `Combobox`, `DatePicker`, `ThemeToggle`. |
+| `apps/web/src/dev/`                 | The UI gallery and reference screens, development builds only.                                                                                                                                    |
+| `apps/web/e2e/a11y.spec.ts`         | axe accessibility checks of every page and the gallery.                                                                                                                                           |
+| `apps/web/e2e/visual.spec.ts`       | Screenshot comparisons (gallery, reference screens, public pages).                                                                                                                                |
+| `apps/web/lighthouserc.cjs`         | Lighthouse CI budgets.                                                                                                                                                                            |
 
 Open the gallery with `pnpm dev` and http://localhost:5173/dev/ui: every component and pattern,
 the theme toggle at the top, and links to the reference screens (list, detail, form, settings,
@@ -47,20 +47,20 @@ lighthouse CI job checks that the build contains no gallery code).
    - [ ] forms: labels, help text, validation messages (zod), disabled submit while pending;
    - [ ] keyboard: everything reachable with Tab, visible focus, Esc closes overlays;
    - [ ] light and dark, desktop and a 390px-wide phone; secondary table columns hidden on
-         small screens (`meta: { className: 'hidden md:table-cell' }`);
+     small screens (`meta: { className: 'hidden md:table-cell' }`);
    - [ ] copy: sentence case, verbs on buttons, no blame, no exclamation marks (DESIGN.md).
 5. **Run the checks** below; with the `impeccable` skill installed, run
    `/impeccable critique <screen>` and `/impeccable audit <screen>` on new or changed screens.
 
 ## The checks
 
-| Check                                | Where                                      | Blocks the PR? |
-| ------------------------------------ | ------------------------------------------ | -------------- |
-| Biome lint, all `a11y` rules as errors | `pnpm check` (CI `check` job)            | yes            |
-| axe-core, WCAG 2.2 A/AA, light + dark, every page and the gallery; serious/critical fail | `pnpm e2e` (CI `check` job) | yes |
-| impeccable detector: source + rendered gallery, screens and public pages, desktop + mobile | CI `UI / impeccable` | yes |
-| Visual regression: 22 screenshots × 4 (desktop/mobile × light/dark) | CI `UI / visual` | yes, unless the PR has the `visual-change-approved` label |
-| Lighthouse CI: accessibility ≥ 0.95, best practices ≥ 0.95 (performance reported) on `/sign-in`, `/ai-transparency` | CI `UI / lighthouse` | yes |
+| Check                                                                                                               | Where                         | Blocks the PR?                                            |
+| ------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------- |
+| Biome lint, all `a11y` rules as errors                                                                              | `pnpm check` (CI `check` job) | yes                                                       |
+| axe-core, WCAG 2.2 A/AA, light + dark, every page and the gallery; serious/critical fail                            | `pnpm e2e` (CI `check` job)   | yes                                                       |
+| impeccable detector: source + rendered gallery, screens and public pages, desktop + mobile                          | CI `UI / impeccable`          | yes                                                       |
+| Visual regression: 22 screenshots × 4 (desktop/mobile × light/dark)                                                 | CI `UI / visual`              | yes, unless the PR has the `visual-change-approved` label |
+| Lighthouse CI: accessibility ≥ 0.95, best practices ≥ 0.95 (performance reported) on `/sign-in`, `/ai-transparency` | CI `UI / lighthouse`          | yes                                                       |
 
 The `UI` workflow (`.github/workflows/ui.yml`) runs on PRs that touch `apps/web`, the AI
 config shown on the transparency page, or the lockfile.

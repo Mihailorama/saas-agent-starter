@@ -5,10 +5,12 @@ import { expect, test } from '@playwright/test';
 import { expectAccessible, expectAccessibleInBothThemes } from './axe';
 import { mailedLink } from './mail';
 
+// Every page is scanned in two themes on a dev server: far beyond the 30s default.
+test.describe.configure({ timeout: 240_000 });
+
 const screens = ['list', 'detail', 'form', 'settings', 'empty', 'loading', 'error'];
 
 test('UI gallery and reference screens', async ({ page }) => {
-  test.slow(); // the gallery is one long page, scanned twice per screen
   await page.goto('/dev/ui');
   // The first visit compiles the lazily loaded gallery on the dev server.
   await expect(page.getByRole('heading', { name: 'UI gallery' })).toBeVisible({ timeout: 30_000 });
@@ -42,7 +44,6 @@ test('public pages', async ({ page }) => {
 });
 
 test('signed-in pages', async ({ page }) => {
-  test.slow(); // sign-up through the mailed link, then every page in two themes
   const email = `${randomUUID()}@example.com`;
   await page.goto('/sign-in');
   await page.getByRole('button', { name: 'Create an account' }).click();
@@ -77,6 +78,7 @@ test('signed-in pages', async ({ page }) => {
     ['/settings/api-keys', 'API keys'],
     ['/settings/webhooks', 'Webhooks'],
     ['/settings/security', 'Security'],
+    ['/settings/billing', 'Billing'],
   ] as const) {
     await page.goto(path);
     await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();

@@ -13,8 +13,9 @@ AGENTS.md exactly, using `projects` as the reference implementation:
 2. `apps/api/src/routes/$ARGUMENTS.ts`: Zod schemas, `preHandler: requireRole(...)`, all DB
    access inside `withTenant`. Register in `apps/api/src/app.ts`.
 3. `apps/api/test/`: success, 400, 401/403 and cross-tenant 404 cases.
-4. `apps/web/src/pages/`: page with TanStack Query + shadcn/ui, route in `main.tsx`, nav link
-   in `pages/shell.tsx`.
+4. `apps/web/src/pages/`: page built from the list/detail/form reference screens and the
+   catalog components (docs/ui.md, AGENTS.md "UI rules"), route in `main.tsx` with
+   `staticData.crumbs`, nav item in `pages/shell.tsx`, page added to `e2e/a11y.spec.ts`.
 5. Run `pnpm check`. Done means it is green; report the tail of its output.
 
 Ask before adding any dependency. Never weaken RLS, tests or the license gate to get green.

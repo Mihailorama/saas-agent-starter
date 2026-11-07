@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // `pnpm sbom`: CycloneDX SBOM per container image (syft, Apache-2.0, run as a container) and
-// THIRD_PARTY_NOTICES.md, into dist/sbom/. Covers every image of every profile, both twins.
+// THIRD_PARTY_NOTICES.md, into dist/sbom/. Covers every image of every profile, both twins, and
+// the production compose (compose.prod.yaml).
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const SYFT = 'anchore/syft:v1.57.0';
@@ -17,13 +18,19 @@ const twins = [['docker-compose.yml'], ['docker-compose.yml', 'compose.permissiv
 sh('node', ['scripts/license-check.mjs', '--notices', `${out}/THIRD_PARTY_NOTICES.md`], {
   stdio: 'inherit',
 });
-compose(twins[0], 'build', 'api', 'web', 'worker');
+compose(twins[0], 'build', 'api', 'web', 'worker', 'site');
 const images = new Set();
 for (const files of twins) {
   compose(files, 'pull', '--ignore-buildable', '--quiet');
   for (const image of compose(files, 'config', '--images').split('\n').filter(Boolean)) {
     images.add(image);
   }
+}
+// compose.prod.yaml adds its own infra images (Caddy); its app images are the ones built above.
+const prod = readFileSync('compose.prod.yaml', 'utf8').matchAll(/^\s*image:\s*([^\s$]\S*)/gm);
+for (const [, image] of prod) {
+  if (!images.has(image)) sh('docker', ['pull', '--quiet', image]);
+  images.add(image);
 }
 const sock = '/var/run/docker.sock';
 for (const image of [...images].sort()) {

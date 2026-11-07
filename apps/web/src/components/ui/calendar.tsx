@@ -109,13 +109,13 @@ function Calendar({
         month_grid: cn('w-full border-collapse', defaultClassNames.month_grid),
         weekdays: cn('flex', defaultClassNames.weekdays),
         weekday: cn(
-          'flex-1 rounded-md text-[0.8rem] font-normal text-muted-foreground select-none',
+          'flex-1 rounded-md text-xs font-normal text-muted-foreground select-none',
           defaultClassNames.weekday,
         ),
         week: cn('mt-2 flex w-full', defaultClassNames.week),
         week_number_header: cn('w-(--cell-size) select-none', defaultClassNames.week_number_header),
         week_number: cn(
-          'text-[0.8rem] text-muted-foreground select-none',
+          'text-xs text-muted-foreground select-none',
           defaultClassNames.week_number,
         ),
         day: cn(

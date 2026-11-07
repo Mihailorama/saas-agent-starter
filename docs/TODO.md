@@ -63,6 +63,26 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Make the pre-migration backup mandatory.** `scripts/deploy.mjs` calls `pnpm run backup:now`
+  (env `DEPLOY_ENV=<env>`) between staging and migrating, but only warns and continues when the
+  script is missing (it is being added on the `backups` branch). Once it lands: fail the deploy
+  without it, agree its interface (which environment/database it backs up, where the dump goes),
+  and add pnpm setup to the `deploy` job in `.github/workflows/release.yml` (it has none today, so
+  the hook would fail there and abort the deploy). docs/deploy.md section 6.
+- **Short downtime on single-host deploys.** `docker compose up` recreates `api`/`web` in place
+  (seconds without the API; Caddy only holds requests to `web`). Zero-downtime on one host needs
+  two `api` replicas and a health-aware switch (e.g. a blue/green project pair behind Caddy).
+  Tier L on Kubernetes gets rolling updates. docs/deploy.md "Tiers".
+- **No Helm chart for tier L / customer clusters.** What it needs is listed in docs/deploy.md
+  "Kubernetes / Helm" (migrate as pre-upgrade hook Job, probes, Ingress + cert-manager, secrets).
+- **Production observability.** `compose.prod.yaml` has no observability profile; the dev one
+  (`docker-compose.yml`) mounts repo files and runs Grafana without login. Add a production
+  variant (authenticated Grafana behind Caddy, retention) or document an external backend.
+- **Release images are linux/amd64 only** (`.github/workflows/release.yml`). Add
+  `--platform linux/amd64,linux/arm64` (and QEMU/arm runners) when an arm64 host is needed.
+- **SSH transport of `scripts/deploy.mjs` is not exercised by the rehearsal** (it uses
+  `DEPLOY_HOST=local`, same script on `sh -s` instead of `ssh host sh -s`). Run the first real
+  deploy to a staging host and note the result in docs/deploy.md.
 - **Social mentions into the service desk (later, only if volume appears).** X and LinkedIn
   mentions of the product do not reach Chatwoot. When there is enough volume to matter: a
   scheduled Apify actor (one per network) that posts new mentions into a Chatwoot **API inbox**
@@ -95,10 +115,6 @@
   Consequence: the worker has no local evaluation and sends no `$feature_flag_called` exposure
   events (`services/worker-py/worker/flags.py`). Fix once approved: add the alias to `ALIASES` in
   `scripts/license-check.mjs`, `uv add posthog`, and use `Posthog(...).evaluate_flags(...)`.
-- **Tag workflows on other branches must accept `workflow_dispatch`.** Releases are created with
-  `GITHUB_TOKEN`, which starts no `push: tags` workflow; `release-please.yml` dispatches every
-  workflow that has both `tags:` and `workflow_dispatch:` (docs/releases.md). The `deploy`
-  branch's image build needs `workflow_dispatch:` added or it will not run on releases.
 - **Mailed links live in Temporal history.** `SendEmailWorkflow` gets the rendered mail, link
   included, as its argument (`apps/api/src/temporal.ts`), kept until the namespace retention
   drops it. Same trust boundary as Better Auth's `verification` table while Temporal runs on our
@@ -115,9 +131,47 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **PII redaction with Microsoft Presidio: needs an ADR 0005 decision.** The support triage's
+  LLM output (`services/worker-py/worker/support.py` `scrub`), the feedback-to-issue hook
+  (`apps/api/src/routes/hooks.ts`) and the browser `track()` mask only emails (and UUIDs) with a
+  bounded regex. Presidio (MIT, `en_core_web_sm`) would also catch names, phones, cards, IBANs and
+  IPs, measured 2026-11-07 at ~165-200 MiB RSS for English (~360 MiB with a second language), but
+  `pnpm check:licenses` rejects 6 of its transitive packages: `numpy` (has a `Zlib` part), `regex`
+  (`CNRI-Python`), and `Jinja2`, `blis`, `requests-file`, `shellingham`, whose metadata strings
+  ("BSD License", "Apache 2.0", "ISC License") the gate does not map. The official
+  `mcr.microsoft.com/presidio-analyzer` image avoids the code gate but uses `en_core_web_lg`:
+  ~740 MiB RSS idle. Unblock: the owner adds `Zlib` and `CNRI-Python` to the allowlist and the
+  three strings as aliases (ADR 0005), then call Presidio in-process in the worker for
+  `support.py`, and from the API hook through an opt-in sidecar of the worker image (compose
+  profile `pii`) that fails closed. The browser keeps its regex (no Python there).
+- **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
+  ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
+  transaction (ADR 0019 "Alternatives").
 - **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.
 - **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.
+- **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
+  (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
+  site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`
+  service in `compose.prod.yaml` behind Caddy), run it after a successful deploy with the
+  previously deployed sha and `INDEXNOW_KEY`.
+- **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
+  others, add a runner per assistant CLI the team is logged in to (same config, same report),
+  never an API key in CI.
+- **Postiz idle cost.** ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
+  each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
+  task queues this server does not poll) listing the networks you do not use; measure before and
+  after in docs/STACK.md, and never exclude a network you post to.
+- **Pages not yet on the UI patterns.** `ai-calls`, `api-keys`, `webhooks`, `security`,
+  `billing`, `sign-in` and `two-factor` still use hand-written headers, native `<select>`,
+  `<input type="checkbox">` and `<textarea>` and their own empty/error markup. They pass axe, but
+  new pages copy what they see. Fix: move each to `PageHeader`, `QueryView`/`DataTable`,
+  `EmptyState`, `Select`/`Checkbox`/`Textarea` and `SettingsSection` (docs/ui.md), one page per PR,
+  keeping the e2e selectors (labels, roles) unchanged.
+- **One JS bundle for the whole SPA.** Lighthouse performance on `/sign-in` is ~0.79 (reported,
+  not enforced, in `apps/web/lighthouserc.cjs`) because the app ships as one ~900 kB chunk. Fix:
+  lazy-load routes with TanStack Router's `lazyRouteComponent` (as `src/dev/routes.ts` does),
+  then raise the performance assertion to `error` at 0.9.

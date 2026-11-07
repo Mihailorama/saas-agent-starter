@@ -12,7 +12,11 @@ for (const file of ['../../.env', '../../.env.example']) {
 // writes a baseline, later runs compare against it. Only the web dev server is needed.
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const desktop = { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } };
-const mobile = { ...devices['Pixel 7'], viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 };
+const mobile = {
+  ...devices['Pixel 7'],
+  viewport: { width: 390, height: 844 },
+  deviceScaleFactor: 1,
+};
 
 export default defineConfig({
   testDir: 'e2e',

@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/migrations/meta", "!pnpm-lock.yaml"]
+    "includes": ["**", "!**/migrations/meta", "!pnpm-lock.yaml", "!DESIGN.md"]
   },
   "formatter": {
     "indentStyle": "space",
@@ -39,5 +39,8 @@
     "parser": {
       "tailwindDirectives": true
     }
+  },
+  "html": {
+    "experimentalFullSupportEnabled": true
   }
 }

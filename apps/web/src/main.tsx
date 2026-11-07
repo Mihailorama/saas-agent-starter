@@ -11,7 +11,6 @@ import {
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ConsentBanner } from '@/components/consent-banner';
 import type { Crumb } from '@/components/patterns/app-shell';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -22,6 +21,7 @@ import { AcceptInvitationPage } from '@/pages/accept-invitation';
 import { AiCallsPage } from '@/pages/ai-calls';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { ApiKeysPage } from '@/pages/api-keys';
+import { BillingPage } from '@/pages/billing';
 import { ProjectPage } from '@/pages/project';
 import { ProjectsPage } from '@/pages/projects';
 import { ResetPasswordPage } from '@/pages/reset-password';
@@ -38,7 +38,6 @@ const rootRoute = createRootRoute({
     <TooltipProvider>
       <Outlet />
       <Toaster closeButton />
-      <ConsentBanner />
     </TooltipProvider>
   ),
 });
@@ -123,6 +122,13 @@ const aiCallsRoute = createRoute({
   component: AiCallsPage,
 });
 
+const billingRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/billing',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Billing' }] },
+  component: BillingPage,
+});
+
 const apiKeysRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/api-keys',
@@ -158,6 +164,7 @@ const router = createRouter({
       securityRoute,
       apiKeysRoute,
       webhooksRoute,
+      billingRoute,
     ]),
     // Dev-only UI gallery (/dev/ui): dead code in production builds, so Vite drops it (and the
     // gallery chunks); the cast keeps the routes in the types for typed links.

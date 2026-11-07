@@ -14,7 +14,8 @@ export async function expectAccessible(page: Page, name: string) {
       .join('\n    ')}`;
   const blocking = violations.filter((v) => v.impact === 'serious' || v.impact === 'critical');
   const other = violations.filter((v) => !blocking.includes(v));
-  if (other.length) console.log(`axe ${name}, not blocking:\n  ${other.map(describe).join('\n  ')}`);
+  if (other.length)
+    console.log(`axe ${name}, not blocking:\n  ${other.map(describe).join('\n  ')}`);
   expect(blocking.map(describe), `axe: ${name}`).toEqual([]);
 }
 

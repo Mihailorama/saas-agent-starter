@@ -22,6 +22,7 @@ tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do no
 
 ```sh
 docker compose up -d --wait postgres redis s3 temporal-ui mailpit   # infra only
+docker compose --profile billing up -d stripe-mock                  # Stripe API mock (API tests)
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
 pnpm worker     # Python Temporal worker (also delivers mail; Mailpit UI :8025)
@@ -49,6 +50,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
+  src/billing/        plans config, entitlements() + requireEntitlement, payment providers
+                      (Stripe) behind one interface (docs/billing.md)
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -58,7 +61,12 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
 apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwind
   src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail
   src/components/ui/  shadcn/ui components (copied source; edit freely)
-  e2e/                Playwright smoke
+  src/components/patterns/  app shell, page header, data table, states, confirm dialog,
+                      settings section, command palette (docs/ui.md)
+  src/dev/            UI gallery + reference screens at /dev/ui (dev builds only)
+  e2e/                Playwright smoke, axe a11y on every page; visual.spec.ts (own config)
+apps/site           Astro static marketing site + blog (docs/marketing.md): reuses web's index.css
+                    and analytics.ts; SEO head in src/components/Seo.astro, posts in src/content/blog
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), migrate script
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, providers (the ONLY LLM caller)
@@ -70,7 +78,9 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
+  worker/billing.py   LLM spend limit, provider events -> subscriptions
 config/             ai-models.json (allowed models per contour/purpose, prices),
+                    plans.json (plans, limits, prices per currency, billing contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
                     flags.json (feature flag catalog),
@@ -82,8 +92,11 @@ infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Promethe
                     rules (infra/otel), Grafana datasources + dashboards (infra/grafana),
                     ClickHouse tuning for Langfuse (infra/langfuse)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
+compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy (docs/deploy.md)
+deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
+                    deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract),
                     check-flags.mjs, flags.mjs (flags:sync), released.mjs (release comments),
                     eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
@@ -113,17 +126,24 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Sentry protocol for errors: Sentry SDKs (MIT) in web/API/worker; GlitchTip (MIT) locally,
   Sentry SaaS/self-hosted for bigger installs. Only the DSN differs.
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
+- UI kit: shadcn/ui via its CLI + our patterns and a dev-only `/dev/ui` gallery (Storybook and
+  Ladle fail the license gate); axe, visual regression, Lighthouse, impeccable in CI (ADR 0023).
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - Biome, Vitest, Playwright, ruff, pyright, pytest, clippy: one fast tool per job.
 - Transactional mail: React Email's renderer in the API, delivery by a Temporal activity
   with stdlib `smtplib` over one `SMTP_URL` (any provider), Mailpit in dev (ADR 0014).
 - PostHog Cloud for product analytics, replay, surveys, AI feedback; Umami (MIT) self-hosted
   where data must stay in place (ADR 0012).
+- Deploy: images by digest + `compose.prod.yaml` + Caddy (auto TLS) + SOPS/age env files, run
+  with compose over SSH; Coolify/Kubernetes/on-prem are options on the same core (ADR 0016).
 - Public API: organization API keys via `@better-auth/api-key` (same auth library), webhooks as
   a Temporal workflow per event signed per Standard Webhooks; self-hosted Svix lacks the
   customer portal (ADR 0018, docs/public-api.md).
 - PostHog feature flags for gradual rollouts (posthog-js/-node/Python), catalog in the repo, no
   own flag store; release-please + Conventional PR titles for changelogs and `v*` tags (ADR 0020).
+- Astro (static) for the public site and blog; Postiz (social posting) and SerpBear (rank
+  tracking) as unmodified containers in the `marketing` profile; Search Console, IndexNow and the
+  GEO check are small scripts, no SDKs (ADR 0021).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
   checks, tsc on releases as the authoritative check (ADR 0011).
 - Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items in GitHub Issues or
@@ -150,11 +170,17 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
    Validate `params`/`body`/`response` with Zod. Register it in `src/app.ts`.
 4. Tests: add integration tests in `apps/api/test/` covering success, 400, 401/403 and
    cross-tenant 404.
-5. Web: add a page in `apps/web/src/pages/`, a route in `src/main.tsx`, a nav link in
-   `pages/shell.tsx`. Use TanStack Query for data and shadcn/ui components.
+5. Web: add a page in `apps/web/src/pages/`, a route in `src/main.tsx` (with
+   `staticData.crumbs`), a nav item in `pages/shell.tsx`. Start from the matching reference
+   screen (docs/ui.md); TanStack Query for data, catalog components only (UI rules below).
 6. `pnpm check`.
 
 A Claude Code command with the same steps: `/add-resource <name>`.
+
+Schema changes are expand/contract (docs/deploy.md "Schema changes"): the previous release
+must keep working on the new schema. Drops, renames, type changes and new NOT NULL columns
+without a default go into a later release's migration marked `-- contract: <reason>`;
+`pnpm check:migrations` enforces it. Never weaken the check to pass it.
 
 ## Recipe: expose a route to API keys / add a webhook event
 
@@ -183,7 +209,8 @@ A Claude Code command with the same steps: `/add-resource <name>`.
 ## Recipe: add an AI purpose (example: `project.summary`)
 
 1. Registry: add the purpose to the allowed models in `config/ai-models.json` for every
-   contour that should offer it (with `pricePer1kTokens`, or `null` if unknown). Add a `uses`
+   contour that should offer it (with `pricePer1kTokens`; `null` only together with
+   `"unmetered": true`, otherwise the gateway refuses the model). Add a `uses`
    entry with the same `purpose` to `config/ai-transparency.json`.
 2. Prompt: write `prompts/<purpose>/<name>.v1.md` and add its hash to `prompts/lock.json`
    (the failing test prints the line). Activity: in `services/worker-py/worker/activities.py`,
@@ -347,6 +374,42 @@ Details: docs/feature-flags.md, ADR 0020.
   catalog entry, and archives it in PostHog. Expired or unused flags show as `check:flags`
   warnings: treat them as work.
 
+## Marketing rules
+
+Details: docs/marketing.md, ADR 0021.
+
+- Public pages and posts live in `apps/site`, never in the SPA. Posts are Markdown/MDX in
+  `apps/site/src/content/blog/`; the front matter schema enforces title/description limits.
+- Every page renders `<Base>` (it carries the SEO head); add JSON-LD through its `jsonLd` prop.
+  CTAs are links with `data-cta="<id>"` (event `site_cta_clicked`); no other tracking code.
+- No media in git: images by absolute URL. Keep the Lighthouse budgets green; do not lower them.
+- `pnpm geo:check` is manual and uses the claude CLI on a subscription with the model from
+  `config/geo.json`; never add an API key or a CI job for it.
+
+## UI rules
+
+Details: docs/ui.md, DESIGN.md, ADR 0023. Look at `/dev/ui` (`pnpm dev`) before building UI.
+
+- Build screens only from `apps/web/src/components/ui` and `components/patterns`. Missing
+  something? Add the shadcn/ui component with its CLI (`pnpm dlx shadcn@latest add <name>` in
+  `apps/web`, then `cn` from `@/lib/utils`, check its dependencies' licenses) and add it to the
+  gallery (`src/dev/ui-gallery.tsx`). No other component libraries.
+- Tokens only: colors through the semantic Tailwind tokens (`bg-background`, `text-muted-foreground`,
+  `bg-primary`, `text-destructive`...), spacing and sizes from the Tailwind scale, radius from
+  `--radius`. No hex/rgb, palette classes (`text-gray-500`), arbitrary values (`text-[13px]`) or
+  inline styles in app code; new tokens go into `src/index.css` and DESIGN.md.
+- Every data screen covers loading, empty and error (`QueryView`, `DataTable`, `EmptyState`,
+  `ErrorState`); destructive actions go through `ConfirmDialog`; it works in light and dark
+  and at 390px wide.
+- Copy: sentence case, a verb on every button ("Create project"), say what happened and what to
+  do next, no blame, no exclamation marks, no invented facts or customers.
+- `pnpm e2e` runs axe on every page and the gallery; add new pages to `e2e/a11y.spec.ts`. A
+  visual change is accepted with the `visual-change-approved` PR label, never by committing
+  screenshots (docs/ui.md).
+- When the `impeccable` skill is installed (`npx impeccable install`, docs/ui.md), run
+  `/impeccable critique` and `/impeccable audit` on the screens you changed and fix what they
+  find. Do not vendor the skill into this repository.
+
 ## PRs and releases
 
 Details: docs/releases.md.
@@ -380,7 +443,8 @@ Details: docs/releases.md.
 ## Never
 
 - Bypass or disable RLS, run the app as the DB owner/superuser, or add `BYPASSRLS`.
-- Commit `.env`, credentials, media/binary files, or generated `dist/`, `target/`, `.venv/`.
+- Commit `.env`, credentials, a decrypted `deploy/env/*.env`, media/binary files, or generated
+  `dist/`, `target/`, `.venv/`.
 - Add Next.js/Vercel-specific code, or GPL/LGPL/AGPL/SSPL/BSL code dependencies (infra
   containers run unmodified are exempt, see docs/LICENSES.md).
 - Patch, fork-in-place or edit a dependency's files (fixes go upstream).

@@ -32,6 +32,7 @@ from opentelemetry.trace import SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
 from worker import settings
+from worker.billing import Plans, check_llm_budget
 from worker.posthog import PostHogAi
 from worker.s3 import S3
 
@@ -85,6 +86,9 @@ class Price:
 class AllowedModel:
     purposes: frozenset[str]
     price: Price | None
+    # Explicit opt-out from cost tracking and LLM spend limits; an unpriced model without it
+    # is refused (fail closed, docs/billing.md).
+    unmetered: bool = False
 
 
 Registry = dict[tuple[str, str], AllowedModel]  # (provider, model) -> rules
@@ -105,7 +109,7 @@ def load_registry(path: Path, contour: str) -> Registry:
         )
         purposes: list[str] = entry["purposes"]
         registry[(str(entry["provider"]), str(entry["model"]))] = AllowedModel(
-            frozenset(purposes), price
+            frozenset(purposes), price, entry.get("unmetered") is True
         )
     return registry
 
@@ -126,8 +130,10 @@ class Gateway:
         providers: dict[str, Provider],
         retention_days: int,
         posthog: PostHogAi | None = None,
+        plans: Plans | None = None,
     ) -> None:
-        self.pool, self.s3, self.contour, self.posthog = pool, s3, contour, posthog
+        self.pool, self.s3, self.contour = pool, s3, contour
+        self.posthog, self.plans = posthog, plans
         self.registry, self.providers = registry, providers
         self.retention = timedelta(days=retention_days)
 
@@ -147,7 +153,10 @@ class Gateway:
         """One LLM call, logged. The span joins the current OTel trace (Temporal propagates it).
 
         Raises ModelNotAllowed (non-retryable) if (provider, model, purpose) is not registered
-        for this contour; provider errors are logged as status=error and re-raised.
+        for this contour, SpendLimitExceeded (non-retryable) if the org's LLM spend in this
+        billing period reached its plan limit; provider errors are logged as status=error and
+        re-raised. A model without a price is refused unless it is marked `unmetered`; unmetered
+        calls are not counted against the limit.
         """
         allowed = self.registry.get((provider, model))
         call = self.providers.get(provider)
@@ -155,6 +164,16 @@ class Gateway:
             raise ModelNotAllowed(
                 f"{provider}/{model} is not allowed for {purpose!r} in contour {self.contour!r}"
             )
+        price = self.price_of(provider, model)
+        if price is None and not allowed.unmetered:
+            # No price, no cost, no spend limit: refuse rather than let calls through unbilled.
+            raise ModelNotAllowed(
+                f"{provider}/{model} has no price in the model registry; set pricePer1kTokens"
+                ' or mark it "unmetered": true'
+            )
+
+        if self.plans is not None and price is not None:
+            await check_llm_budget(self.pool, self.plans, org_id, price.currency)
 
         call_id = uuid.uuid4()
         now = datetime.now(UTC)
@@ -259,15 +278,22 @@ class Gateway:
                 "total_tokens": total,
                 "status": "ok",
             }
-            if allowed.price and tokens_in is not None and tokens_out is not None:
-                row["cost"] = (
-                    tokens_in * allowed.price.input + tokens_out * allowed.price.output
-                ) / 1000
-                row["cost_currency"] = allowed.price.currency
+            if price and tokens_in is not None and tokens_out is not None:
+                row["cost"] = (tokens_in * price.input + tokens_out * price.output) / 1000
+                row["cost_currency"] = price.currency
             await self._insert(row)
         if self.posthog:
             await self.posthog.capture_generation(row, messages, completion.text)
         return LlmResult(call_id, completion.text)
+
+    def price_of(self, provider: str, model: str) -> Price | None:
+        """The one place model prices are looked up (cost, spend limit, fail-closed check).
+
+        Today: config/ai-models.json for this contour. Swap the source here (e.g. a pricing
+        table from an LLM proxy) without touching the callers.
+        """
+        allowed = self.registry.get((provider, model))
+        return allowed.price if allowed else None
 
     async def _insert(self, row: dict[str, Any]) -> None:
         model = {"purpose": row["purpose"], "model": row["request_model"]}

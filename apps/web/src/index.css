@@ -114,3 +114,37 @@
     font-feature-settings: "cv11", "ss01";
   }
 }
+
+/* Consent banner (vanilla-cookieconsent) in the app's tokens, so it follows light/dark mode. */
+#cc-main {
+  --cc-font-family: inherit;
+  --cc-modal-border-radius: var(--radius);
+  --cc-btn-border-radius: calc(var(--radius) - 2px);
+  --cc-bg: hsl(var(--background));
+  --cc-primary-color: hsl(var(--foreground));
+  --cc-secondary-color: hsl(var(--muted-foreground));
+  --cc-btn-primary-bg: hsl(var(--primary));
+  --cc-btn-primary-color: hsl(var(--primary-foreground));
+  --cc-btn-primary-border-color: hsl(var(--primary));
+  --cc-btn-primary-hover-bg: hsl(var(--primary) / 0.9);
+  --cc-btn-primary-hover-color: hsl(var(--primary-foreground));
+  --cc-btn-primary-hover-border-color: hsl(var(--primary) / 0.9);
+  --cc-btn-secondary-bg: hsl(var(--secondary));
+  --cc-btn-secondary-color: hsl(var(--secondary-foreground));
+  --cc-btn-secondary-border-color: hsl(var(--border));
+  --cc-btn-secondary-hover-bg: hsl(var(--accent));
+  --cc-btn-secondary-hover-color: hsl(var(--accent-foreground));
+  --cc-btn-secondary-hover-border-color: hsl(var(--border));
+  --cc-separator-border-color: hsl(var(--border));
+  --cc-toggle-on-bg: hsl(var(--primary));
+  --cc-toggle-off-bg: hsl(var(--muted-foreground));
+  --cc-toggle-readonly-bg: hsl(var(--muted));
+  --cc-cookie-category-block-bg: hsl(var(--muted));
+  --cc-cookie-category-block-border: hsl(var(--border));
+  --cc-cookie-category-block-hover-bg: hsl(var(--accent));
+  --cc-cookie-category-block-hover-border: hsl(var(--border));
+  --cc-footer-bg: hsl(var(--muted));
+  --cc-footer-color: hsl(var(--muted-foreground));
+  --cc-footer-border-color: hsl(var(--border));
+  --cc-link-color: hsl(var(--primary));
+}

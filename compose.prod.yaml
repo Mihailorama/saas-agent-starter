@@ -1,0 +1,317 @@
+# Production stack for one Docker host (tiers S/M). Deployed by `pnpm run deploy -- <env>`
+# (scripts/deploy.mjs, docs/deploy.md), which copies this file to the server as compose.yaml,
+# writes .env (decrypted deploy/env/<env>.enc.env + the IMAGE_* digests of the release) and runs
+# `docker compose up -d --wait`. Nothing is built here: api, worker and web are the images CI
+# pushed on a `v*` tag, pinned by digest. Optional on-box services are profiles, enabled with
+# COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback).
+# Licenses of every image: docs/LICENSES.md.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    labels: "com.docker.compose.project,com.docker.compose.service"
+    max-size: 10m
+    max-file: "5"
+
+services:
+  # Reverse proxy + automatic HTTPS (ADR 0016). The only service with public ports.
+  caddy:
+    image: caddy:2.11-alpine
+    logging: *logging
+    mem_limit: 128m
+    restart: unless-stopped
+    depends_on: [web]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
+      CADDY_TLS: ${CADDY_TLS:?set CADDY_TLS to an ACME e-mail or "internal"}
+    ports:
+      - "${PUBLISH_IP:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${PUBLISH_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+      - "${PUBLISH_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificates and ACME account: keep this volume
+      - caddy_config:/config
+
+  # One-shot: schema migrations + app role. scripts/deploy.mjs runs it with `docker compose run`
+  # BEFORE `up`: within one `up`, Compose recreates api/worker/web before waiting for it, so a
+  # failing migration would stop the running release. depends_on below keeps the order anyway.
+  migrate:
+    image: ${IMAGE_API:?no release, deploy with scripts/deploy.mjs}
+    logging: *logging
+    mem_limit: 256m
+    command: ["node", "packages/db/src/migrate.ts"]
+    environment: [DATABASE_URL, MIGRATION_DATABASE_URL]
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  api:
+    image: ${IMAGE_API:?no release, deploy with scripts/deploy.mjs}
+    logging: *logging
+    mem_limit: 384m
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - TRUST_PROXY=true
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${APP_DOMAIN}}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
+      # Passed through from .env when set, absent otherwise (an unset name also drops any default
+      # the image sets for it):
+      - LOG_LEVEL
+      - DATABASE_URL
+      - BETTER_AUTH_SECRET
+      - CORS_ORIGINS
+      - S3_ENDPOINT
+      - S3_PUBLIC_ENDPOINT
+      - S3_REGION
+      - S3_BUCKET
+      - S3_ACCESS_KEY_ID
+      - S3_SECRET_ACCESS_KEY
+      - OTEL_EXPORTER_OTLP_ENDPOINT
+      - SENTRY_DSN
+      - OIDC_ISSUER
+      - OIDC_CLIENT_ID
+      - OIDC_CLIENT_SECRET
+      - POSTHOG_WEBHOOK_SECRET
+      - POSTHOG_APP_HOST
+      - POSTHOG_PROJECT_ID
+      - GITHUB_TOKEN
+      - GITHUB_REPO
+      - EMAIL_TASK_QUEUE
+      - REQUIRE_EMAIL_VERIFICATION
+      - FLAGS_ON
+      - FLAGS_OFF
+      - POSTHOG_KEY
+      - POSTHOG_HOST
+      - POSTHOG_SECRET_KEY
+      - AI_CONTENT_BUCKET
+      - APP_NAME
+      - WEBHOOK_ENCRYPTION_KEYS
+      - WEBHOOK_MAX_PAYLOAD_BYTES
+      - API_KEY_RATE_LIMIT_PER_MINUTE
+      - PASSKEY_RP_ID
+      - CHATWOOT_WEBHOOK_SECRET
+      - CHATWOOT_HMAC_TOKEN
+      - GITHUB_WEBHOOK_SECRET
+      - PLANE_WEBHOOK_SECRET
+      - PLANE_PROJECT_ID
+      # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
+      - AI_CONTOUR=${AI_CONTOUR:-}
+      - BILLING_CONTOUR
+      - STRIPE_SECRET_KEY
+      - STRIPE_WEBHOOK_SECRET
+    healthcheck: # readiness: database + Redis reachable
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null"]
+      interval: 5s
+      start_period: 30s
+      retries: 12
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      temporal-namespace: { condition: service_completed_successfully }
+      s3: { condition: service_healthy, required: false }
+
+  worker:
+    image: ${IMAGE_WORKER:?no release, deploy with scripts/deploy.mjs}
+    logging: *logging
+    mem_limit: 384m
+    restart: unless-stopped
+    environment:
+      - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
+      - AI_CONTOUR=${AI_CONTOUR:-}
+      - DATABASE_URL
+      - S3_ENDPOINT
+      - S3_REGION
+      - S3_ACCESS_KEY_ID
+      - S3_SECRET_ACCESS_KEY
+      - OTEL_EXPORTER_OTLP_ENDPOINT
+      - SENTRY_DSN
+      - AI_CONTENT_BUCKET
+      - AI_CONTENT_RETENTION_DAYS
+      - AI_PROJECT_SUMMARY_PROVIDER
+      - AI_PROJECT_SUMMARY_MODEL
+      - ANTHROPIC_API_KEY
+      - OPENAI_API_KEY
+      - OPENAI_BASE_URL
+      - EMAIL_TASK_QUEUE
+      - SMTP_URL
+      - MAIL_FROM
+      - POSTHOG_PRIVACY_MODE
+      # separate trace endpoint for the worker, e.g. Langfuse OTLP (ADR 0009)
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      - OTEL_EXPORTER_OTLP_TRACES_HEADERS
+      # outbound webhooks (docs/public-api.md)
+      - WEBHOOK_ENCRYPTION_KEYS
+      - WEBHOOK_MAX_PAYLOAD_BYTES
+      - WEBHOOK_ALLOWED_CIDRS
+      - WEBHOOK_DISABLE_AFTER_FAILURES
+      - WEBHOOK_RETENTION_DAYS
+      # service desk triage (docs/support.md)
+      - CHATWOOT_URL
+      - CHATWOOT_PUBLIC_URL
+      - CHATWOOT_API_TOKEN
+      - SUPPORT_TRACKER
+      - GITHUB_TOKEN
+      - GITHUB_REPO
+      - PLANE_API_URL
+      - PLANE_APP_URL
+      - PLANE_WORKSPACE
+      - PLANE_PROJECT_ID
+      - PLANE_API_TOKEN
+      - AI_SUPPORT_TRIAGE_PROVIDER
+      - AI_SUPPORT_TRIAGE_MODEL
+      - SUPPORT_AI_ORG_ID
+      - SUPPORT_NOTIFY_ON_CLOSE
+      - FLAGS_ON
+      - FLAGS_OFF
+      - POSTHOG_KEY
+      - POSTHOG_HOST
+      # billing: plans and LLM spend limits (default: config/plans.json in the image)
+      - PLANS_FILE
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      temporal-namespace: { condition: service_completed_successfully }
+
+  # Static files + /api proxy; sets CSP/HSTS/nosniff/Referrer-Policy (apps/web/nginx.conf.template).
+  web:
+    image: ${IMAGE_WEB:?no release, deploy with scripts/deploy.mjs}
+    logging: *logging
+    mem_limit: 64m
+    restart: unless-stopped
+    environment: # nginx's envsubst needs every variable defined, empty is fine
+      S3_PUBLIC_ORIGIN: ${S3_PUBLIC_ORIGIN:-}
+      SENTRY_PUBLIC_ORIGIN: ${SENTRY_PUBLIC_ORIGIN:-}
+      ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
+      SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
+      # Consent regime (docs/product-analytics.md#consent); must not be empty (nginx map value)
+      CONSENT_MODE: ${CONSENT_MODE:-opt-in}
+      CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
+      CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null"]
+      interval: 5s
+      retries: 12
+    depends_on:
+      api: { condition: service_healthy }
+
+  # Rate-limit store only (ADR 0007); nothing to persist. Deliveries that ban AGPL/SSPL set
+  # REDIS_IMAGE=valkey/valkey:9.1-alpine (BSD-3-Clause, docs/LICENSES.md permissive twin).
+  redis:
+    image: ${REDIS_IMAGE:-redis:8-alpine}
+    logging: *logging
+    mem_limit: 64m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || valkey-cli ping"]
+      interval: 2s
+      retries: 30
+
+  # Temporal on the same Postgres server (as in docker-compose.yml). Temporal Cloud or a
+  # dedicated cluster: point TEMPORAL_ADDRESS elsewhere and drop these three services.
+  temporal-setup:
+    image: temporalio/admin-tools:1.32.0
+    logging: *logging
+    mem_limit: 128m
+    environment:
+      POSTGRES_SEEDS: ${TEMPORAL_DB_HOST:-postgres}
+      POSTGRES_USER: ${TEMPORAL_DB_USER:-postgres}
+      SQL_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD}
+    volumes: ["./temporal-setup.sh:/setup.sh:ro"]
+    entrypoint: ["/bin/sh", "/setup.sh"]
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  temporal:
+    image: temporalio/server:1.32.0
+    logging: *logging
+    mem_limit: 512m
+    restart: unless-stopped
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_SEEDS: ${TEMPORAL_DB_HOST:-postgres}
+      POSTGRES_USER: ${TEMPORAL_DB_USER:-postgres}
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD}
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/production-sql.yaml
+    volumes:
+      ["./temporal-dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/production-sql.yaml:ro"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 3s
+      start_period: 30s
+      retries: 60
+    depends_on:
+      temporal-setup: { condition: service_completed_successfully }
+
+  temporal-namespace:
+    image: temporalio/admin-tools:1.32.0
+    logging: *logging
+    mem_limit: 128m
+    restart: on-failure:10
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        temporal operator cluster health --address temporal:7233 &&
+        (temporal operator namespace describe -n default --address temporal:7233 ||
+         temporal operator namespace create -n default --address temporal:7233)
+    depends_on:
+      temporal: { condition: service_healthy }
+
+  # --- profile ops: Temporal Web UI, loopback only (ssh -L 8233:127.0.0.1:8233 <server>).
+  temporal-ui:
+    profiles: [ops]
+    image: temporalio/ui:2.54.1
+    logging: *logging
+    mem_limit: 128m
+    restart: unless-stopped
+    environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_UI_PORT: "8233" }
+    ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8233"]
+    depends_on:
+      temporal-namespace: { condition: service_completed_successfully }
+
+  # --- profile db: Postgres on this host (tier S). Tier M: managed Postgres, drop the profile and
+  # point DATABASE_URL / MIGRATION_DATABASE_URL / TEMPORAL_DB_* at it. Back it up (docs/deploy.md).
+  postgres:
+    profiles: [db]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 512m
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: app
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 2s
+      retries: 30
+
+  # --- profile s3: SeaweedFS on this host (single server without managed S3). Internal only;
+  # browser uploads use presigned URLs, so S3_PUBLIC_ENDPOINT must reach it: add the S3 site
+  # in deploy/Caddyfile. Credentials: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY become its admin.
+  s3:
+    profiles: [s3]
+    image: chrislusf/seaweedfs:4.52
+    logging: *logging
+    mem_limit: 256m
+    restart: unless-stopped
+    command: server -dir=/data -s3 -ip.bind=0.0.0.0
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+    volumes: [s3data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz >/dev/null"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:
+  s3data:

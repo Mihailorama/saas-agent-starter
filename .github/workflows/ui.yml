@@ -1,6 +1,6 @@
 name: UI
 
-# UI quality checks for apps/web (docs/ui.md, ADR 0022). Accessibility (axe, every page and the
+# UI quality checks for apps/web (docs/ui.md, ADR 0023). Accessibility (axe, every page and the
 # dev gallery) runs in CI's e2e suite; this workflow adds:
 # - impeccable: the design anti-pattern detector (Apache-2.0) on the source and the rendered pages.
 # - visual: screenshots of the dev gallery and public pages, compared with a baseline made on

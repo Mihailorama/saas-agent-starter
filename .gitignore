@@ -10,6 +10,11 @@ playwright-report/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.env.postiz
+# Decrypted deploy env files never go into git; only *.enc.env and the fake example.env do.
+deploy/env/*.env
+!deploy/env/*.enc.env
+!deploy/env/example.env
 evals/**/.out/
 evals/**/.effective.json
 evals/**/pulled.jsonl

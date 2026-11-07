@@ -31,7 +31,7 @@ jobs:
         with:
           tool: cargo-deny
       - name: Start infra
-        run: docker compose up -d --wait postgres redis s3 temporal-ui mailpit
+        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web exec playwright install --with-deps chromium
       - run: pnpm db:migrate
@@ -69,7 +69,7 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Start infra (${{ matrix.kv }})
-        run: docker compose up -d --wait postgres redis s3 temporal-ui mailpit
+        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock
       - name: Check the store image
         run: docker compose images redis | tee /dev/stderr | grep -q "${{ matrix.kv }}"
       - run: pnpm install --frozen-lockfile
@@ -88,7 +88,27 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: docker compose build api web worker
+      - run: docker compose --profile marketing build api web worker site
+
+  # The production deploy path end to end on the runner (deploy/rehearsal.sh, docs/deploy.md):
+  # SOPS-encrypted env, Caddy internal CA, migrate, deploy v1 -> v2, rollback, failing migration.
+  deploy-rehearsal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install sops and age (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          bin=$RUNNER_TEMP/bin && mkdir -p "$bin" && cd "$RUNNER_TEMP"
+          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          curl -fsSLO https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  sops" | sha256sum -c
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  age-v1.3.2-linux-amd64.tar.gz" | sha256sum -c
+          tar xzf age-v1.3.2-linux-amd64.tar.gz
+          install -m 755 sops age/age age/age-keygen "$bin/"
+          echo "$bin" >> "$GITHUB_PATH"
+      - run: deploy/rehearsal.sh
 
   gitleaks:
     runs-on: ubuntu-24.04
