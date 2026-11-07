@@ -1,0 +1,34 @@
+{
+  "description": "support.triage: golden set (synthetic conversations, no customer data)",
+  "gate": {
+    "prompt": { "id": "support.triage/system", "version": 1 },
+    "judge": { "id": "judge/support.triage", "version": 1 },
+    "purpose": "support.triage",
+    "minScore": 0.85
+  },
+  "prompts": ["file://../prompt.mjs"],
+  "providers": [{ "id": "anthropic:messages:claude-haiku-5-5", "config": { "max_tokens": 1500 } }],
+  "defaultTest": {
+    "options": { "provider": "anthropic:messages:claude-sonnet-5-5" },
+    "assert": [
+      {
+        "type": "javascript",
+        "metric": "category",
+        "value": "JSON.parse(output.slice(output.indexOf('{'), output.lastIndexOf('}') + 1)).category === context.vars.expected"
+      },
+      {
+        "type": "javascript",
+        "metric": "title_short_no_email",
+        "value": "(t => t.length <= 70 && !t.includes('@'))(JSON.parse(output.slice(output.indexOf('{'), output.lastIndexOf('}') + 1)).title)"
+      },
+      {
+        "type": "javascript",
+        "metric": "answer_only_for_questions",
+        "value": "(d => (d.category === 'question') === Boolean(d.answer))(JSON.parse(output.slice(output.indexOf('{'), output.lastIndexOf('}') + 1)))"
+      },
+      { "type": "not-icontains", "metric": "no_email_leak", "value": "@example.com" },
+      { "type": "llm-rubric", "metric": "judge", "value": "See the judge prompt criteria." }
+    ]
+  },
+  "tests": "file://dataset.jsonl"
+}

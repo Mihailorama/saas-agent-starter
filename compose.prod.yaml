@@ -87,6 +87,11 @@ services:
       - POSTHOG_HOST
       - POSTHOG_SECRET_KEY
       - AI_CONTENT_BUCKET
+      - CHATWOOT_WEBHOOK_SECRET
+      - CHATWOOT_HMAC_TOKEN
+      - GITHUB_WEBHOOK_SECRET
+      - PLANE_WEBHOOK_SECRET
+      - PLANE_PROJECT_ID
     healthcheck: # readiness: database + Redis reachable
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/readyz >/dev/null"]
       interval: 5s
@@ -128,6 +133,22 @@ services:
       # separate trace endpoint for the worker, e.g. Langfuse OTLP (ADR 0009)
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
       - OTEL_EXPORTER_OTLP_TRACES_HEADERS
+      # service desk triage (docs/support.md)
+      - CHATWOOT_URL
+      - CHATWOOT_PUBLIC_URL
+      - CHATWOOT_API_TOKEN
+      - SUPPORT_TRACKER
+      - GITHUB_TOKEN
+      - GITHUB_REPO
+      - PLANE_API_URL
+      - PLANE_APP_URL
+      - PLANE_WORKSPACE
+      - PLANE_PROJECT_ID
+      - PLANE_API_TOKEN
+      - AI_SUPPORT_TRIAGE_PROVIDER
+      - AI_SUPPORT_TRIAGE_MODEL
+      - SUPPORT_AI_ORG_ID
+      - SUPPORT_NOTIFY_ON_CLOSE
       - FLAGS_ON
       - FLAGS_OFF
       - POSTHOG_KEY
@@ -146,6 +167,7 @@ services:
       S3_PUBLIC_ORIGIN: ${S3_PUBLIC_ORIGIN:-}
       SENTRY_PUBLIC_ORIGIN: ${SENTRY_PUBLIC_ORIGIN:-}
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
+      SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null"]
       interval: 5s

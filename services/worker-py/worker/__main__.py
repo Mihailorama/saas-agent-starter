@@ -4,6 +4,7 @@ import signal
 from datetime import timedelta
 
 import asyncpg
+import httpx2
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -25,10 +26,44 @@ from worker.log import configure_logging
 from worker.mail import send_email
 from worker.posthog import PostHogAi
 from worker.s3 import S3
+from worker.support import (
+    Chatwoot,
+    DryRunTracker,
+    GitHubIssues,
+    PlaneIntake,
+    SupportActivities,
+    Tracker,
+)
 from worker.text import backend
-from worker.workflows import ProjectCreatedWorkflow, SendEmailWorkflow
+from worker.workflows import (
+    ProjectCreatedWorkflow,
+    SendEmailWorkflow,
+    SupportIssueClosedWorkflow,
+    SupportTriageWorkflow,
+)
 
 log = logging.getLogger("worker")
+
+
+def support_tracker(http: httpx2.AsyncClient) -> Tracker:
+    """SUPPORT_TRACKER selects the adapter; missing credentials = dry run (docs/support.md)."""
+    s = settings
+    if s.SUPPORT_TRACKER == "plane":
+        if s.PLANE_API_URL and s.PLANE_WORKSPACE and s.PLANE_PROJECT_ID and s.PLANE_API_TOKEN:
+            return PlaneIntake(
+                api_url=s.PLANE_API_URL,
+                app_url=s.PLANE_APP_URL,
+                workspace=s.PLANE_WORKSPACE,
+                project_id=s.PLANE_PROJECT_ID,
+                token=s.PLANE_API_TOKEN,
+                http=http,
+            )
+    elif s.SUPPORT_TRACKER == "github":
+        if s.GITHUB_TOKEN and s.GITHUB_REPO:
+            return GitHubIssues(s.GITHUB_REPO, s.GITHUB_TOKEN, http)
+    else:
+        raise ValueError(f"SUPPORT_TRACKER must be github or plane, not {s.SUPPORT_TRACKER!r}")
+    return DryRunTracker()
 
 
 def setup_tracing() -> Runtime | None:
@@ -95,6 +130,28 @@ async def main() -> None:
         else None
     )
     activities = Activities(pool, ai, summary_model)
+    http = httpx2.AsyncClient(timeout=30)
+    chatwoot = (
+        Chatwoot(
+            settings.CHATWOOT_URL, settings.CHATWOOT_API_TOKEN, settings.CHATWOOT_PUBLIC_URL, http
+        )
+        if settings.CHATWOOT_URL and settings.CHATWOOT_API_TOKEN
+        else None
+    )
+    triage_model = (
+        ModelChoice(settings.AI_SUPPORT_TRIAGE_PROVIDER, settings.AI_SUPPORT_TRIAGE_MODEL)
+        if settings.AI_SUPPORT_TRIAGE_PROVIDER and settings.AI_SUPPORT_TRIAGE_MODEL
+        else None
+    )
+    tracker = support_tracker(http)
+    support = SupportActivities(
+        chatwoot=chatwoot,
+        tracker=tracker,
+        ai=ai,
+        model=triage_model,
+        ai_org_id=settings.SUPPORT_AI_ORG_ID,
+        notify=settings.SUPPORT_NOTIFY,
+    )
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -102,8 +159,13 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_TASK_QUEUE,
-        workflows=[ProjectCreatedWorkflow],
-        activities=[activities.fingerprint_project, activities.summarize_project],
+        workflows=[ProjectCreatedWorkflow, SupportTriageWorkflow, SupportIssueClosedWorkflow],
+        activities=[
+            activities.fingerprint_project,
+            activities.summarize_project,
+            support.triage,
+            support.issue_closed,
+        ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],
     )
@@ -119,13 +181,18 @@ async def main() -> None:
     # Leaving the block finishes in-flight activities, then stops.
     async with worker, mail_worker:
         log.info(
-            "worker started (simhash backend: %s, ai contour: %s, summary model: %s)",
+            "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
+            " support: chatwoot %s, tracker %s, triage model %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
+            "on" if chatwoot else "dry run",
+            tracker.name,
+            triage_model or "off",
         )
         await stop.wait()
         log.info("shutting down")
+    await http.aclose()
     await s3.close()
     if posthog:
         await posthog.close()

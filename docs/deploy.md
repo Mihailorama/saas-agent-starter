@@ -128,7 +128,8 @@ Profiles in `COMPOSE_PROFILES`: `db` (Postgres on the box), `s3` (SeaweedFS on t
 browser uploads also enable the S3 site in `deploy/Caddyfile`), `ops` (Temporal UI on
 `127.0.0.1:8233`, reach it with `ssh -L 8233:127.0.0.1:8233`). Deliveries that ban AGPL/SSPL
 containers set `REDIS_IMAGE=valkey/valkey:9.1-alpine`. Observability (`docker-compose.yml`
-profile) is not part of the production file yet; send OTLP to an existing collector with
+profile) is not part of the production file yet, nor are Langfuse (`llmops`) and Chatwoot
+(`support`): run those separately or use their cloud offerings and set their URLs/keys; send OTLP to an existing collector with
 `OTEL_EXPORTER_OTLP_ENDPOINT` and errors to Sentry/GlitchTip with `SENTRY_DSN`.
 
 ### GitHub Actions (optional)

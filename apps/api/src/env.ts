@@ -67,6 +67,16 @@ const schema = z
     GITHUB_TOKEN: z.string().optional(),
     /** owner/name of the repository that receives the issues. */
     GITHUB_REPO: z.string().optional(),
+    // Service desk (docs/support.md). Every secret empty = that endpoint is off (401/404).
+    /** Secret of the Chatwoot account webhook (Settings -> Integrations -> Webhooks). */
+    CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
+    /** HMAC token of the Chatwoot website inbox (identity validation of logged-in users). */
+    CHATWOOT_HMAC_TOKEN: z.string().optional(),
+    /** Secret of the GitHub `issues` webhook (return path: closed issue -> conversation note). */
+    GITHUB_WEBHOOK_SECRET: z.string().optional(),
+    /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
+    PLANE_WEBHOOK_SECRET: z.string().optional(),
+    PLANE_PROJECT_ID: z.string().optional(),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
@@ -78,6 +88,14 @@ const schema = z
       message: 'POSTHOG_WEBHOOK_SECRET still has the example value',
       path: ['POSTHOG_WEBHOOK_SECRET'],
     },
+  )
+  .refine(
+    (e) =>
+      e.NODE_ENV !== 'production' ||
+      ![e.CHATWOOT_WEBHOOK_SECRET, e.CHATWOOT_HMAC_TOKEN, e.GITHUB_WEBHOOK_SECRET].some((v) =>
+        v?.startsWith('local-dev'),
+      ),
+    { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   );
 
 const parsed = schema.safeParse(process.env);
