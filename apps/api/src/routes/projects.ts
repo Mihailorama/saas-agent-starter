@@ -62,8 +62,12 @@ const selectProjects = (tx: Tx) =>
     .leftJoin(aiCalls, eq(aiCalls.id, projects.aiCallId));
 const loadProject = async (tx: Tx, id: string) =>
   (await selectProjects(tx).where(eq(projects.id, id)))[0];
-const attachmentDto = ({ orgId: _, projectId: __, ...a }: typeof attachments.$inferSelect) =>
-  toDto(a);
+const attachmentDto = ({
+  orgId: _,
+  projectId: __,
+  createdBy: ___,
+  ...a
+}: typeof attachments.$inferSelect) => toDto(a);
 const objectKey = (a: { orgId: string; projectId: string; id: string }) =>
   `${a.orgId}/${a.projectId}/${a.id}`;
 
@@ -234,6 +238,7 @@ export const projectRoutes: FastifyPluginAsyncZod = async (app) => {
               id: randomUUID(),
               orgId: req.tenant.orgId,
               projectId: project.id,
+              createdBy: req.tenant.userId,
               ...req.body,
             })
             .returning();

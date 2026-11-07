@@ -224,6 +224,17 @@ services:
       AI_SUPPORT_TRIAGE_MODEL: ${AI_SUPPORT_TRIAGE_MODEL:-}
       SUPPORT_AI_ORG_ID: ${SUPPORT_AI_ORG_ID:-}
       SUPPORT_NOTIFY_ON_CLOSE: ${SUPPORT_NOTIFY_ON_CLOSE:-false}
+      # Data-subject rights (docs/privacy.md): per-person export/deletion in the tools; empty = skip.
+      POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
+      POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
+      POSTHOG_PERSONAL_API_KEY: ${POSTHOG_PERSONAL_API_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      CHATWOOT_ACCOUNT_ID: ${CHATWOOT_ACCOUNT_ID:-}
+      CHATWOOT_ADMIN_API_TOKEN: ${CHATWOOT_ADMIN_API_TOKEN:-}
+      GA4_PROPERTY_ID: ${GA4_PROPERTY_ID:-}
+      GA4_SERVICE_ACCOUNT_JSON: ${GA4_SERVICE_ACCOUNT_JSON:-}
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }

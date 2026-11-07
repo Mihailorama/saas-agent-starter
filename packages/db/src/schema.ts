@@ -4,12 +4,14 @@ import {
   check,
   index,
   integer,
+  jsonb,
   numeric,
   pgPolicy,
   pgTable,
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { organization } from './auth-schema.ts';
@@ -75,7 +77,7 @@ export const aiCalls = pgTable(
     promptTemplateVersion: text('prompt_template_version').notNull(),
     requestKey: text('request_key').notNull(),
     responseKey: text('response_key'),
-    /** Content objects are expected to be gone after this (bucket lifecycle rule). */
+    /** Content objects are deleted after this by the daily retention schedule (docs/privacy.md). */
     contentExpiresAt: timestamp('content_expires_at', { withTimezone: true }).notNull(),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
@@ -92,6 +94,8 @@ export const aiCalls = pgTable(
   },
   (t) => [
     index().on(t.orgId, t.createdAt),
+    index().on(t.orgId, t.contentExpiresAt),
+    index().on(t.orgId, t.actorId),
     check('ai_calls_status', sql`${t.status} in ('ok', 'error')`),
     tenantIsolation(),
   ],
@@ -109,6 +113,8 @@ export const attachments = pgTable(
     filename: text('filename').notNull(),
     contentType: text('content_type').notNull(),
     size: integer('size').notNull(),
+    /** Uploader: their data export includes the file; erasing them only clears this (org data). */
+    createdBy: text('created_by'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index().on(t.projectId), tenantIsolation()],
@@ -223,4 +229,52 @@ export const webhookAttempts = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index().on(t.deliveryId), tenantIsolation()],
+);
+
+/**
+ * Data-subject requests (docs/privacy.md): export or deletion of a user or an organization. Not
+ * tenant-scoped: a user's request spans organizations, and the row outlives a deleted subject as
+ * the audit record of what was done. No foreign keys and no personal data, only ids; progress
+ * lives in the Temporal workflow history, the outcome in `status` and `report`.
+ */
+export const privacyRequests = pgTable(
+  'privacy_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: text('kind', { enum: ['export', 'deletion'] }).notNull(),
+    subjectType: text('subject_type', { enum: ['user', 'org'] }).notNull(),
+    /** User id or organization id. */
+    subjectId: text('subject_id').notNull(),
+    /** User who asked (the subject itself, or an owner of the organization). */
+    requestedBy: text('requested_by').notNull(),
+    status: text('status', {
+      enum: ['scheduled', 'running', 'completed', 'failed', 'cancelled'],
+    }).notNull(),
+    /** Deletion: end of the grace period (cancellable until then). Export: request time. */
+    executeAfter: timestamp('execute_after', { withTimezone: true }).notNull().defaultNow(),
+    /** Export: key of the ZIP in S3_BUCKET; cleared when it expires. */
+    resultKey: text('result_key'),
+    /**
+     * Export: the ZIP is deleted after this. Organization deletion: the retained records (ai_calls,
+     * audit_log, the anonymised organization row) are purged after this.
+     */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    /** Per-step outcome: what was exported/deleted where, what could not be and why. */
+    report: jsonb('report'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index().on(t.subjectType, t.subjectId, t.createdAt),
+    // One open deletion per subject: a second request while one is pending is refused.
+    uniqueIndex('privacy_requests_open_deletion')
+      .on(t.subjectType, t.subjectId)
+      .where(sql`${t.kind} = 'deletion' and ${t.status} in ('scheduled', 'running')`),
+    check('privacy_requests_kind', sql`${t.kind} in ('export', 'deletion')`),
+    check('privacy_requests_subject_type', sql`${t.subjectType} in ('user', 'org')`),
+    check(
+      'privacy_requests_status',
+      sql`${t.status} in ('scheduled', 'running', 'completed', 'failed', 'cancelled')`,
+    ),
+  ],
 );
