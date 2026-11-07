@@ -34,7 +34,9 @@ services:
   postgres:
     logging: *logging
     mem_limit: 512m
-    image: postgres:17-alpine
+    # postgres:17-alpine + the pgvector extension files (Chatwoot needs them, docs/support.md).
+    image: saas-agent-starter-postgres:local
+    build: { context: infra/backup, target: postgres }
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -58,11 +60,13 @@ services:
       retries: 30
 
   # S3-compatible object storage for local dev (SeaweedFS). Production: any S3 via env.
+  # Each bucket takes 7 volumes; the default limit (14 slots on 4.52) fits only two buckets, and
+  # a third (attachments, ai-calls, langfuse, chatwoot) fails with HTTP 500. Volumes are sparse.
   s3:
     logging: *logging
     mem_limit: 256m
     image: chrislusf/seaweedfs:4.52
-    command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0
+    command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -volume.max=64
     ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
     volumes:
       - s3data:/data
@@ -527,19 +531,24 @@ services:
     ports: ["127.0.0.1:${SERPBEAR_PORT:-3200}:3000"]
   # --- support profile: Chatwoot CE (MIT; `-ce` images are built with enterprise/ removed) as
   # the service desk. docker compose --profile support up -d ; docs/support.md, ADR 0013.
-  # Own Postgres: Chatwoot's schema needs the pgvector extension, which postgres:17-alpine lacks.
-  # Redis is the stack's (db 2; GlitchTip has db 1); the permissive twin swaps in Valkey.
-  chatwoot-postgres:
-    profiles: [support]
-    image: pgvector/pgvector:0.8.7-pg16
+  # Database `chatwoot` on our Postgres server (pgvector is in the stack's image), attachments in
+  # our S3 (bucket `chatwoot`), so the backup overlay covers both. Redis is the stack's (db 2;
+  # GlitchTip has db 1); the permissive twin swaps in Valkey.
+  chatwoot-db:
     logging: *logging
-    mem_limit: 512m
-    environment: { POSTGRES_USER: chatwoot, POSTGRES_PASSWORD: chatwoot, POSTGRES_DB: chatwoot }
-    volumes: [chatwoot-pgdata:/var/lib/postgresql/data]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chatwoot -d chatwoot"]
-      interval: 2s
-      retries: 30
+    profiles: [support]
+    image: postgres:17-alpine # psql only
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    # Extensions as superuser: `vector` and `pg_stat_statements` are not trusted extensions.
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'chatwoot'" | grep -q 1 ||
+         psql -c "create role chatwoot login password 'chatwoot'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'chatwoot'" | grep -q 1 ||
+         psql -c "create database chatwoot owner chatwoot") &&
+        psql -d chatwoot -c "create extension if not exists vector" -c "create extension if not exists pg_stat_statements"
 
   chatwoot-prepare: # one-shot: create or migrate the schema (Chatwoot's db:chatwoot_prepare)
     profiles: [support]
@@ -552,14 +561,22 @@ services:
         INSTALLATION_ENV: docker
         SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE:-local-dev-chatwoot-secret-key-base}
         FRONTEND_URL: ${CHATWOOT_FRONTEND_URL:-http://localhost:${CHATWOOT_PORT:-3300}}
-        POSTGRES_HOST: chatwoot-postgres
+        POSTGRES_HOST: postgres
         POSTGRES_USERNAME: chatwoot
         POSTGRES_PASSWORD: chatwoot
         POSTGRES_DATABASE: chatwoot
         REDIS_URL: redis://redis:6379/2
         RAILS_LOG_TO_STDOUT: "true"
         ENABLE_ACCOUNT_SIGNUP: "false" # first admin via the onboarding page, then invite agents
-        ACTIVE_STORAGE_SERVICE: local
+        # Attachments in S3 (Chatwoot's `s3_compatible` service); locally the stack's SeaweedFS,
+        # which creates the bucket on first upload. Elsewhere create the bucket first.
+        ACTIVE_STORAGE_SERVICE: s3_compatible
+        STORAGE_ENDPOINT: ${CHATWOOT_STORAGE_ENDPOINT:-http://s3:8333}
+        STORAGE_REGION: ${CHATWOOT_STORAGE_REGION:-us-east-1}
+        STORAGE_BUCKET_NAME: ${CHATWOOT_STORAGE_BUCKET:-chatwoot}
+        STORAGE_ACCESS_KEY_ID: ${CHATWOOT_STORAGE_ACCESS_KEY_ID:-local-dev-access-key}
+        STORAGE_SECRET_ACCESS_KEY: ${CHATWOOT_STORAGE_SECRET_ACCESS_KEY:-local-dev-secret-key}
+        STORAGE_FORCE_PATH_STYLE: "true"
         DISABLE_TELEMETRY: "true" # no instance metrics to Chatwoot's hub (a version check remains)
         ENABLE_PUSH_RELAY_SERVER: "false" # no mobile push relay through chatwoot.com
         # Webhooks go to the API on the compose network (http://api:3000), a private address.
@@ -572,11 +589,14 @@ services:
         SMTP_ENABLE_STARTTLS_AUTO: ${CHATWOOT_SMTP_STARTTLS:-false}
         SMTP_USERNAME: ${CHATWOOT_SMTP_USERNAME:-}
         SMTP_PASSWORD: ${CHATWOOT_SMTP_PASSWORD:-}
-      volumes: [chatwoot-storage:/app/storage]
+      # Files are served through Chatwoot (proxy), not by redirect to S3: the endpoint (s3:8333
+      # locally) need not be reachable from browsers.
+      volumes: [./infra/chatwoot/storage-proxy.rb:/app/config/initializers/storage_proxy.rb:ro]
     mem_limit: 768m
     depends_on:
-      chatwoot-postgres: { condition: service_healthy }
+      chatwoot-db: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
+      s3: { condition: service_healthy }
     command: ["bundle", "exec", "rails", "db:chatwoot_prepare"]
 
   chatwoot:
@@ -718,6 +738,4 @@ volumes:
   postiz-config:
   postiz-uploads:
   serpbear-data:
-  chatwoot-pgdata:
-  chatwoot-storage:
   clickhousedata:
