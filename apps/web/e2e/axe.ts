@@ -21,6 +21,10 @@ export async function expectAccessible(page: Page, name: string) {
 
 /** Runs the check in light and in dark mode (contrast differs); the app follows the OS by default. */
 export async function expectAccessibleInBothThemes(page: Page, name: string) {
+  // Color transitions would let axe sample half-switched colors right after the theme change.
+  await page.addStyleTag({
+    content: '*, *::before, *::after { transition: none !important; animation: none !important; }',
+  });
   for (const colorScheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme });
     await expect(page.locator('html')).toHaveClass(colorScheme === 'dark' ? /dark/ : /^(?!.*dark)/);
