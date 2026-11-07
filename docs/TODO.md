@@ -64,3 +64,14 @@
 - **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
+- **Backups: off-site storage and alert routing are deployment steps.** The backup overlay
+  (`compose.backup.yaml`, docs/backups.md) defaults to `backup-s3` on the same host, which does
+  not survive losing that host. Each deployment must set `BACKUP_S3_*` to another provider or
+  region, store `BACKUP_ENCRYPTION_PASSPHRASE` off the server, and route the `backups` alerts
+  (Alertmanager, see "Alert notifications" above).
+- **Backups: a second repository.** pgBackRest supports `repo2` (e.g. a second provider or
+  object-locked bucket). Add `PGBACKREST_REPO2_*` to `compose.backup.yaml` if one off-site copy is
+  not enough; the restore check would then also need a run per repository.
+- **Backups: Grafana dashboard.** Backup and restore-check metrics only have alert rules
+  (`infra/otel/alerts.yml`); a `backups` dashboard (last backup age, WAL archive lag, restore
+  check duration) would help operators. Build it per AGENTS.md "Add a dashboard".

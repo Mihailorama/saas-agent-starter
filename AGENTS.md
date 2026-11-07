@@ -56,8 +56,11 @@ crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core
 infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Prometheus + alert
                     rules (infra/otel), Grafana datasources + dashboards (infra/grafana)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
+compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
+infra/backup/       backup image (postgres + pgBackRest/rclone) and its scripts (ADR 0015)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
-                    check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels)
+                    check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
+                    backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 ```
@@ -220,6 +223,17 @@ Details: docs/product-analytics.md, ADR 0012.
   (`.mcp.json.example`). After changing journeys, `pnpm journeys:sync --dry-run` shows what
   would change in the tools. Issues labelled `cjm-regression` or `from-users` come from real
   users: link them in the PR that fixes them.
+
+## Backup rules
+
+Details: docs/backups.md, ADR 0015.
+
+- New data store: put it on the existing Postgres server (covered automatically) or an S3
+  bucket listed in `BACKUP_APP_BUCKETS`; anything else needs its own backup and a line in the
+  "Not backed up" list of docs/backups.md.
+- Never write backup state to the database: status is metrics (Pushgateway) and logs.
+- Restores go to the `postgres-restore` copy; only `--in-place --yes-overwrite-live` touches
+  the live database. Do not use unlogged tables for data that must survive a restore.
 
 ## Security rules
 

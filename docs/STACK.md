@@ -35,3 +35,21 @@ what Redis does.
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then
 `docker stats --no-stream $(docker compose --profile observability --profile glitchtip ps -q)`.
+
+## Backup overlay
+
+`compose.backup.yaml` (ADR 0015), measured 2026-11-07 on the same host with a 784 MB database
+(`pgbench -i -s 50`), sampling `docker stats` every second while each job ran:
+
+| Service                      | Memory idle (MiB) | Peak (MiB) | Limit (MiB) | Peak during                          |
+| ---------------------------- | ----------------: | ---------: | ----------: | ------------------------------------ |
+| backup (sidecar)             |                 9 |         44 |         256 | full backup, restore check           |
+| pushgateway                  |                 6 |          7 |          64 |                                      |
+| postgres (with archiving)    |    same as before |          - |         512 | archive-push adds nothing measurable |
+| backup-s3 (local stand-in)   |                70 |        512 |         512 | grows to its limit as cache          |
+| postgres-restore (on demand) |                19 |          - |         512 | only after `pnpm run restore`        |
+
+Added RAM in production (repository off-site, so no `backup-s3`): ~15 MiB steady, ~50 MiB while
+a backup or restore check runs. Locally, `backup-s3` adds up to 512 MiB more. Timings on that
+database: full backup 30 s, differential 14 s, restore check 11-16 s, `pnpm run restore` to a
+new instance 24 s (restore 14 s of it).

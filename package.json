@@ -13,6 +13,8 @@
     "bench": "cd services/worker-py && uv run python bench.py",
     "db:generate": "pnpm --filter @app/db generate",
     "db:migrate": "pnpm --filter @app/db migrate",
+    "backup:now": "node scripts/backup.mjs now",
+    "restore": "node scripts/backup.mjs restore",
     "format": "biome format --write . && cargo fmt --all && cd services/worker-py && uv run ruff format",
     "typecheck": "pnpm -r typecheck",
     "typecheck:fast": "pnpm -r typecheck:fast",

@@ -17,7 +17,7 @@ updates:
     directory: /
     schedule: { interval: weekly }
   - package-ecosystem: docker
-    directories: [/apps/api, /apps/web, /services/worker-py]
+    directories: [/apps/api, /apps/web, /services/worker-py, /infra/backup]
     schedule: { interval: weekly }
     ignore:
       - { dependency-name: node, update-types: [version-update:semver-major] }

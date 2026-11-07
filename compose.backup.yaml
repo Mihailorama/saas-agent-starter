@@ -1,0 +1,165 @@
+# Backups with verified restore (ADR 0015, runbook docs/backups.md). Overlay on the base stack:
+#   COMPOSE_FILE=docker-compose.yml:compose.backup.yaml   in .env (append :compose.permissive.yaml
+#   for the permissive twin), then `docker compose up -d` as usual.
+# Postgres archives every WAL segment with pgBackRest; the `backup` sidecar runs scheduled
+# full/diff backups, copies the app buckets, runs the restore check and pushes metrics to the
+# Pushgateway (scraped by Prometheus, observability profile; alerts in infra/otel/alerts.yml).
+# `backup-s3` is a local stand-in for off-site storage: in production point BACKUP_S3_* at a
+# bucket on another machine or provider and stop it (`--scale backup-s3=0`).
+
+x-logging: &logging
+  driver: json-file
+  options: { labels: "com.docker.compose.project,com.docker.compose.service", max-size: 10m }
+
+x-image: &image
+  image: saas-agent-starter-pgbackup:local # postgres + pgBackRest, rclone, supercronic
+  build: infra/backup
+
+# pgBackRest reads all of its settings from PGBACKREST_* variables. The repository is encrypted
+# client-side; keep BACKUP_ENCRYPTION_PASSPHRASE outside this server: without it no restore.
+x-pgbackrest: &pgbackrest
+  PGBACKREST_STANZA: main
+  PGBACKREST_PG1_PATH: /var/lib/postgresql/data
+  PGBACKREST_REPO1_TYPE: s3
+  PGBACKREST_REPO1_PATH: /pgbackrest
+  PGBACKREST_REPO1_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-backup-s3}
+  PGBACKREST_REPO1_STORAGE_PORT: ${BACKUP_S3_HTTPS_PORT:-8443}
+  # TLS is always verified. Real S3: BACKUP_S3_CA_FILE=/etc/ssl/certs/ca-certificates.crt
+  PGBACKREST_REPO1_STORAGE_CA_FILE: ${BACKUP_S3_CA_FILE:-/backup-tls/cert.pem}
+  PGBACKREST_REPO1_S3_REGION: ${BACKUP_S3_REGION:-us-east-1}
+  PGBACKREST_REPO1_S3_BUCKET: ${BACKUP_S3_BUCKET:-backups}
+  PGBACKREST_REPO1_S3_URI_STYLE: ${BACKUP_S3_URI_STYLE:-path}
+  PGBACKREST_REPO1_S3_KEY: ${BACKUP_S3_ACCESS_KEY_ID:-local-dev-backup-access-key}
+  PGBACKREST_REPO1_S3_KEY_SECRET: ${BACKUP_S3_SECRET_ACCESS_KEY:-local-dev-backup-secret-key}
+  PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+  PGBACKREST_REPO1_CIPHER_PASS: ${BACKUP_ENCRYPTION_PASSPHRASE:-local-dev-backup-passphrase}
+  PGBACKREST_REPO1_RETENTION_FULL: ${BACKUP_RETENTION_FULL:-4}
+  PGBACKREST_COMPRESS_TYPE: zst
+  PGBACKREST_START_FAST: "y"
+  PGBACKREST_PROCESS_MAX: ${BACKUP_PROCESS_MAX:-4} # parallel file transfers (backup, restore)
+  PGBACKREST_LOG_LEVEL_FILE: "off"
+  PGBACKREST_LOG_LEVEL_CONSOLE: info
+
+services:
+  # Same server, now with continuous WAL archiving. archive_timeout bounds the data loss window
+  # (RPO) on a quiet server; a busy one fills 16 MB segments sooner.
+  postgres:
+    <<: *image
+    command:
+      - postgres
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=pgbackrest archive-push %p
+      - -c
+      - archive_timeout=${BACKUP_ARCHIVE_TIMEOUT:-60}
+    environment:
+      <<: *pgbackrest
+      PGBACKREST_LOG_LEVEL_CONSOLE: warn # archive-push runs per segment; only problems
+    volumes:
+      - pgrun:/var/run/postgresql
+      - backup-tls:/backup-tls:ro
+    depends_on:
+      backup-s3-tls: { condition: service_completed_successfully, required: false }
+
+  # Scheduler: backups, app bucket copy, restore check, metrics. Same image, shares the data
+  # directory and socket with postgres (pgBackRest backs up from the data directory).
+  backup:
+    <<: *image
+    logging: *logging
+    mem_limit: 256m # measured 9 MiB idle, 44 MiB peak (backup, restore check with its own Postgres)
+    user: postgres
+    entrypoint: ["/backup/bin/entrypoint.sh"]
+    environment:
+      <<: *pgbackrest
+      BACKUP_FULL_CRON: ${BACKUP_FULL_CRON:-0 2 * * 0}
+      BACKUP_DIFF_CRON: ${BACKUP_DIFF_CRON:-0 2 * * 1-6}
+      BACKUP_OBJECTS_CRON: ${BACKUP_OBJECTS_CRON:-15 * * * *}
+      RESTORE_CHECK_CRON: ${RESTORE_CHECK_CRON:-0 4 * * 0}
+      RESTORE_CHECK_TABLES: ${RESTORE_CHECK_TABLES:-app.public.organization app.public.user app.public.projects app.public.audit_log}
+      RESTORE_CHECK_TOLERANCE: ${RESTORE_CHECK_TOLERANCE:-0.05}
+      BACKUP_PUSHGATEWAY_URL: ${BACKUP_PUSHGATEWAY_URL-http://pushgateway:9091}
+      BACKUP_APP_BUCKETS: ${BACKUP_APP_BUCKETS:-attachments ai-calls}
+      BACKUP_APP_S3_ENDPOINT: ${BACKUP_APP_S3_ENDPOINT:-http://s3:8333}
+      BACKUP_APP_S3_REGION: ${BACKUP_APP_S3_REGION:-us-east-1}
+      BACKUP_APP_S3_ACCESS_KEY_ID: ${BACKUP_APP_S3_ACCESS_KEY_ID:-local-dev-access-key}
+      BACKUP_APP_S3_SECRET_ACCESS_KEY: ${BACKUP_APP_S3_SECRET_ACCESS_KEY:-local-dev-secret-key}
+      BACKUP_OBJECTS_RETENTION_DAYS: ${BACKUP_OBJECTS_RETENTION_DAYS:-30}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - pgrun:/var/run/postgresql
+      - backup-tls:/backup-tls:ro
+      - restorecheck:/var/lib/restore-check
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 5s
+      start_period: 10m # a first full backup + restore check of a big database takes a while
+      retries: 3
+
+  # Batch-job metrics (last backup, last restore check) for Prometheus, persisted across restarts.
+  pushgateway:
+    image: prom/pushgateway:v1.11.5
+    logging: *logging
+    mem_limit: 64m
+    command: ["--persistence.file=/pushgateway/metrics", "--persistence.interval=1m"]
+    volumes: [pushgateway:/pushgateway]
+    ports: ["127.0.0.1:${PUSHGATEWAY_PORT:-9091}:9091"]
+
+  # Local stand-in for off-site backup storage: a second SeaweedFS, HTTPS only (pgBackRest
+  # speaks only TLS to S3) with a self-signed certificate from backup-s3-tls.
+  backup-s3:
+    image: chrislusf/seaweedfs:4.52
+    logging: *logging
+    mem_limit: 512m # local stand-in only; SeaweedFS fills its limit with cache under load
+    command: >-
+      server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -master.telemetry=false
+      -s3.port.https=8443 -s3.cert.file=/backup-tls/cert.pem -s3.key.file=/backup-tls/key.pem
+    volumes:
+      - backups3data:/data
+      - backup-tls:/backup-tls:ro
+      - ./infra/backup/s3.json:/etc/seaweedfs/s3.json:ro
+    depends_on:
+      backup-s3-tls: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8333/healthz >/dev/null"]
+      interval: 2s
+      retries: 30
+
+  backup-s3-tls:
+    <<: *image
+    logging: *logging
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        [ -s /backup-tls/cert.pem ] || openssl req -x509 -newkey rsa:2048 -nodes -days 3650
+        -subj /CN=backup-s3 -addext subjectAltName=DNS:backup-s3
+        -keyout /backup-tls/key.pem -out /backup-tls/cert.pem && chmod 644 /backup-tls/*.pem
+    volumes: [backup-tls:/backup-tls]
+
+  # `pnpm run restore` (default target): a separate instance restored from the repository,
+  # never archiving, on its own volume and port. The live `postgres` is not touched.
+  postgres-restore:
+    <<: *image
+    profiles: [restore]
+    logging: *logging
+    mem_limit: 512m
+    command: ["postgres", "-c", "archive_mode=off"]
+    environment: *pgbackrest
+    volumes:
+      - pgdata-restore:/var/lib/postgresql/data
+      - backup-tls:/backup-tls:ro
+    ports: ["127.0.0.1:${RESTORE_POSTGRES_PORT:-5433}:5432"]
+    healthcheck: # healthy once recovery has finished and the copy is writable
+      test: ["CMD-SHELL", "psql -U postgres -tAc 'select not pg_is_in_recovery()' | grep -q t"]
+      interval: 2s
+      retries: 300
+
+volumes:
+  pgrun:
+  backup-tls:
+  backups3data:
+  pushgateway:
+  restorecheck:
+  pgdata-restore:
