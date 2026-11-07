@@ -37,3 +37,45 @@ groups:
         for: 15m
         labels: { severity: ticket }
         annotations: { summary: "Orgs on plan {{ $labels.plan }} hit their LLM spend limit" }
+  # Backups (compose.backup.yaml, docs/backups.md). Metrics come from the backup sidecar through
+  # the Pushgateway. Thresholds assume the default schedule (daily backup, hourly object copy,
+  # weekly restore check); change them together with BACKUP_*_CRON.
+  - name: backups
+    rules:
+      - alert: BackupMetricsMissing
+        expr: absent(backup_last_success_timestamp_seconds) or absent(restore_check_last_success_timestamp_seconds)
+        for: 1h
+        labels: { severity: page }
+        annotations: { summary: "No backup or restore check on record: backups are not running" }
+      - alert: BackupTooOld
+        expr: time() - max(backup_last_success_timestamp_seconds) > 26 * 3600
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "Last Postgres backup is older than 26 hours" }
+      - alert: BackupFailed
+        expr: max(backup_last_failure_timestamp_seconds) > max(backup_last_success_timestamp_seconds)
+        labels: { severity: ticket }
+        annotations: { summary: "The last Postgres backup failed (docker compose logs backup)" }
+      - alert: WalArchiveFailing
+        expr: max(pg_wal_archive_failing) == 1
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          { summary: "WAL archiving fails: point-in-time recovery is stalled and pg_wal grows" }
+      - alert: BackupStatusStale
+        expr: time() - max(push_time_seconds{job="pgbackrest"}) > 30 * 60
+        labels: { severity: ticket }
+        annotations: { summary: "Backup sidecar stopped reporting (pushes every 5 minutes)" }
+      - alert: ObjectBackupTooOld
+        expr: time() - min(object_backup_last_success_timestamp_seconds) > 6 * 3600
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "App bucket copy is older than 6 hours" }
+      - alert: RestoreCheckFailed
+        expr: max(restore_check_last_failure_timestamp_seconds) > (max(restore_check_last_success_timestamp_seconds) or vector(0))
+        labels: { severity: page }
+        annotations: { summary: "The last restore check failed: backups may not be restorable" }
+      - alert: RestoreCheckTooOld
+        expr: time() - max(restore_check_last_success_timestamp_seconds) > 35 * 86400
+        labels: { severity: ticket }
+        annotations: { summary: "No successful restore check in 35 days" }
