@@ -90,7 +90,7 @@ services:
   temporal-setup:
     logging: *logging
     mem_limit: 128m
-    image: temporalio/admin-tools:1.32.0
+    image: temporalio/admin-tools:1.32.2
     depends_on: { postgres: { condition: service_healthy } }
     environment: { POSTGRES_SEEDS: postgres, POSTGRES_USER: postgres, SQL_PASSWORD: postgres }
     volumes: ["./infra/temporal/setup-postgres.sh:/setup.sh:ro"]
@@ -124,7 +124,7 @@ services:
   temporal-namespace:
     logging: *logging
     mem_limit: 128m
-    image: temporalio/admin-tools:1.32.0
+    image: temporalio/admin-tools:1.32.2
     depends_on: { temporal: { condition: service_healthy } }
     restart: on-failure:10
     entrypoint: ["/bin/sh", "-c"]
@@ -461,7 +461,7 @@ services:
   postiz-namespace:
     logging: *logging
     profiles: [marketing]
-    image: temporalio/admin-tools:1.32.0
+    image: temporalio/admin-tools:1.32.2
     mem_limit: 128m
     depends_on: { temporal: { condition: service_healthy } }
     restart: on-failure:10
