@@ -124,6 +124,7 @@ and `POSTHOG_HOST` the worker sends every call to PostHog AI observability (priv
 the AI-answer thumbs land on a real generation; online LLM-as-a-judge runs in PostHog or Langfuse
 (`pnpm llmops:evaluators`). `docker compose --profile llmops up -d` runs Langfuse self-hosted
 (about 1.9 GiB RAM, see [docs/STACK.md](docs/STACK.md)).
+
 ## Feature flags and releases
 
 New behaviour ships behind PostHog feature flags declared in `config/flags.json`
