@@ -35,7 +35,7 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | serpbear         | marketing     |                71 |         512 |       0.0% |
 | twenty           | crm           |               650 |        1536 |       0.9% |
 | twenty-worker    | crm           |               792 |        1024 |       0.8% |
-| caldiy           | booking       |   TODO_CALDIY_ROW |
+| caldiy           | booking       |               708 |        1024 |          - |
 
 Since ADR 0024 the worker imports LiteLLM: measured 2026-11-07, the worker process' RSS after
 importing the gateway is ~194 MiB (~81 MiB without LiteLLM), so its limit is now 512 MiB. The
@@ -73,7 +73,9 @@ server. The worker needs `NODE_OPTIONS=--max-old-space-size=768`: with Node's de
 1 GiB container it died of heap exhaustion during start-up. First start ~11 minutes (migrations) on
 this loaded host.
 
-Booking profile (Cal.diy at the commit pinned in `infra/caldiy/build.sh`, docs/crm.md): TODO_CALDIY_STACK
+Booking profile (Cal.diy at the commit pinned in `infra/caldiy/build.sh`, docs/crm.md): measured 2026-11-07 in CI (job `caldiy-image`, GitHub runner) on postgres and mailpit only, one
+minute after the first request: 708 MiB (limit 1 GiB), Postgres ~51 MiB. Idle CPU was not
+measured. The image build needs ~6 GB RAM (Next.js heap), so it runs in CI, not on the server.
 
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then

@@ -264,7 +264,10 @@ app stack** (~0.6 GiB). Twenty's own minimum is 2 GB RAM. On a small server run 
 host or use [Twenty Cloud](https://twenty.com/pricing); the sync only needs `TWENTY_API_URL` and a
 key.
 
-Cal.diy (`booking` profile): TODO_CALDIY_MEM
+Cal.diy (`booking` profile), measured 2026-11-07 in CI (`caldiy-image`, GitHub runner, 4 cores):
+708 MiB of its 1 GiB limit one minute after the first request (migrations done, login page served),
+Postgres +~10 MiB. Plan ~0.7-1 GiB for the profile; the image build itself needs ~6 GB RAM, which
+is why CI builds it.
 
 ## Backups
 

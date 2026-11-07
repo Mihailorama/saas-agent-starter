@@ -170,7 +170,7 @@ server, create its database on the app's Postgres server (so the backups cover i
 caldiy owner caldiy"`, and set `CALDIY_DATABASE_URL`, `CALDIY_PUBLIC_URL` (its own domain:
 uncomment the booking site in `deploy/Caddyfile`), `CALDIY_NEXTAUTH_SECRET`,
 `CALDIY_ENCRYPTION_KEY`, `CALDIY_CRON_API_KEY`, `CALDIY_EMAIL_FROM` and `CALDIY_SMTP_*`. It needs
-~TODO_CALDIY_RAM (docs/STACK.md). Using a Cal.diy you already run, or Cal.com Cloud: leave the
+~0.7-1 GiB (docs/STACK.md). Using a Cal.diy you already run, or Cal.com Cloud: leave the
 profile off and set only `BOOKING_PUBLIC_URL`, `BOOKING_WEBHOOK_SECRET`, `BOOKING_ORIGINS` and the
 `VITE_BOOKING_*` build variables to it.
 
