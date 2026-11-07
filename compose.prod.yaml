@@ -88,6 +88,9 @@ services:
       - POSTHOG_SECRET_KEY
       - AI_CONTENT_BUCKET
       - APP_NAME
+      - WEBHOOK_ENCRYPTION_KEYS
+      - WEBHOOK_MAX_PAYLOAD_BYTES
+      - API_KEY_RATE_LIMIT_PER_MINUTE
       - PASSKEY_RP_ID
       - CHATWOOT_WEBHOOK_SECRET
       - CHATWOOT_HMAC_TOKEN
@@ -135,6 +138,12 @@ services:
       # separate trace endpoint for the worker, e.g. Langfuse OTLP (ADR 0009)
       - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
       - OTEL_EXPORTER_OTLP_TRACES_HEADERS
+      # outbound webhooks (docs/public-api.md)
+      - WEBHOOK_ENCRYPTION_KEYS
+      - WEBHOOK_MAX_PAYLOAD_BYTES
+      - WEBHOOK_ALLOWED_CIDRS
+      - WEBHOOK_DISABLE_AFTER_FAILURES
+      - WEBHOOK_RETENTION_DAYS
       # service desk triage (docs/support.md)
       - CHATWOOT_URL
       - CHATWOOT_PUBLIC_URL

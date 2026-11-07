@@ -40,9 +40,12 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 ```
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
-  src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP) and passkey plugins
+  src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP), passkey and API key plugins
   src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
-  src/tenant.ts       requireRole() + withTenant(): RBAC, org 2FA policy, RLS transaction, audit log
+  src/tenant.ts       requireRole() / access(scope) + withTenant(): RBAC, org 2FA policy, API key
+                      scopes, RLS transaction, audit log, webhook events started after commit
+  src/access.ts       org roles (Better Auth AC) + organization API key plugin config
+  src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts, support.ts = Chatwoot/GitHub/Plane hooks
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
@@ -62,13 +65,16 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/prompts.py   versioned prompt loader (prompts/<purpose>/<name>.v<N>.md)
   worker/posthog.py   each LLM call as a PostHog `$ai_generation` (when POSTHOG_* is set)
   worker/s3.py        minimal SigV4 S3 client (AI request/response content)
+  worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log,
+                      secret decryption, auto-disable, retention (daily Temporal Schedule)
   worker/support.py   service desk triage + tracker adapters (GitHub, Plane), return path
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
 config/             ai-models.json (allowed models per contour/purpose, prices),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
-                    flags.json (feature flag catalog)
+                    flags.json (feature flag catalog),
+                    webhook-events.json (outbound webhook event catalog)
 prompts/            prompt templates, one immutable file per version; lock.json pins hashes
 evals/              Promptfoo golden sets per purpose (`pnpm eval`, scripts/eval.mjs)
 crates/core         Rust hot paths exposed to Python via PyO3 (module `saas_core`)
@@ -118,6 +124,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   where data must stay in place (ADR 0012).
 - Deploy: images by digest + `compose.prod.yaml` + Caddy (auto TLS) + SOPS/age env files, run
   with compose over SSH; Coolify/Kubernetes/on-prem are options on the same core (ADR 0016).
+- Public API: organization API keys via `@better-auth/api-key` (same auth library), webhooks as
+  a Temporal workflow per event signed per Standard Webhooks; self-hosted Svix lacks the
+  customer portal (ADR 0018, docs/public-api.md).
 - PostHog feature flags for gradual rollouts (posthog-js/-node/Python), catalog in the repo, no
   own flag store; release-please + Conventional PR titles for changelogs and `v*` tags (ADR 0020).
 - TypeScript 7 (official Go compiler) + tsrs (Apache-2.0, Rust port, beta): tsrs for everyday
@@ -156,6 +165,16 @@ Schema changes are expand/contract (docs/deploy.md "Schema changes"): the previo
 must keep working on the new schema. Drops, renames, type changes and new NOT NULL columns
 without a default go into a later release's migration marked `-- contract: <reason>`;
 `pnpm check:migrations` enforces it. Never weaken the check to pass it.
+
+## Recipe: expose a route to API keys / add a webhook event
+
+- Route: use `...access('<resource>:<action>')` (tenant.ts) instead of `{ preHandler:
+  requireRole(...) }`; add a new scope to `SCOPES` with the role it equals and to the table in
+  docs/public-api.md. Test it with a key (`apps/api/test/public-api.test.ts`).
+- Event: add the type to `config/webhook-events.json`, then call
+  `await publishEvent(req, tx, '<type>', dto)` inside the `withTenant` transaction of the change.
+  Never start deliveries yourself. Payload changes follow the versioning rule in
+  docs/public-api.md.
 
 ## Recipe: add a background workflow
 

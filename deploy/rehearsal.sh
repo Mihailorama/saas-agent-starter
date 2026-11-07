@@ -69,6 +69,7 @@ kv TEMPORAL_DB_PASSWORD "$pg"
 kv MIGRATION_DATABASE_URL "postgres://postgres:$pg@postgres:5432/app"
 kv DATABASE_URL "postgres://app_user:$(rnd)@postgres:5432/app"
 kv BETTER_AUTH_SECRET "$(rnd)$(rnd)"
+kv WEBHOOK_ENCRYPTION_KEYS "k1:$(rnd)"
 kv S3_ENDPOINT http://s3:8333
 kv S3_ACCESS_KEY_ID "$(rnd)"
 kv S3_SECRET_ACCESS_KEY "$(rnd)"

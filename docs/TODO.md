@@ -131,3 +131,9 @@
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
+- **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
+  replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
+  relay pending deliveries whose workflow never started.
+- **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
+  portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
+  the delivery UI with the portal.

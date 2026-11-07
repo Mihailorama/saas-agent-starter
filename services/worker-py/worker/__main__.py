@@ -2,6 +2,7 @@ import asyncio
 import logging
 import signal
 from datetime import timedelta
+from ipaddress import ip_network
 
 import asyncpg
 import httpx2
@@ -35,11 +36,15 @@ from worker.support import (
     Tracker,
 )
 from worker.text import backend
+from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     ProjectCreatedWorkflow,
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
+    WebhookEventWorkflow,
+    WebhookMaintenanceWorkflow,
+    ensure_maintenance_schedule,
 )
 
 log = logging.getLogger("worker")
@@ -130,6 +135,15 @@ async def main() -> None:
         else None
     )
     activities = Activities(pool, ai, summary_model)
+    webhooks = WebhookActivities(
+        pool,
+        allowed_networks=[ip_network(c) for c in settings.WEBHOOK_ALLOWED_CIDRS],
+        encryption_keys=parse_keys(settings.WEBHOOK_ENCRYPTION_KEYS),
+        max_payload_bytes=settings.WEBHOOK_MAX_PAYLOAD_BYTES,
+        disable_after_failures=settings.WEBHOOK_DISABLE_AFTER_FAILURES,
+        retention_days=settings.WEBHOOK_RETENTION_DAYS,
+    )
+    await ensure_maintenance_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
     chatwoot = (
         Chatwoot(
@@ -159,12 +173,21 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_TASK_QUEUE,
-        workflows=[ProjectCreatedWorkflow, SupportTriageWorkflow, SupportIssueClosedWorkflow],
+        workflows=[
+            ProjectCreatedWorkflow,
+            SupportTriageWorkflow,
+            SupportIssueClosedWorkflow,
+            WebhookEventWorkflow,
+            WebhookMaintenanceWorkflow,
+        ],
         activities=[
             activities.fingerprint_project,
             activities.summarize_project,
             support.triage,
             support.issue_closed,
+            webhooks.deliver_webhook,
+            webhooks.prune_webhooks,
+            webhooks.reencrypt_webhook_secrets,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],
@@ -192,6 +215,7 @@ async def main() -> None:
         )
         await stop.wait()
         log.info("shutting down")
+    await webhooks.close()
     await http.aclose()
     await s3.close()
     if posthog:
