@@ -107,6 +107,8 @@ FLAGS_ON = frozenset(f.strip() for f in os.environ.get("FLAGS_ON", "").split(","
 FLAGS_OFF = frozenset(f.strip() for f in os.environ.get("FLAGS_OFF", "").split(",") if f.strip())
 POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
 POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
+# Optional project secret key (feature_flag:read): local flag evaluation, as in the API.
+POSTHOG_SECRET_KEY = os.environ.get("POSTHOG_SECRET_KEY", "")
 
 # Data-subject rights (docs/privacy.md). Export ZIPs are deleted after PRIVACY_EXPORT_TTL_DAYS; a
 # deleted organization's ai_calls and audit_log rows are kept PRIVACY_ORG_RECORDS_DAYS (EU AI Act

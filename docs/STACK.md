@@ -18,7 +18,7 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | temporal         | default       |               120 |         512 |       5.3% |
 | temporal-ui      | default       |                 8 |         128 |       0.0% |
 | api              | default       |               142 |         384 |       0.0% |
-| worker           | default       |               129 |         384 |       0.1% |
+| worker           | default       |               129 |         512 |       0.1% |
 | web (nginx)      | default       |                 8 |          64 |       0.0% |
 | otel-collector   | observability |               111 |         384 |       6.1% |
 | jaeger           | observability |                30 |         512 |       0.2% |
@@ -26,6 +26,7 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | loki             | observability |               116 |         512 |       1.7% |
 | grafana          | observability |               305 |         512 |       2.5% |
 | glitchtip        | glitchtip     |               182 |         512 |       2.6% |
+| pii (Presidio)   | pii           |           136-189 |         384 |       0.0% |
 | chatwoot         | support       |               411 |        1024 |       1.4% |
 | chatwoot-sidekiq | support       |               445 |        1024 |       0.3% |
 | --------------   | ------------- | ----------------: | ----------: | ---------: |
@@ -33,8 +34,8 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | postiz           | marketing     |             1,264 |        2048 |       ~20% |
 | serpbear         | marketing     |                71 |         512 |       0.0% |
 
-Totals (used / limit): default stack ~612 / 2304 MiB, observability ~670 / 2432 MiB,
-GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.1 GiB. Jaeger keeps traces in memory, so its
+Totals (used / limit): default stack ~612 / 2432 MiB, observability ~670 / 2432 MiB,
+GlitchTip ~182 / 512 MiB; everything ~1.46 / 5.2 GiB. Jaeger keeps traces in memory, so its
 use grows with traffic until the limit; Prometheus and Loki grow with retention (volumes, not
 RAM, for Loki). The permissive twin drops Loki and Grafana (~420 MiB used); Valkey uses about
 what Redis does.
@@ -55,6 +56,21 @@ profile needs ~44 MiB less RAM and 512 MiB less `mem_limit` budget.
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then
 `docker stats --no-stream $(docker compose --profile observability --profile glitchtip ps -q)`.
+
+## PII redaction (Presidio)
+
+Measured 2026-11-07 on the same host (docs/support.md "Personal data"), `en_core_web_sm` only:
+
+- Worker with support triage configured: it loads Presidio at start, ~270 MiB RSS against
+  ~169 MiB without triage (host process, `ps`), so about **+100 MiB**; `mem_limit` raised from
+  384 to 512 MiB. Without triage nothing is loaded.
+- `pii` sidecar (`--profile pii`, worker image, `python -m worker.pii`): healthy 15 s after start,
+  136 MiB idle, 143 MiB after ten ~2.6 KB requests, up to 189 MiB seen (`docker stats`); ~20 ms
+  per short text.
+- Each additional language: one more small spaCy model, ~160-190 MiB (an earlier measurement the
+  same day: ~360 MiB for English plus one more language; not re-run here).
+- Image: the worker venv is 565 MB, of which ~325 MB are Presidio, spaCy, numpy and the model;
+  worker image 927 MB.
 
 ## Backup overlay
 

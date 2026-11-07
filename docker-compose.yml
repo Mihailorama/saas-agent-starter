@@ -177,6 +177,8 @@ services:
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-}
+      # With --profile pii: http://pii:8000 (survey answers redacted by Presidio, fail closed).
+      PII_REDACT_URL: ${PII_REDACT_URL:-}
       # Billing (docs/billing.md); empty keys = checkout answers 503.
       BILLING_CONTOUR: ${BILLING_CONTOUR:-en}
       AI_CONTOUR: ${AI_CONTOUR:-eu}
@@ -202,7 +204,7 @@ services:
 
   worker:
     logging: *logging
-    mem_limit: 384m
+    mem_limit: 512m # +~100 MiB for Presidio once support triage is on (docs/STACK.md)
     build:
       context: .
       dockerfile: services/worker-py/Dockerfile
@@ -256,6 +258,30 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }
+
+  # PII redaction for the API's feedback hook (Presidio, docs/support.md "Personal data"): the
+  # worker image, another command. Set PII_REDACT_URL on the API to use it.
+  pii:
+    profiles: [pii]
+    logging: *logging
+    mem_limit: 384m
+    build:
+      context: .
+      dockerfile: services/worker-py/Dockerfile
+      args: { GIT_SHA: "${GIT_SHA:-dev}" }
+    command: ["python", "-m", "worker.pii"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz')",
+        ]
+      interval: 5s
+      start_period: 60s
+      retries: 12
+    ports: ["127.0.0.1:${PII_PORT:-8010}:8000"]
 
   web:
     logging: *logging

@@ -243,6 +243,39 @@ that prefix on a `support` issue starts the same workflow (id per tag), which no
 ... is live in vX.Y.Z". With `SUPPORT_NOTIFY_ON_CLOSE=release` the customer message waits for
 that comment instead of the close.
 
+## Personal data
+
+The triage output that leaves Chatwoot (issue title and body, "+1" comments, the private note's
+summary) is redacted with [Microsoft Presidio](https://github.com/microsoft/presidio) (MIT) in
+the worker process (`worker/pii.py`), on top of the prompt asking the model for no personal
+data. The same code runs as a small HTTP sidecar for the API's PostHog feedback hook
+(`POST /api/hooks/posthog`, docs/product-analytics.md): the worker image with
+`python -m worker.pii`, compose profile `pii`, opt-in.
+
+- What is replaced: emails `[email]`, phone numbers `[phone]`, card numbers `[card]` (Luhn
+  checked), IBANs `[iban]` (checksum), IP addresses `[ip]`, person names `[name]`. URLs, ids and
+  product words stay.
+- Model: `en_core_web_sm` (spaCy 3.8, MIT), because the triage prompt writes title and summary
+  in English. The pattern recognizers (everything but names) work on text in any language; names
+  are found in English text only. Survey answers in other languages keep names the English model
+  misses.
+- Known gaps (measured 2026-11-07, `tests/test_pii.py` `GAPS`): a short first name at the start
+  of a sentence ("Ana logged in"), local phone numbers without an area code (`555-0132`),
+  obfuscated emails (`john.doe(at)example.com`); and it over-redacts at times ("ask john about"
+  loses "about", "Customer Priya" loses "Customer"). Names are best effort, the patterns are not.
+- Fail closed: the worker has Presidio built in (a load error fails the activity, which Temporal
+  retries; nothing is filed unredacted). With `PII_REDACT_URL` set, the API hook answers 503 when
+  the sidecar is down or answers badly, so no survey text is filed; PostHog shows the failed
+  delivery. Without `PII_REDACT_URL` the hook masks emails only (the old regex), and the browser's
+  `track()` keeps its email regex (no Python there).
+- Memory (docs/STACK.md): about +100 MiB in the worker (it loads the model at start when triage
+  is configured), 136-189 MiB for the sidecar; load takes 2-15 s. Each more language is one more
+  spaCy model in the `NlpEngineProvider` config (`worker/pii.py`), ~160-190 MiB each for the
+  small models; the `*_core_web_lg` models are far bigger (Microsoft's `presidio-analyzer`
+  image uses one: ~740 MiB idle).
+- Enable the sidecar: `COMPOSE_PROFILES=pii` and `PII_REDACT_URL=http://pii:8000` on the API
+  (locally: `docker compose --profile pii up -d pii`, `PII_REDACT_URL=http://localhost:8010`).
+
 ## Data residency
 
 Chats, emails and Telegram messages are personal data. Deployments with data-residency
