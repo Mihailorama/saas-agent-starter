@@ -483,7 +483,7 @@ describe('AI calls log', () => {
   });
 });
 
-describe('PostHog webhook -> GitHub issue', () => {
+describe('PostHog webhook -> tracker item', () => {
   const hook = (secret: string | null, event: object) =>
     app.inject({
       method: 'POST',
@@ -523,17 +523,17 @@ describe('PostHog webhook -> GitHub issue', () => {
     expect((await hook('wrong', alert)).statusCode).toBe(401);
   });
 
-  it('dry-runs without a GitHub token and ignores unrelated events', async () => {
+  it('dry-runs without tracker credentials and ignores unrelated events', async () => {
     const secret = env.POSTHOG_WEBHOOK_SECRET!;
     const planned = (await hook(secret, alert)).json();
     expect(planned).toMatchObject({
       action: 'dry-run',
-      label: 'cjm-regression',
+      producer: 'cjm-regression',
       title: '[cjm] activation below 30%',
     });
     expect(planned.body).toContain('below the lower threshold');
     const feedback = (await hook(secret, survey)).json();
-    expect(feedback).toMatchObject({ action: 'dry-run', label: 'from-users' });
+    expect(feedback).toMatchObject({ action: 'dry-run', producer: 'from-users' });
     expect(feedback.body).not.toContain('a@example.com');
     expect((await hook(secret, { event: '$pageview', properties: {} })).json()).toEqual({
       action: 'ignored',
@@ -543,38 +543,46 @@ describe('PostHog webhook -> GitHub issue', () => {
     expect((await hook(secret, thumbs)).json()).toEqual({ action: 'ignored' });
   });
 
-  it('opens an issue, then comments on it for the same alert', async () => {
-    Object.assign(env, { GITHUB_TOKEN: 'test-token', GITHUB_REPO: 'example/app' });
-    const issues: { number: number; title: string }[] = [];
+  it('opens an item, then comments on it for the same alert (GitHub variant)', async () => {
+    // The Plane default is covered against a fake server in tracker.test.ts.
+    Object.assign(env, { TRACKER: 'github', GITHUB_TOKEN: 'test-token', GITHUB_REPO: 'o/app' });
+    const issues: { number: number; title: string; html_url: string }[] = [];
     const calls: string[] = [];
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      calls.push(
-        `${init?.method ?? 'GET'} ${url.replace('https://api.github.com/repos/example/app', '')}`,
-      );
-      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-token');
-      if (init?.method === 'POST' && url.endsWith('/issues')) {
-        const body = JSON.parse(String(init.body));
-        expect(body.labels).toEqual(['cjm-regression']);
-        issues.push({ number: 7, title: body.title });
-        return Response.json({ number: 7 }, { status: 201 });
+      const url = new URL(String(input instanceof Request ? input.url : input));
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${url.pathname}`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('token test-token');
+      if (method === 'GET') {
+        expect(url.searchParams.get('labels')).toBe('cjm-regression');
+        return Response.json(issues);
       }
-      if (init?.method === 'POST') return Response.json({}, { status: 201 });
-      return Response.json(issues);
+      if (url.pathname.endsWith('/issues')) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.labels).toEqual(['cjm-regression']);
+        issues.push({
+          number: 7,
+          title: body.title,
+          html_url: 'https://github.com/o/app/issues/7',
+        });
+        return Response.json(issues[0], { status: 201 });
+      }
+      return Response.json({}, { status: 201 });
     });
     try {
       const secret = env.POSTHOG_WEBHOOK_SECRET!;
-      expect((await hook(secret, alert)).json()).toEqual({ action: 'created', issue: 7 });
-      expect((await hook(secret, alert)).json()).toEqual({ action: 'commented', issue: 7 });
+      const item = { ref: '7', url: 'https://github.com/o/app/issues/7' };
+      expect((await hook(secret, alert)).json()).toEqual({ action: 'created', ...item });
+      expect((await hook(secret, alert)).json()).toEqual({ action: 'commented', ...item });
       expect(calls).toEqual([
-        'GET /issues?state=open&per_page=100&labels=cjm-regression',
-        'POST /issues',
-        'GET /issues?state=open&per_page=100&labels=cjm-regression',
-        'POST /issues/7/comments',
+        'GET /repos/o/app/issues',
+        'POST /repos/o/app/issues',
+        'GET /repos/o/app/issues',
+        'POST /repos/o/app/issues/7/comments',
       ]);
     } finally {
       fetchMock.mockRestore();
-      Object.assign(env, { GITHUB_TOKEN: undefined, GITHUB_REPO: undefined });
+      Object.assign(env, { TRACKER: 'plane', GITHUB_TOKEN: undefined, GITHUB_REPO: undefined });
     }
   });
 });
@@ -732,6 +740,60 @@ describe('service desk (Chatwoot)', () => {
       event.event_id,
     );
     await (await temporal()).workflow.getHandle(id).terminate('test cleanup');
+
+    // The release comment (scripts/released.mjs) on a Plane item: live in that version.
+    const comment = (text: string) => ({
+      event: 'workitem.comment.created',
+      event_id: randomUUID(),
+      entity_type: 'issue',
+      data: { id: event.data.id, name: 'x', comment: { comment_stripped: text } },
+      previous_attributes: {},
+    });
+    expect((await plane(comment('thanks!'))).json()).toEqual({ action: 'ignored' });
+    expect((await plane(comment('Released in v1.2.0 (via #5). Notes'))).json()).toEqual({
+      action: 'started',
+    });
+    const rid = supportClosedWorkflowId(
+      { tracker: 'plane', issueId: event.data.id },
+      'release-v1.2.0',
+    );
+    const rel = (await temporal()).workflow.getHandle(rid);
+    expect(JSON.stringify(await rel.fetchHistory())).toContain('v1.2.0');
+    await rel.terminate('test cleanup');
+
+    // v1 payloads (Plane Community Edition, no `version`): the same two triggers.
+    const v1Id = randomUUID();
+    const v1 = (e: object) => plane({ webhook_id: 'w', workspace_slug: 'ws', ...e });
+    const v1State = {
+      event: 'issue',
+      action: 'updated',
+      data: { id: v1Id, project: 'p1', updated_at: '2026-11-07T10:00:00Z' },
+      activity: { field: 'state_id', old_value: 'a', new_value: 'b' },
+    };
+    expect((await v1({ ...v1State, activity: { field: 'name' } })).json()).toEqual({
+      action: 'ignored',
+    });
+    expect((await v1(v1State)).json()).toEqual({ action: 'started' });
+    await (await temporal()).workflow
+      .getHandle(
+        supportClosedWorkflowId({ tracker: 'plane', issueId: v1Id }, v1State.data.updated_at),
+      )
+      .terminate('test cleanup');
+    const v1Comment = {
+      event: 'issue_comment',
+      action: 'created',
+      data: {
+        id: randomUUID(),
+        issue: v1Id,
+        project: 'p1',
+        comment_stripped: 'Released in v2.0.0 (via #9).',
+      },
+      activity: { field: null },
+    };
+    expect((await v1(v1Comment)).json()).toEqual({ action: 'started' });
+    await (await temporal()).workflow
+      .getHandle(supportClosedWorkflowId({ tracker: 'plane', issueId: v1Id }, 'release-v2.0.0'))
+      .terminate('test cleanup');
   });
 
   it('signs the widget identity of the signed-in user only', async () => {

@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
-import { api } from '@/lib/api';
+import { client, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
 /** Centered card used by the sign-in, password reset and invitation pages. */
@@ -76,7 +76,7 @@ export function SignInPage() {
   const [pending, setPending] = useState(false);
   const { data: config } = useQuery({
     queryKey: ['auth-config'],
-    queryFn: () => api<{ sso: boolean }>('/api/auth-config'),
+    queryFn: () => ok(client.GET('/api/auth-config')),
   });
 
   async function onSso() {

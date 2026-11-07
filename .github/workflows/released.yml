@@ -1,7 +1,7 @@
 name: Released
 
-# Comments "Released in vX.Y.Z" on the issues closed by the PRs in a release and labels them
-# `released` (docs/releases.md). Triggered when a person (or a workflow-triggering token)
+# Comments "Released in vX.Y.Z" on the tracker items the PRs in a release refer to
+# (docs/releases.md). Triggered when a person (or a workflow-triggering token)
 # publishes a release, and called by release-please.yml, whose GITHUB_TOKEN releases start
 # no workflows on their own.
 on:
@@ -12,6 +12,9 @@ on:
       tag:
         type: string
         required: true
+    secrets:
+      PLANE_API_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -25,10 +28,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # tags and history: the range is previous v* tag..this tag
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter api # the tracker clients (apps/api/src/tracker.ts)
       - run: node scripts/released.mjs "$TAG"
         env:
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
           GITHUB_TOKEN: ${{ github.token }}
+          # Plane by default (docs/releases.md): repository variables + the API key as a secret.
+          # Without them the script does nothing. TRACKER=github comments on GitHub issues instead.
+          TRACKER: ${{ vars.TRACKER || 'plane' }}
+          PLANE_API_URL: ${{ vars.PLANE_API_URL }}
+          PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
+          PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID }}
+          PLANE_API_TOKEN: ${{ secrets.PLANE_API_TOKEN }}

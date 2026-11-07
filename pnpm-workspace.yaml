@@ -41,3 +41,5 @@ overrides:
   # Security fixes (osv-scanner) for transitive deps whose parents pin old majors.
   "@esbuild-kit/core-utils>esbuild": ^0.25.12
   "@fastify/otel>minimatch": ^11.0.1
+  # openapi-typescript prints with the TypeScript 5 JS API, which TypeScript 7 (Go) no longer ships.
+  "openapi-typescript>typescript": 5.9.3

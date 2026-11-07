@@ -16,9 +16,13 @@ still lack channels, an agent inbox and a widget.
   widget, email, Telegram, API inbox) live there. Self-hosted from the `support` compose profile,
   image `chatwoot/chatwoot:<version>-ce`, which Chatwoot builds with `enterprise/` removed: only
   the MIT core runs, no enterprise feature is used.
-- **Backlog items live in the tracker**: GitHub Issues by default (reusing the labels and
-  conventions of the PostHog hook, ADR 0012), Plane Intake optionally (`SUPPORT_TRACKER=plane`),
-  so new items wait for a human to accept them.
+- **Backlog items live in the tracker**: Plane by default, new items in the project's Intake so
+  they wait for a human to accept them (owner decision 2026-11-07: tasks go to Plane, alerts never
+  open GitHub issues). One tracker contract serves every producer (PostHog hook, this triage,
+  release comments): `apps/api/src/tracker.ts` and its worker twin, configured by `TRACKER` and
+  `config/tracker.json` (labels, Intake or a target state per producer). GitHub Issues stays an
+  optional adapter (`TRACKER=github`, `@octokit/rest`) for installations that want it. No code
+  closes an item or moves it to a completed state.
 - **No link table**: the conversation URL goes into the issue (body or "+1" comment), the issue
   URL into the conversation's `tracker_issue_url` custom attribute. Both survive without us.
 - **Triage is a Temporal workflow in the Python worker** (`SupportTriageWorkflow`, id per
@@ -28,10 +32,11 @@ still lack channels, an agent inbox and a widget.
   (purpose `support.triage`, versioned prompt files, `ai_calls` audit under the operator's
   `SUPPORT_AI_ORG_ID`), files or "+1"s the tracker item and writes **one private note**. It never
   replies to a customer. A draft answer for questions is a note for an agent to review.
-- **Return path**: signed GitHub (`X-Hub-Signature-256`) and Plane (`X-Plane-Signature`)
+- **Return path**: signed Plane (`X-Plane-Signature`) and GitHub (`X-Hub-Signature-256`)
   webhooks start `SupportIssueClosedWorkflow`, which notes the outcome in every linked
   conversation; a customer message only with `SUPPORT_NOTIFY_ON_CLOSE=true` and only for items
-  closed as done. With the release flow (ADR 0020) the `Released in vX.Y.Z` issue comment adds a
+  closed as done. With the release flow (ADR 0020) the `Released in vX.Y.Z` comment (Plane work
+  item or GitHub issue) adds a
   "live in" note, and `SUPPORT_NOTIFY_ON_CLOSE=release` moves the customer message there.
 - **Widget identity**: `GET /api/support/identity` returns the user id and
   `HMAC-SHA256(CHATWOOT_HMAC_TOKEN, id)`; the inbox enforces identity validation. The widget is

@@ -61,12 +61,31 @@ const GithubEvent = z.object({
     .optional(),
   comment: z.object({ body: z.string() }).optional(),
 });
-/** scripts/released.mjs comments `Released in vX.Y.Z (via #PR). ...` (docs/releases.md). */
+/** scripts/released.mjs comments `Released in vX.Y.Z (via #PR). ...` on GitHub or Plane items. */
 const RELEASED = /^Released in (v[\w.+-]{1,40}) /;
+/**
+ * Plane webhooks: v2 (Plane Cloud and commercial editions: `version`, dot-notation `event`,
+ * `event_id`, `previous_attributes`) and v1 (the open-source Community Edition: `event` =
+ * `issue` | `issue_comment`, `action`, `activity.field`; no event id).
+ */
 const PlaneEvent = z.object({
+  version: z.string().optional(),
+  event: z.string().optional(),
+  action: z.string().optional(),
   entity_type: z.string().optional(),
   event_id: z.string().optional(),
-  data: z.object({ id: z.string().optional(), project_id: z.string().optional() }).default({}),
+  data: z
+    .object({
+      id: z.string().optional(),
+      project_id: z.string().optional(),
+      project: z.string().optional(), // v1
+      issue: z.string().optional(), // v1 comment: the work item
+      updated_at: z.string().optional(),
+      comment_stripped: z.string().optional(), // v1 comment
+      comment: z.object({ comment_stripped: z.string().default('') }).optional(), // v2
+    })
+    .default({}),
+  activity: z.object({ field: z.string().nullish() }).nullish(), // v1
   previous_attributes: z.record(z.string(), z.unknown()).default({}),
 });
 const Result = z.object({ action: z.enum(['ignored', 'started', 'duplicate']) });
@@ -152,13 +171,28 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!planeSigned(raw(req), header(req.headers['x-plane-signature']))) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
-      const { entity_type, event_id, data, previous_attributes } = req.body;
-      // A state change on a work item of our project; the worker checks the state group.
-      const stateChanged = entity_type === 'issue' && 'state_id' in previous_attributes;
-      const ours = !env.PLANE_PROJECT_ID || data.project_id === env.PLANE_PROJECT_ID;
-      if (!stateChanged || !ours || !data.id || !event_id) return { action: 'ignored' as const };
-      const e = { tracker: 'plane' as const, issueId: data.id };
-      const started = await startSupportIssueClosed(e, event_id);
+      const { version, event, action, entity_type, event_id, data } = req.body;
+      const v1 = !version && !event_id;
+      // The release comment (scripts/released.mjs) means the fix is live. A v2 comment payload
+      // carries no project id; the worker reads the item in its own project and ignores others.
+      const comment = v1
+        ? event === 'issue_comment' && action === 'created' && data.comment_stripped
+        : event === 'workitem.comment.created' && data.comment?.comment_stripped;
+      const release = comment && comment.match(RELEASED)?.[1];
+      // Otherwise a state change on a work item of our project; the worker checks the state group.
+      const stateChanged = v1
+        ? event === 'issue' && action === 'updated' && req.body.activity?.field === 'state_id'
+        : entity_type === 'issue' && 'state_id' in req.body.previous_attributes;
+      const project = data.project_id ?? data.project;
+      const ours = !env.PLANE_PROJECT_ID || project === env.PLANE_PROJECT_ID;
+      const issueId = v1 && event === 'issue_comment' ? data.issue : data.id;
+      // v1 has no event id: one close per item update time.
+      const closeId = release ? `release-${release}` : (event_id ?? data.updated_at);
+      if (!(release || (stateChanged && ours)) || !issueId || !closeId) {
+        return { action: 'ignored' as const };
+      }
+      const e = { tracker: 'plane' as const, issueId, release: release || '' };
+      const started = await startSupportIssueClosed(e, closeId);
       req.log.info({ ...e, started }, 'plane hook -> support issue closed');
       return { action: started ? ('started' as const) : ('duplicate' as const) };
     },

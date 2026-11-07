@@ -9,6 +9,7 @@ dependencies = [
   "asyncpg>=0.32",
   "cryptography>=46",
   "httpx2>=2.16.0",
+  "minio>=7.2.20",
   "openai>=3.46.0",
   "opentelemetry-exporter-otlp-proto-http>=1.45",
   "opentelemetry-sdk>=1.45",

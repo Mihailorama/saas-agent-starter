@@ -23,15 +23,13 @@ from worker.ai import AllowedModel, Completion, Gateway, Message
 from worker.s3 import S3
 from worker.support import (
     Chatwoot,
-    DryRunTracker,
-    GitHubIssues,
-    PlaneIntake,
     SupportActivities,
     SupportConversation,
     SupportIssueClosed,
     linked_conversations,
     parse_triage,
 )
+from worker.tracker import DryRunTracker, GitHubIssues, Plane
 from worker.workflows import SupportTriageWorkflow
 
 C = SupportConversation(accountId=1, conversationId=42)
@@ -95,19 +93,33 @@ class Fake:
         if path == "/repos/x/y/issues/7/comments" and req.method == "GET":
             other = f"+1 user\n\nSupport conversation: {CW}/app/accounts/1/conversations/43"
             return httpx2.Response(200, json=[{"body": other}, {"body": f"again {LINK}"}])
+        plane = "/api/v1/workspaces/ws/projects/p1"
         if path == "/api/v1/workspaces/ws/work-items/search/":
             return httpx2.Response(200, json={"issues": []})
-        if "/intake-issues/" in path:
-            return httpx2.Response(201, json={"id": "intake-1", "issue": {"id": "wi-1"}})
-        if path.endswith("/work-items/wi-1/"):
+        if path == f"{plane}/intake-issues/" and req.method == "GET":
+            # Two pages; only pending (-2) and snoozed (0) items are still open.
+            last = req.url.params.get("cursor") == "100:1:0"
+            results = [
+                {"status": 1, "issue": "wi-accepted", "issue_detail": {"name": "Upload fails"}},
+                {"status": -2, "issue": "wi-0", "issue_detail": {"name": "Upload fails twice"}},
+            ]
+            page = {"results": results[1:] if last else results[:1]}
             return httpx2.Response(
-                200,
-                json={
-                    "state": {"group": "completed"},
-                    "description_html": f"<p>{LINK}</p>",
-                },
+                200, json=page | {"next_cursor": "100:1:0", "next_page_results": not last}
             )
-        if path.endswith("/work-items/wi-1/comments/"):
+        if path == f"{plane}/intake-issues/":
+            return httpx2.Response(201, json={"id": "intake-1", "issue": "wi-1"})
+        if path == f"{plane}/labels/" and req.method == "GET":
+            return httpx2.Response(200, json={"results": [{"id": "l-1", "name": "from-users"}]})
+        if path == f"{plane}/labels/":
+            return httpx2.Response(201, json={"id": f"l-{body['name']}"})
+        if path == f"{plane}/work-items/wi-1/" and req.method == "GET":
+            group = self.attrs.get("plane_group", "completed")
+            item = {"state": {"group": group}, "description_html": f"<p>{LINK}</p>"}
+            return httpx2.Response(200, json=item)
+        if path.startswith(f"{plane}/work-items/wi-") and req.method in ("PATCH", "POST"):
+            return httpx2.Response(200, json={})  # labels, comments
+        if path == f"{plane}/work-items/wi-1/comments/":
             return httpx2.Response(200, json={"results": []})
         if req.method == "POST" and path.startswith("/repos/x/y/issues/"):
             return httpx2.Response(201, json={})  # comments, labels
@@ -166,7 +178,7 @@ async def make(
     http = fake.client()
     trackers: dict[str, Any] = {
         "github": GitHubIssues("x/y", "test-token", http),
-        "plane": PlaneIntake(
+        "plane": Plane(
             api_url="http://plane.test",
             app_url="http://plane.test",
             workspace="ws",
@@ -287,6 +299,10 @@ async def test_plane_intake_create_and_close(pool: asyncpg.Pool, s3: S3) -> None
     assert await acts.triage(C) == "bug"
     [intake] = fake.posted("/projects/p1/intake-issues/")
     assert intake["issue"]["name"] == "Upload fails" and LINK in intake["issue"]["description_html"]
+    # config/tracker.json labels: existing ones reused, missing ones created, set on the item.
+    assert fake.posted("/labels/") == [{"name": "support"}, {"name": "bug"}]
+    patched = [b for m, p, b in fake.calls if m == "PATCH" and p.endswith("/work-items/wi-1/")]
+    assert patched == [{"labels": ["l-1", "l-support", "l-bug"]}]
     assert fake.attrs["tracker_issue_url"] == "http://plane.test/ws/projects/p1/issues/wi-1"
 
     assert await acts.issue_closed(SupportIssueClosed("plane", "wi-1")) == 1
@@ -295,6 +311,24 @@ async def test_plane_intake_create_and_close(pool: asyncpg.Pool, s3: S3) -> None
     assert "private" not in reply  # the opt-in customer message
     # A close event from the other tracker is not ours.
     assert await acts.issue_closed(SupportIssueClosed("github", "7")) == 0
+    # The release comment counts while the item is still open (nobody moved it): "live in".
+    fake.attrs["plane_group"] = "started"
+    assert await acts.issue_closed(SupportIssueClosed("plane", "wi-1")) == 0
+    assert await acts.issue_closed(SupportIssueClosed("plane", "wi-1", release="v1.2.0")) == 1
+    assert "is live in v1.2.0" in fake.posted("/messages")[-1]["content"]
+    # Never a state change: the worker only reads and comments.
+    assert not [b for m, _, b in fake.calls if m == "PATCH" and "state" in b]
+
+
+async def test_plane_duplicate_search_includes_intake(pool: asyncpg.Pool, s3: S3) -> None:
+    fake = Fake()
+    acts, _ = await make(pool, s3, fake, llm(BUG, duplicate="1"), tracker="plane")
+    assert await acts.triage(C) == "bug"
+    # The still-pending Intake item (second page) is the duplicate; the accepted one is not.
+    assert fake.posted("/intake-issues/") == []
+    [comment] = fake.posted("/work-items/wi-0/comments/")
+    assert LINK in comment["comment_html"]
+    assert fake.attrs["tracker_issue_url"] == "http://plane.test/ws/projects/p1/issues/wi-0"
 
 
 async def test_github_close_notes_every_linked_conversation(pool: asyncpg.Pool, s3: S3) -> None:

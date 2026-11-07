@@ -33,39 +33,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { track } from '@/lib/analytics';
-import { api } from '@/lib/api';
+import { type Body, client, type Ok, ok } from '@/lib/api';
 
-type Endpoint = {
-  id: string;
-  url: string;
-  description: string | null;
-  eventTypes: string[];
-  enabled: boolean;
-  disabledReason: 'manual' | 'gone' | 'failures' | null;
-  disabledAt: string | null;
-  consecutiveFailures: number;
-  createdAt: string;
-};
-type DeliveryStatus = 'pending' | 'succeeded' | 'failed';
-type Delivery = {
-  id: string;
-  eventId: string;
-  eventType: string;
-  endpointId: string;
-  status: DeliveryStatus;
-  attempts: number;
-  lastStatusCode: number | null;
-  createdAt: string;
-  updatedAt: string;
-};
-type Attempt = {
-  attempt: number;
-  statusCode: number | null;
-  error: string | null;
-  durationMs: number;
-  createdAt: string;
-};
-type DeliveryDetail = Delivery & { payload: unknown; attemptLog: Attempt[] };
+type Endpoint = Ok<'/api/webhooks/endpoints', 'get'>[number];
+type NewEndpoint = Body<'/api/webhooks/endpoints', 'post'>;
 
 const PAGE = 25;
 const dateTime = (iso: string) =>
@@ -93,14 +64,10 @@ function NewEndpointDialog({
   const queryClient = useQueryClient();
   const types = useQuery({
     queryKey: ['webhook-event-types'],
-    queryFn: () => api<{ type: string; description: string }[]>('/api/webhooks/event-types'),
+    queryFn: () => ok(client.GET('/api/webhooks/event-types')),
   });
   const create = useMutation({
-    mutationFn: (json: { url: string; description: string; eventTypes: string[] }) =>
-      api<{ endpoint: Endpoint; secret: string }>('/api/webhooks/endpoints', {
-        method: 'POST',
-        json,
-      }),
+    mutationFn: (json: NewEndpoint) => ok(client.POST('/api/webhooks/endpoints', { body: json })),
     onSuccess: ({ secret }, input) => {
       track('webhook_endpoint_created', { event_types: input.eventTypes.length });
       queryClient.invalidateQueries({ queryKey: ['webhook-endpoints'] });
@@ -113,7 +80,8 @@ function NewEndpointDialog({
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
-    const eventTypes = form.getAll('eventType').map(String);
+    // The checkboxes list the API's own event types (/api/webhooks/event-types).
+    const eventTypes = form.getAll('eventType').map(String) as NewEndpoint['eventTypes'];
     if (!eventTypes.length) return toast.error('Choose at least one event');
     create.mutate({
       url: String(form.get('url')),
@@ -182,7 +150,8 @@ function NewEndpointDialog({
 function DeliveryDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
   const detail = useQuery({
     queryKey: ['webhook-delivery', id],
-    queryFn: () => api<DeliveryDetail>(`/api/webhooks/deliveries/${id}`),
+    queryFn: () =>
+      ok(client.GET('/api/webhooks/deliveries/{id}', { params: { path: { id: id! } } })),
     enabled: id !== null,
   });
   return (
@@ -245,15 +214,13 @@ export function WebhooksPage() {
   const queryClient = useQueryClient();
   const endpoints = useQuery({
     queryKey: ['webhook-endpoints'],
-    queryFn: () => api<Endpoint[]>('/api/webhooks/endpoints'),
+    queryFn: () => ok(client.GET('/api/webhooks/endpoints')),
   });
   const [offset, setOffset] = useState(0);
   const deliveries = useQuery({
     queryKey: ['webhook-deliveries', offset],
     queryFn: () =>
-      api<{ items: Delivery[]; total: number }>(
-        `/api/webhooks/deliveries?limit=${PAGE}&offset=${offset}`,
-      ),
+      ok(client.GET('/api/webhooks/deliveries', { params: { query: { limit: PAGE, offset } } })),
     placeholderData: keepPreviousData,
     // Attempts are made in the background: refresh while any delivery is still pending.
     refetchInterval: (q) =>
@@ -266,12 +233,18 @@ export function WebhooksPage() {
 
   const update = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api(`/api/webhooks/endpoints/${id}`, { method: 'PATCH', json: { enabled } }),
+      ok(
+        client.PATCH('/api/webhooks/endpoints/{id}', {
+          params: { path: { id } },
+          body: { enabled },
+        }),
+      ),
     onSuccess: refresh,
     onError: (err) => toast.error(err.message),
   });
   const remove = useMutation({
-    mutationFn: (id: string) => api(`/api/webhooks/endpoints/${id}`, { method: 'DELETE' }),
+    mutationFn: (id: string) =>
+      ok(client.DELETE('/api/webhooks/endpoints/{id}', { params: { path: { id } } })),
     onSuccess: () => {
       refresh();
       queryClient.invalidateQueries({ queryKey: ['webhook-deliveries'] });
@@ -281,12 +254,13 @@ export function WebhooksPage() {
   });
   const rotate = useMutation({
     mutationFn: (id: string) =>
-      api<{ secret: string }>(`/api/webhooks/endpoints/${id}/rotate-secret`, { method: 'POST' }),
+      ok(client.POST('/api/webhooks/endpoints/{id}/rotate-secret', { params: { path: { id } } })),
     onSuccess: ({ secret }) => setSecret(secret),
     onError: (err) => toast.error(err.message),
   });
   const replay = useMutation({
-    mutationFn: (id: string) => api(`/api/webhooks/deliveries/${id}/replay`, { method: 'POST' }),
+    mutationFn: (id: string) =>
+      ok(client.POST('/api/webhooks/deliveries/{id}/replay', { params: { path: { id } } })),
     onSuccess: () => {
       toast.success('Replay queued');
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ['webhook-deliveries'] }), 1500);

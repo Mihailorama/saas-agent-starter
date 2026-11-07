@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // node scripts/released.mjs <tag> [--dry-run]   (docs/releases.md; run by .github/workflows/released.yml)
 // For every PR merged between the previous v* tag and <tag>, comments "Released in <tag>" on the
-// issues that PR closed (closing keywords: "Closes #12") and labels them `released`. Idempotent:
-// an issue that already has the comment for this tag is skipped.
-// Env: GITHUB_TOKEN, GITHUB_REPOSITORY (owner/name; defaults to the origin remote).
+// tracker items that PR refers to: Plane (TRACKER=plane, default) work items named by identifier
+// (`PROJ-123`) in the PR title or body; GitHub (TRACKER=github) issues the PR closed ("Closes #12").
+// Never changes an item's state. Idempotent: an item that already has the comment for this tag is
+// skipped. Env: GITHUB_TOKEN (reads the PRs), GITHUB_REPOSITORY (owner/name; defaults to the origin
+// remote), and the tracker's variables (apps/api/src/tracker.ts). No tracker credentials = nothing.
 import { execFileSync } from 'node:child_process';
+import { Octokit, trackerFromEnv } from '../apps/api/src/tracker.ts';
 
 const git = (...args) =>
   execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-export const LABEL = 'released';
 export const releasedComment = (tag, pr, repo) =>
   `Released in ${tag} (via #${pr}). Release notes: https://github.com/${repo}/releases/tag/${tag}`;
 
@@ -22,71 +24,44 @@ export function releaseCommits(tag) {
   return { prev, shas: git('log', '--format=%H', range).split('\n').filter(Boolean) };
 }
 
-async function github(method, path, body) {
-  const res = await fetch(`https://api.github.com${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-      accept: 'application/vnd.github+json',
-      'x-github-api-version': '2022-11-28',
-    },
-    body: body && JSON.stringify(body),
-  });
-  if (!res.ok && !(method === 'POST' && path.endsWith('/labels') && res.status === 422)) {
-    throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
-  }
-  return res.status === 204 ? {} : res.json();
-}
-
-const CLOSING = `query($owner: String!, $name: String!, $pr: Int!) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $pr) {
-    closingIssuesReferences(first: 50) { nodes { number repository { nameWithOwner } } } } } }`;
-
 async function main(tag, dryRun) {
   const repo =
     process.env.GITHUB_REPOSITORY ??
     git('remote', 'get-url', 'origin').match(/github\.com[:/](.+?)(\.git)?$/)?.[1];
   const [owner, name] = repo.split('/');
+  const tracker = trackerFromEnv({ GITHUB_REPO: repo, ...process.env });
+  if (!tracker) {
+    console.log(`${tag}: no ${process.env.TRACKER || 'plane'} tracker credentials, nothing to do`);
+    return;
+  }
   const { prev, shas } = releaseCommits(tag);
   console.log(`${tag}: ${shas.length} commits since ${prev ?? 'the first commit'} in ${repo}`);
 
-  const prs = new Set();
+  const gh = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const prs = new Map(); // number -> PR
   for (const sha of shas) {
-    for (const pr of await github('GET', `/repos/${repo}/commits/${sha}/pulls`)) {
-      if (pr.merged_at) prs.add(pr.number);
-    }
-  }
-  const issues = new Map(); // issue number -> PR that closed it
-  for (const pr of prs) {
-    const { data, errors } = await github('POST', '/graphql', {
-      query: CLOSING,
-      variables: { owner, name, pr },
+    const { data } = await gh.rest.repos.listPullRequestsAssociatedWithCommit({
+      owner,
+      repo: name,
+      commit_sha: sha,
     });
-    if (errors) throw new Error(`graphql PR #${pr}: ${JSON.stringify(errors)}`);
-    for (const i of data.repository.pullRequest.closingIssuesReferences.nodes) {
-      if (i.repository.nameWithOwner === repo && !issues.has(i.number)) issues.set(i.number, pr);
-    }
+    for (const pr of data) if (pr.merged_at) prs.set(pr.number, pr);
   }
-  console.log(`  ${prs.size} merged PRs, ${issues.size} closed issues`);
-  if (!issues.size) return;
-  if (!dryRun) {
-    await github('POST', `/repos/${repo}/labels`, {
-      name: LABEL,
-      color: '0e8a16',
-      description: 'Shipped in a published release (comment names the version)',
-    }); // 422 = already exists
+  const items = new Map(); // tracker ref -> PR that shipped it
+  for (const pr of prs.values()) {
+    for (const ref of await tracker.referencedBy(pr))
+      if (!items.has(ref)) items.set(ref, pr.number);
   }
-  for (const [issue, pr] of issues) {
+  console.log(`  ${prs.size} merged PRs, ${items.size} ${tracker.name} items`);
+  for (const [ref, pr] of items) {
     const body = releasedComment(tag, pr, repo);
-    const comments = await github('GET', `/repos/${repo}/issues/${issue}/comments?per_page=100`);
-    if (comments.some((c) => c.body.startsWith(`Released in ${tag} `))) {
-      console.log(`  #${issue}: already commented`);
+    if ((await tracker.comments(ref)).some((c) => c.startsWith(`Released in ${tag} `))) {
+      console.log(`  ${ref}: already commented`);
     } else if (dryRun) {
-      console.log(`  PLAN #${issue}: comment "${body}" + label ${LABEL}`);
+      console.log(`  PLAN ${ref}: comment "${body}"`);
     } else {
-      await github('POST', `/repos/${repo}/issues/${issue}/comments`, { body });
-      await github('POST', `/repos/${repo}/issues/${issue}/labels`, { labels: [LABEL] });
-      console.log(`  #${issue}: commented and labelled`);
+      await tracker.comment(ref, body);
+      console.log(`  ${ref}: commented`);
     }
   }
 }

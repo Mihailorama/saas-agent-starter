@@ -171,6 +171,12 @@ services:
       POSTHOG_WEBHOOK_SECRET: ${POSTHOG_WEBHOOK_SECRET:-local-dev-posthog-webhook-secret}
       POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
+      # Tracker (docs/support.md): Plane by default; empty credentials = dry run.
+      TRACKER: ${TRACKER:-plane}
+      PLANE_API_URL: ${PLANE_API_URL:-}
+      PLANE_APP_URL: ${PLANE_APP_URL:-}
+      PLANE_WORKSPACE: ${PLANE_WORKSPACE:-}
+      PLANE_API_TOKEN: ${PLANE_API_TOKEN:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-}
       # Billing (docs/billing.md); empty keys = checkout answers 503.
@@ -226,7 +232,7 @@ services:
       CHATWOOT_URL: ${CHATWOOT_URL:-} # with --profile support: http://chatwoot:3000
       CHATWOOT_PUBLIC_URL: ${CHATWOOT_PUBLIC_URL:-}
       CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN:-}
-      SUPPORT_TRACKER: ${SUPPORT_TRACKER:-github}
+      TRACKER: ${TRACKER:-plane}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-}
       PLANE_API_URL: ${PLANE_API_URL:-}

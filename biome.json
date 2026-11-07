@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/migrations/meta", "!pnpm-lock.yaml"]
+    "includes": ["**", "!**/migrations/meta", "!pnpm-lock.yaml", "!apps/web/src/lib/api.gen.ts"]
   },
   "formatter": {
     "indentStyle": "space",

@@ -77,6 +77,12 @@ services:
       - POSTHOG_WEBHOOK_SECRET
       - POSTHOG_APP_HOST
       - POSTHOG_PROJECT_ID
+      # tracker (docs/support.md): Plane by default, GitHub optional
+      - TRACKER
+      - PLANE_API_URL
+      - PLANE_APP_URL
+      - PLANE_WORKSPACE
+      - PLANE_API_TOKEN
       - GITHUB_TOKEN
       - GITHUB_REPO
       - EMAIL_TASK_QUEUE
@@ -153,7 +159,7 @@ services:
       - CHATWOOT_URL
       - CHATWOOT_PUBLIC_URL
       - CHATWOOT_API_TOKEN
-      - SUPPORT_TRACKER
+      - TRACKER
       - GITHUB_TOKEN
       - GITHUB_REPO
       - PLANE_API_URL

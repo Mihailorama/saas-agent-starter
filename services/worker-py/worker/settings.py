@@ -69,7 +69,9 @@ WEBHOOK_RETENTION_DAYS = int(os.environ.get("WEBHOOK_RETENTION_DAYS", "30"))
 CHATWOOT_URL = os.environ.get("CHATWOOT_URL", "")  # how the worker reaches Chatwoot
 CHATWOOT_PUBLIC_URL = os.environ.get("CHATWOOT_PUBLIC_URL", "") or CHATWOOT_URL  # links for humans
 CHATWOOT_API_TOKEN = os.environ.get("CHATWOOT_API_TOKEN", "")  # agent bot or agent access token
-SUPPORT_TRACKER = os.environ.get("SUPPORT_TRACKER", "github")  # github | plane
+# Tracker (worker/tracker.py, twin of apps/api/src/tracker.ts): plane (default) | github.
+TRACKER = os.environ.get("TRACKER", "plane")
+TRACKER_FILE = Path(os.environ.get("TRACKER_FILE", _ROOT / "config" / "tracker.json"))
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
 PLANE_API_URL = os.environ.get("PLANE_API_URL", "")  # e.g. https://api.plane.so

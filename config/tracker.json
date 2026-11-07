@@ -1,0 +1,9 @@
+{
+  "$comment": "Where each producer files tracker items (docs/support.md, Trackers). labels: names, created in Plane when missing. state: Plane state name to create the item in; without it the item goes to the project's Intake for a human to accept. GitHub uses the labels only. Read by apps/api/src/tracker.ts and services/worker-py/worker/tracker.py.",
+  "producers": {
+    "cjm-regression": { "labels": ["cjm-regression"] },
+    "from-users": { "labels": ["from-users"] },
+    "support-bug": { "labels": ["from-users", "support", "bug"] },
+    "support-feature-request": { "labels": ["from-users", "support", "feature-request"] }
+  }
+}

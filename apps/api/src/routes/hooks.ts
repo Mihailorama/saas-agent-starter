@@ -2,13 +2,14 @@ import { timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { env } from '../env.ts';
+import { type Tracker, trackerFromEnv } from '../tracker.ts';
 
 /**
  * Alert-to-agent loop (docs/product-analytics.md): PostHog webhook destinations post here, we
- * open or update a GitHub issue that coding agents pick up.
- * - `$insight_alert_firing` (a journey funnel fell below its threshold) -> label `cjm-regression`
- * - `survey sent` from the "Report a problem" survey -> label `from-users`
- * Without GITHUB_TOKEN/GITHUB_REPO it is a dry run: the response shows the planned issue.
+ * open or update a tracker item (Plane by default, src/tracker.ts) that coding agents pick up.
+ * - `$insight_alert_firing` (a journey funnel fell below its threshold) -> producer `cjm-regression`
+ * - `survey sent` from the "Report a problem" survey -> producer `from-users`
+ * Without tracker credentials it is a dry run: the response shows the planned item.
  */
 const Hook = z.object({
   event: z.object({
@@ -17,7 +18,7 @@ const Hook = z.object({
     properties: z.record(z.string(), z.unknown()).default({}),
   }),
 });
-type Issue = { title: string; label: string; body: string };
+type Issue = { title: string; producer: 'cjm-regression' | 'from-users'; body: string };
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
 // Bounded, unambiguous pattern (no polynomial backtracking on hostile input).
@@ -32,7 +33,8 @@ const agentHint = [
   '---',
   'For the agent: journeys are defined in `config/journeys.json`; `pnpm journeys:report` prints',
   'the current funnels; the PostHog MCP (`.mcp.json.example`) can query events, replays and',
-  'errors for the affected step. Fix the cause, then reference this issue in the PR.',
+  'errors for the affected step. Fix the cause, then reference this item in the PR (Plane: its',
+  '`PROJ-123` identifier in the title or body; docs/releases.md).',
 ];
 
 /** Maps a PostHog event to the issue it should produce, or undefined to ignore it. */
@@ -42,7 +44,7 @@ export function toIssue(e: z.infer<typeof Hook>['event']): Issue | undefined {
     const insight = posthogUrl(`insights/${str(p.insight_id)}`);
     return {
       title: `[cjm] ${str(p.alert_name)}`,
-      label: 'cjm-regression',
+      producer: 'cjm-regression',
       body: [
         `PostHog alert **${str(p.alert_name)}** fired on insight **${str(p.insight_name)}**.`,
         '',
@@ -72,7 +74,7 @@ export function toIssue(e: z.infer<typeof Hook>['event']): Issue | undefined {
     const first = answers[0]!.a.replace(/\s+/g, ' ');
     return {
       title: `[feedback] ${first.length > 70 ? `${first.slice(0, 70)}…` : first}`,
-      label: 'from-users',
+      producer: 'from-users',
       body: [
         `User feedback from survey **${str(p.$survey_name)}**.`,
         '',
@@ -87,39 +89,17 @@ export function toIssue(e: z.infer<typeof Hook>['event']): Issue | undefined {
   return undefined;
 }
 
-async function github(path: string, init?: { method: string; body: object }) {
-  const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}${path}`, {
-    method: init?.method ?? 'GET',
-    headers: {
-      authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      accept: 'application/vnd.github+json',
-      'x-github-api-version': '2022-11-28',
-      ...(init && { 'content-type': 'application/json' }),
-    },
-    body: init && JSON.stringify(init.body),
-  });
-  if (!res.ok) throw new Error(`GitHub ${init?.method ?? 'GET'} ${path}: ${res.status}`);
-  return res.json();
-}
-
-/** Comments on the open issue with the same title and label, or opens a new one. */
-async function upsertIssue(issue: Issue) {
-  const open = (await github(
-    `/issues?state=open&per_page=100&labels=${encodeURIComponent(issue.label)}`,
-  )) as { number: number; title: string }[];
-  const existing = open.find((i) => i.title === issue.title);
+/** Comments on the producer's open item with the same title, or files a new one. */
+async function upsertIssue(tracker: Tracker, issue: Issue) {
+  const existing = await tracker.findOpen(issue.producer, issue.title);
   if (existing) {
-    await github(`/issues/${existing.number}/comments`, {
-      method: 'POST',
-      body: { body: issue.body },
-    });
-    return { action: 'commented' as const, issue: existing.number };
+    await tracker.comment(existing.ref, issue.body);
+    return { action: 'commented' as const, ...existing };
   }
-  const created = (await github('/issues', {
-    method: 'POST',
-    body: { title: issue.title, body: issue.body, labels: [issue.label] },
-  })) as { number: number };
-  return { action: 'created' as const, issue: created.number };
+  return {
+    action: 'created' as const,
+    ...(await tracker.create(issue.producer, issue.title, issue.body)),
+  };
 }
 
 const sameSecret = (given: string | undefined) => {
@@ -141,9 +121,10 @@ export const hookRoutes: FastifyPluginAsyncZod = async (app) => {
       }
       const issue = toIssue(req.body.event);
       if (!issue) return { action: 'ignored' };
-      if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) return { action: 'dry-run', ...issue };
-      const result = await upsertIssue(issue);
-      req.log.info({ ...result, label: issue.label }, 'posthog hook -> github issue');
+      const tracker = trackerFromEnv(env);
+      if (!tracker) return { action: 'dry-run', ...issue };
+      const result = await upsertIssue(tracker, issue);
+      req.log.info({ ...result, producer: issue.producer }, `posthog hook -> ${tracker.name} item`);
       return result;
     },
   );

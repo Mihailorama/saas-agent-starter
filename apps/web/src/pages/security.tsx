@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
-import { api, formatDate } from '@/lib/api';
+import { client, formatDate, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
 type AuthError = { code?: string; message?: string } | null;
@@ -28,7 +28,7 @@ type AuthError = { code?: string; message?: string } | null;
 export const TWO_FACTOR_REQUIRED = 'two-factor authentication required';
 export const policyQuery = {
   queryKey: ['security-policy'],
-  queryFn: () => api<{ requireTwoFactor: boolean }>('/api/security/policy'),
+  queryFn: () => ok(client.GET('/api/security/policy')),
   retry: false,
 };
 
@@ -556,7 +556,7 @@ function OrgPolicyCard({ twoFactor }: { twoFactor: boolean }) {
   const policy = useQuery(policyQuery);
   const save = useMutation({
     mutationFn: (json: { requireTwoFactor: boolean }) =>
-      api<{ requireTwoFactor: boolean }>('/api/security/policy', { method: 'PUT', json }),
+      ok(client.PUT('/api/security/policy', { body: json })),
     onSuccess: (data) => {
       queryClient.setQueryData(policyQuery.queryKey, data);
       toast.success(data.requireTwoFactor ? 'Two-factor is now required' : 'Requirement removed');

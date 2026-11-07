@@ -177,3 +177,12 @@
   each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
   task queues this server does not poll) listing the networks you do not use; measure before and
   after in docs/STACK.md, and never exclude a network you post to.
+- **Plane Node SDK search sends `project`, the server reads `project_id`** (`@makeplane/plane-node-sdk`
+  0.3.1, `WorkItems.search`). `apps/api/src/tracker.ts` passes `project_id` itself; without it the
+  duplicate search would span the whole workspace. Report it upstream and drop the extra param
+  once a fixed release lands (AGENTS.md: no patches to dependencies).
+- **Tracker has no end-to-end run against a real Plane** (2026-11-07). The adapters are tested
+  against fakes built from Plane's docs and Community Edition source (Intake create + label PATCH,
+  search skipping triage items, v1/v2 webhooks). Before relying on it, run one alert, one triage
+  and one release comment against a test project (Cloud and self-hosted CE) and check labels,
+  Intake placement and the return-path notes.

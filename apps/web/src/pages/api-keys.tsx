@@ -32,19 +32,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { track } from '@/lib/analytics';
-import { api, formatDate } from '@/lib/api';
+import { type Body, client, formatDate, type Ok, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
-type ApiKey = {
-  id: string;
-  name: string | null;
-  start: string | null;
-  scopes: string[];
-  expiresAt: string | null;
-  lastUsedAt: string | null;
-  createdAt: string;
-};
-type ScopeInfo = { scope: string; role: string };
+type ApiKey = Ok<'/api/api-keys/', 'get'>[number];
+type NewKey = Body<'/api/api-keys/', 'post'>;
 const RANK: Record<string, number> = { member: 1, admin: 2, owner: 3 };
 const selectClass =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs';
@@ -61,13 +53,12 @@ function NewKeyDialog({
   const queryClient = useQueryClient();
   const scopes = useQuery({
     queryKey: ['api-key-scopes'],
-    queryFn: () => api<ScopeInfo[]>('/api/api-keys/scopes'),
+    queryFn: () => ok(client.GET('/api/api-keys/scopes')),
   });
   const { data: member } = authClient.useActiveMember();
   const rank = Math.max(0, ...(member?.role.split(',') ?? []).map((r) => RANK[r.trim()] ?? 0));
   const create = useMutation({
-    mutationFn: (json: { name: string; scopes: string[]; expiresInDays: number | null }) =>
-      api<{ key: string; apiKey: ApiKey }>('/api/api-keys', { method: 'POST', json }),
+    mutationFn: (json: NewKey) => ok(client.POST('/api/api-keys/', { body: json })),
     onSuccess: ({ key }, input) => {
       track('api_key_created', {
         scopes: input.scopes.length,
@@ -83,7 +74,8 @@ function NewKeyDialog({
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
-    const chosen = form.getAll('scope').map(String);
+    // The checkboxes list the API's own scopes (/api/api-keys/scopes).
+    const chosen = form.getAll('scope').map(String) as NewKey['scopes'];
     if (!chosen.length) return toast.error('Choose at least one scope');
     const days = String(form.get('expires'));
     create.mutate({
@@ -149,11 +141,15 @@ function NewKeyDialog({
 /** Organization settings: API keys for the public API (docs/public-api.md). Admins only. */
 export function ApiKeysPage() {
   const queryClient = useQueryClient();
-  const keys = useQuery({ queryKey: ['api-keys'], queryFn: () => api<ApiKey[]>('/api/api-keys') });
+  const keys = useQuery({
+    queryKey: ['api-keys'],
+    queryFn: () => ok(client.GET('/api/api-keys/')),
+  });
   const [creating, setCreating] = useState(false);
   const [shown, setShown] = useState<string | null>(null);
   const revoke = useMutation({
-    mutationFn: (k: ApiKey) => api(`/api/api-keys/${k.id}`, { method: 'DELETE' }),
+    mutationFn: (k: ApiKey) =>
+      ok(client.DELETE('/api/api-keys/{id}', { params: { path: { id: k.id } } })),
     onSuccess: (_, k) => {
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
       toast.success(`Revoked ${k.name ?? k.start}`);

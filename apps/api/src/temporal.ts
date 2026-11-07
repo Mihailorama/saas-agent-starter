@@ -65,7 +65,7 @@ export const startSupportTriage = (c: SupportConversation) =>
 export type SupportIssueClosed = {
   tracker: 'github' | 'plane';
   issueId: string;
-  /** GitHub release tag from the `Released in vX.Y.Z` comment; empty for the close event. */
+  /** Release tag from the `Released in vX.Y.Z` comment (GitHub or Plane); empty for a close. */
   release?: string;
 };
 export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) =>
