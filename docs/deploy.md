@@ -175,15 +175,17 @@ profile off and set only `BOOKING_PUBLIC_URL`, `BOOKING_WEBHOOK_SECRET`, `BOOKIN
 `VITE_BOOKING_*` build variables to it.
 
 The secrets vault (Vaultwarden, [docs/secrets.md](secrets.md)) is the `vault` profile. Once per
-server, create its database next to the app's (so the backups cover it): `psql
-"$MIGRATION_DATABASE_URL" -c "create role vaultwarden login password '<pw>'" -c "create database
-vaultwarden owner vaultwarden"`; set `VAULT_DATABASE_URL`, `VAULT_PUBLIC_URL` (its own domain:
-uncomment the vault site in `deploy/Caddyfile`; the `bw` CLI requires HTTPS) and, while you invite
-the accounts, `VAULT_ADMIN_TOKEN` (argon2 hash, `$` doubled). `VAULT_SMTP_*` sends the invitations.
-Using Bitwarden Cloud or a Vaultwarden you already run: leave the profile off.
+server, create its database next to the app's (so the backups cover it), with the password typed
+at a prompt, never in argv or shell history: `psql "$MIGRATION_DATABASE_URL"`, then
+`create role vaultwarden login;`, `\password vaultwarden`, `create database vaultwarden owner
+vaultwarden;`. Set `VAULT_DATABASE_URL`, `VAULT_PUBLIC_URL` (its own domain: uncomment the vault
+site in `deploy/Caddyfile`; the `bw` CLI requires HTTPS) and, only while you invite the accounts,
+`VAULT_ADMIN_TOKEN`: an argon2 hash (`vaultwarden hash`, `$` doubled), the container refuses
+anything else. `/admin` answers 403 except from `VAULT_ADMIN_IPS`. `VAULT_SMTP_*` sends the
+invitations. Using Bitwarden Cloud or a Vaultwarden you already run: leave the profile off.
 
 Values for these env files come from the vault, not from a chat or a scratch file: `node
-scripts/vault.mjs get <item> <field> | jq -Rs . | sops set --value-stdin
+scripts/vault.mjs get <item> <field> --stdout | jq -Rs . | sops set --value-stdin
 deploy/env/production.enc.env '["<KEY>"]'` (sops 3.10+, docs/secrets.md "Vault to deploy").
 
 ### GitHub Actions (optional)

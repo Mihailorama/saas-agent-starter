@@ -21,16 +21,19 @@ Usage: [docs/secrets.md](../secrets.md).
   `/admin`, which is on only while `VAULT_ADMIN_TOKEN` is set. Attachments and Sends off, so the
   `/data` volume holds no secrets. Dev puts Caddy's local CA in front because `bw` refuses plain
   HTTP even on localhost; prod reuses the existing Caddy (opt-in site in `deploy/Caddyfile`).
-- **Connect: env only** (`BW_SERVER_URL`, API key `BW_CLIENTID`/`BW_CLIENTSECRET` for login),
-  documented side by side.
+- **Connect: no container**, the same `bw` login pointed at Bitwarden Cloud or an existing
+  server, documented side by side.
 - **`scripts/vault.mjs`, ~200 lines, no dependencies.** `get` prints a value only to a pipe,
-  `run` injects it into one command's environment, `put` reads stdin and pipes base64 JSON to
-  `bw create/edit`, `status`, `login`, `unlock`, `lock`. The session key lives in a 0600 file
+  `run` injects it into one command's environment (without `BW_*`), `put` adds a new field from
+  stdin (refuses to overwrite; `replace` does that), `status`, `unlock`, `lock`. `bw` runs in its
+  own CLI profile (`~/.config/agent-vault/bw`) logged in as a dedicated agent account that sees
+  only dev/staging collections, never the human's own `bw`. The session key lives in a 0600 file
   outside the repo and reaches `bw` through its environment, never argv. A locked vault is exit 2
   with an instruction for agents to stop and ask a human.
-- **Claude Code integration**: allow-list for `status/get/run/put`, deny for the session file and
-  for `bw get`/`bw list` (values would land in the transcript), `/save-secret` command, an
-  AGENTS.md section.
+- **Claude Code integration**: only `status` and `lock` are allow-listed; `get`, `run`, `put`,
+  `replace` ask the human each time (they reveal a value, execute a command, or write the vault).
+  Deny rules for the session dir and `bw get/list/export` prevent accidents; they are not a
+  security boundary, the agent account's membership is. `/save-secret` and an AGENTS.md section.
 - **SOPS stays the runtime path.** The vault is the source of truth; values reach the encrypted
   env file with `get | jq -Rs . | sops set --value-stdin`. No sync engine.
 
@@ -52,8 +55,9 @@ Usage: [docs/secrets.md](../secrets.md).
   and installed by each developer, never a dependency ([LICENSES](../LICENSES.md)).
 - Every wrapper call starts `bw` three or four times (status, sync, list, create/edit): about a
   second each on a normal machine.
-- An unlocked session gives the agent the whole account: teams give agents their own account with
-  access to only some collections (docs/secrets.md).
+- An unlocked session gives the agent its whole account, so that account must be a member of
+  only the collections it needs (docs/secrets.md).
+- Every secret read or write needs a human approval in Claude Code: slower, by design.
 - The `bw` item JSON for `put` is built by hand (login item, hidden custom fields); a change in the
   Bitwarden item schema needs the wrapper updated. Checked against `@bitwarden/cli` 2026.10.1 and
   Vaultwarden 1.37.5.

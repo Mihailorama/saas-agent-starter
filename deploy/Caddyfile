@@ -39,9 +39,15 @@
 # }
 
 # Profile vault (Vaultwarden, docs/secrets.md): its own domain, TLS required (the bw CLI refuses
-# plain HTTP). Uncomment and set VAULT_PUBLIC_URL=https://vault.example.com. /admin stays off
-# unless VAULT_ADMIN_TOKEN is set; restrict it further here if you keep it on.
+# plain HTTP). Uncomment and set VAULT_PUBLIC_URL=https://vault.example.com. /admin answers 403
+# except from VAULT_ADMIN_IPS (space-separated CIDRs; the default 127.0.0.1/32 matches no client,
+# so /admin stays closed until you set your address).
 # vault.example.com {
 # 	tls {$CADDY_TLS}
+# 	@admin {
+# 		path /admin /admin/*
+# 		not remote_ip {$VAULT_ADMIN_IPS}
+# 	}
+# 	respond @admin 403
 # 	reverse_proxy vault:80
 # }

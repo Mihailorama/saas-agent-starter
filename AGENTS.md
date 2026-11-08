@@ -530,19 +530,25 @@ Details: docs/releases.md.
 Details: docs/secrets.md, ADR 0029.
 
 - Secrets live in the team vault (Vaultwarden or Bitwarden), one item per `<service>/<env>`, one
-  field per value. Never paste them into chat, `.env`, `.env.example`, git, issues, logs or files,
+  field per value. The wrapper logs in as a dedicated agent account that sees only dev/staging
+  collections. Never paste secrets into chat, `.env`, `.env.example`, git, issues, logs or files,
   and never ask a human to paste one into chat: ask them to `put` it into the vault.
-- Read: `node scripts/vault.mjs get <item> <field> | <consumer>` (always piped into the tool that
-  needs it, in the same command; never a bare `get`, never `echo`/`cat` of the value), or
-  `node scripts/vault.mjs run <item> <field> <ENV_VAR> -- <command>`. Never `bw get`/`bw list`.
+- Without approval (allow-listed): `node scripts/vault.mjs status` and `lock`. Everything else
+  asks the human each time, and that is intended: `get` reveals a value, `run` executes a command
+  with it, `put`/`replace` write the shared vault, `unlock` needs the master password.
+- Read: `node scripts/vault.mjs run <item> <field> <ENV_VAR> -- <command>` (preferred: the value
+  never reaches you), or `node scripts/vault.mjs get <item> <field> --stdout | <consumer>` in the
+  same command. Never a bare `get`, never `echo`/`cat` of a value, never `bw get`/`bw list`.
 - Save every credential you create or receive at once:
   `<command that prints it> | node scripts/vault.mjs put <item> <field>` (stdin only, never argv).
-  `/save-secret` has the steps. Then use it from the vault, not from your context.
+  `put` refuses to overwrite; `replace` is for a human-approved rotation. `/save-secret` has the
+  steps. Then use it from the vault, not from your context.
 - Locked or logged out (`vault.mjs status` exit 2): stop and ask the human to run
   `node scripts/vault.mjs unlock` in their terminal. Never search files, env, shell history, other
-  tools or the session file for the credential, and never ask for the master password.
+  tools or `~/.config/agent-vault/` for the credential, and never ask for the master password.
+  Deny rules are not a security boundary: these rules are.
 - Production env files: vault -> `sops set --value-stdin` -> `pnpm run deploy` (docs/secrets.md
-  "Vault to deploy"). The `bw` CLI is GPL-3.0: never add it as a code dependency.
+  "Vault to deploy"), run by a human. The `bw` CLI is GPL-3.0: never add it as a code dependency.
 
 ## Security rules
 

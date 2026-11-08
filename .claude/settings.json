@@ -30,9 +30,7 @@
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(node scripts/vault.mjs status)",
-      "Bash(node scripts/vault.mjs get *)",
-      "Bash(node scripts/vault.mjs run *)",
-      "Bash(node scripts/vault.mjs put *)"
+      "Bash(node scripts/vault.mjs lock)"
     ],
     "deny": [
       "Read(./.env)",

@@ -2,8 +2,8 @@
 
 - **Vault: CI runs no real `bw` round trip** (docs/secrets.md, ADR 0029). The `vault` CI job only
   checks Vaultwarden (alive over TLS, admin off, signups closed); `scripts/vault.test.mjs` uses a
-  fake `bw`. The real round trip (invite, register, `unlock`, `put`, `get`, `run`, `lock` with
-  `@bitwarden/cli` 2026.10.1) passed once by hand on 2026-11-08, with registration done by a
+  fake `bw`. The real round trip (invite, register, `unlock`, `put`, `replace`, `get`, `run`, `lock` with
+  `@bitwarden/cli` 2026.10.1, agent profile) passed by hand on 2026-11-08, with registration done by a
   throwaway script (Bitwarden client crypto) because `bw` cannot register. Fix: pin `@bitwarden/cli`
   in that job via `npm exec`, register a test user over `/identity/accounts/register/finish`, run
   the wrapper. Catches a change in the `bw` item JSON or its HTTPS rules.

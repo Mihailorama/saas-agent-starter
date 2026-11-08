@@ -53,58 +53,75 @@ docker compose cp vault-tls:/data/caddy/pki/authorities/local/root.crt ~/.config
 
 ## Connect (an existing Bitwarden or Vaultwarden)
 
-No container. In your shell profile (not `.env`):
+No container: point the agent profile (below) at the server you already run, Bitwarden Cloud
+(`https://vault.bitwarden.com`, or `https://vault.bitwarden.eu`) or a Vaultwarden. Nothing in
+`.env`.
 
-```sh
-export BW_SERVER_URL=https://vault.example.com   # unset = bitwarden.com; https://vault.bitwarden.eu for EU
-```
-
-Log in with your account (master password + 2FA prompt), or with a personal API key for
-headless machines: `BW_CLIENTID` / `BW_CLIENTSECRET` from the web vault (Settings > Security >
-Keys), exported only for the `login` command. The API key logs in; the master password still
-unlocks.
-
-## Use it
+## Log in: a separate profile and a dedicated agent account
 
 Install the Bitwarden CLI yourself: `npm i -g @bitwarden/cli` or Bitwarden's standalone binary.
 It is GPL-3.0 and stays a separate tool, never a dependency of this repository
 ([LICENSES](LICENSES.md)).
 
+`scripts/vault.mjs` never uses your own `bw` login: it runs `bw` with its own CLI profile,
+`~/.config/agent-vault/bw` (`VAULT_BW_DIR`, passed as `BITWARDENCLI_APPDATA_DIR`), and strips
+every `BW_*` variable of your shell (session, API key) from what it starts. Log that profile in
+once, as a **dedicated agent account** (e.g. `agent@example.com`, invited like anyone else) that
+is a member of only an organization collection with dev/staging items, never production or your
+personal vault:
+
 ```sh
-node scripts/vault.mjs login                 # once per machine (human): server + login + unlock
-node scripts/vault.mjs unlock                # each session (human): master password prompt
-node scripts/vault.mjs status                # locked / unlocked, server, user (exit 2 unless unlocked)
-node scripts/vault.mjs get stripe/test STRIPE_SECRET_KEY | gh secret set STRIPE_SECRET_KEY
+alias bw-agent='BITWARDENCLI_APPDATA_DIR=~/.config/agent-vault/bw NODE_EXTRA_CA_CERTS=~/.config/agent-vault/ca.crt bw'
+bw-agent config server https://localhost:8222      # or your server; omit for bitwarden.com
+bw-agent login agent@example.com                   # or: bw-agent login --apikey (BW_CLIENTID/SECRET)
+node scripts/vault.mjs unlock                      # each session: master password prompt
+```
+
+(`NODE_EXTRA_CA_CERTS` only for the dev profile's private CA.) Set `VAULT_ORGANIZATION_ID` and
+`VAULT_COLLECTION_ID` in your shell so that new items land in that collection, where the team
+sees them.
+
+## Use it
+
+```sh
+node scripts/vault.mjs status                       # locked / unlocked (exit 2 unless unlocked)
+node scripts/vault.mjs get stripe/test STRIPE_SECRET_KEY --stdout | gh secret set STRIPE_SECRET_KEY
 node scripts/vault.mjs run stripe/test STRIPE_SECRET_KEY STRIPE_SECRET_KEY -- pnpm crm:sync
-printf %s "$value" | node scripts/vault.mjs put stripe/test STRIPE_SECRET_KEY
 some-cli create-token | node scripts/vault.mjs put github/ci GITHUB_TOKEN
-node scripts/vault.mjs lock                  # bw lock + delete the session file
+openssl rand -hex 32 | node scripts/vault.mjs replace app/staging BETTER_AUTH_SECRET   # rotation
+node scripts/vault.mjs lock                          # delete the session file, then bw lock
 ```
 
 - `unlock` runs `bw unlock --raw` and writes the session key to `~/.config/agent-vault/session`
   (`VAULT_SESSION_FILE`, mode 0600, outside the repo). Every later call passes it to `bw` in the
   environment: never in argv, shell history or `.env`. The file is refused if others can read it.
-- `get` writes the bare value to stdout and refuses when stdout is a terminal. `run` passes it to
-  one command as an environment variable, so the caller never sees it. `put` reads the value from
-  stdin only, builds the item JSON in memory and pipes it base64-encoded to `bw create` / `bw edit`.
-  An existing item is edited (other fields kept); a new one is created as a login item.
-- New items go to your personal vault, or to an organization collection when
-  `VAULT_ORGANIZATION_ID` and `VAULT_COLLECTION_ID` are set in the shell.
+- `get` prints the bare value only with the explicit `--stdout` flag and only into a pipe or
+  redirect, never to a terminal. `run` passes it to one command as an environment variable
+  (`BW_*` removed), so the caller never sees it.
+- `put` reads the value from stdin only and adds a field that does not exist yet (to a new or an
+  existing item); it refuses to overwrite. `replace` overwrites an existing field. Both build the
+  item JSON in memory and pipe it base64-encoded to `bw create` / `bw edit`.
+- Fields: custom fields (saved hidden, named like the env variable), or the login's `username` /
+  `password`, or `notes`.
 - Every call syncs first (about a second per `bw` start), so values saved elsewhere are seen.
 
 ## Agent rules
 
-The short version is in AGENTS.md, "Secrets for agents". Claude Code may run `status`, `get`,
-`run` and `put` without asking (`.claude/settings.json`); reading the session file and calling
-`bw get` / `bw list` directly are denied, so values do not land in the transcript. `get` must
-always feed a consumer in the same command: a bare `get` would print the value into the agent's
-context. `/save-secret` (`.claude/commands/save-secret.md`) walks an agent through saving a new
-credential. When the vault is locked (exit 2) the agent stops and asks a human to run `unlock`;
-it never searches files, env, shell history or other tools for the credential.
+The short version is in AGENTS.md, "Secrets for agents". In `.claude/settings.json` only
+`status` and `lock` run without asking. Everything that reveals, uses or changes a value asks the
+human each time: `get` (the value would enter the agent's context), `run` (it executes any
+command, with the secret in its environment), `put` and `replace` (they write to the shared
+vault), and `unlock` (a human's password). Reading `~/.config/agent-vault/` and calling `bw get`
+/ `bw list` / `bw export` directly are denied.
 
-Least privilege for teams: give agents their own vault account that is a member of only the
-collections they need (e.g. `dev` and `ci`), and keep production in a collection only people can
-read.
+**Deny rules are not a security boundary.** They stop an agent from doing these things by
+accident; an agent that runs arbitrary shell commands (a prompt-injected one, or any command a
+human approved) can still reach the session file or `bw`. The boundary is the agent account: it
+can only ever see the collections it is a member of, and only while a human has unlocked it.
+
+`/save-secret` (`.claude/commands/save-secret.md`) walks an agent through saving a new
+credential. When the vault is locked (exit 2) the agent stops and asks a human to run `unlock`; it
+never searches files, env, shell history or other tools for the credential.
 
 ## Vault to deploy
 
@@ -113,25 +130,27 @@ Production runtime env stays in SOPS-encrypted files (`deploy/env/<env>.enc.env`
 copy one, nothing is written to disk and nothing is in argv (sops 3.10+):
 
 ```sh
-node scripts/vault.mjs get app/production BETTER_AUTH_SECRET | jq -Rs . |
+node scripts/vault.mjs get app/production BETTER_AUTH_SECRET --stdout | jq -Rs . |
   sops set --value-stdin deploy/env/production.enc.env '["BETTER_AUTH_SECRET"]'
 pnpm run deploy -- production
 ```
 
 A new secret: generate it straight into the vault (`openssl rand -hex 32 | node
-scripts/vault.mjs put app/production BETTER_AUTH_SECRET`), then copy it as above. There is no sync
+scripts/vault.mjs put app/production BETTER_AUTH_SECRET`), then copy it as above. Production items
+belong in a collection only people can read, so a human runs these, not the agent account. There is no sync
 engine: the vault is the source of truth, the encrypted file is what the deploy reads, and a
 rotation updates both. CI keeps its own secrets (`gh secret set`, fed by `get`).
 
 ## Threat notes
 
-- An unlocked session is the whole vault for its lifetime. Lock (`vault lock`) when you are done;
-  agents only work while a human has unlocked. Anyone who can read your home directory, or run
-  code as your user, can use the session file, as with `BW_SESSION` itself.
-- `get` to a pipe and `run` keep values out of logs and transcripts, but the consumer can still
-  print them: pipe only into tools that do not echo input.
+- An unlocked session is the agent account's whole vault for its lifetime. Lock (`vault lock`)
+  when you are done; agents only work while a human has unlocked. Anyone who can read your home
+  directory, or run code as your user, can use the session file, as with `BW_SESSION` itself.
+- `get --stdout` into a pipe and `run` keep values out of logs and transcripts, but the consumer
+  can still print them: approve only consumers that do not echo input.
 - The admin page creates accounts and can delete them: keep `VAULT_ADMIN_TOKEN` empty except while
-  inviting, and use an argon2 hash. Signups stay closed. Settings saved on the admin page go to
+  inviting. In production the container refuses to start with anything but an argon2 hash, and
+  Caddy answers 403 on `/admin` except from `VAULT_ADMIN_IPS`. Signups stay closed. Settings saved on the admin page go to
   `/data/config.json` and override the environment: keep the configuration in env.
 - Vaultwarden is an unofficial, community server; it encrypts nothing on the server side that a
   Bitwarden server would not (vault data is end-to-end encrypted by the clients). Keep it on TLS

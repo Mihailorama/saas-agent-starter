@@ -921,7 +921,7 @@ services:
   # scripts/vault.mjs). docker compose --profile vault up -d ; its data lives in database
   # `vaultwarden` on our Postgres server, so pgBackRest covers it (docs/backups.md). No public
   # signups: the first and every further account is invited from /admin, which is on only while
-  # VAULT_ADMIN_TOKEN is set. An existing Bitwarden/Vaultwarden needs no container: BW_SERVER_URL.
+  # VAULT_ADMIN_TOKEN is set. An existing Bitwarden/Vaultwarden needs no container (docs/secrets.md).
   vault-db:
     logging: *logging
     profiles: [vault]
