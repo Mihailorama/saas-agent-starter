@@ -106,6 +106,16 @@
   crash-report dialog (reports attached to an error; its Sentry User Feedback widget support
   was broken, glitchtip-backend issues #403/#468). Re-check GlitchTip's user feedback support
   (or Umami's error tracking, announced for v3.5.0) before building anything.
+- **Formbricks is not in the privacy export/deletion** (`services/worker-py/worker/privacy.py`,
+  docs/privacy.md "Per-tool support"). With an Enterprise license the web identifies people in
+  Formbricks by user id, so a deletion request leaves their contact and responses there. Fix: a
+  Formbricks step in the privacy workflow (Management API: find the contact by `userId`, delete
+  it) behind `FORMBRICKS_URL` / `FORMBRICKS_API_KEY`, like the Chatwoot step.
+- **Config surveys: PostHog fields not verified against a live project** (`survey()` in
+  `scripts/journeys.mjs`). Unit-tested only: `targeting_flag_filters` with `is_date_before -14d` on
+  `first_seen_at`, `linked_flag_id`, `schedule: recurring` + `iteration_*`. Fix: run
+  `pnpm journeys:sync` against a test project once keys exist and compare with a survey made in
+  the UI; adjust the mapping if PostHog stores a field differently.
 - **PostHog `$ai_generation` events from the worker.** Thumbs feedback in PostHog AI
   observability attaches to `$ai_trace_id`, but the worker sends no generations to PostHog, so
   the trace is empty there (Langfuse gets it through OpenTelemetry). To add: in

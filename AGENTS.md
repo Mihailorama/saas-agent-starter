@@ -446,6 +446,10 @@ Details: docs/product-analytics.md, ADR 0012.
 - Never send free text, emails, names or URL ids as props; mark identifying events `pii: true`.
 - No own event tables, collectors, funnel jobs or click detectors: analytics, funnels, replay,
   heatmaps, surveys and alerts live in PostHog (default) or Umami (self-hosted fallback).
+- In-app surveys (NPS, CSAT) are config: the `surveys` block of
+  `config/journeys.json`, each linked to a `config/flags.json` flag, synced by `pnpm journeys:sync`.
+  Never build them by hand in the PostHog UI or store responses ourselves; Formbricks is the
+  env-only connector for the self-hosted contour (docs/product-analytics.md#surveys).
 - Before changing a flow, read its state: `pnpm journeys:report`, or the PostHog / Umami MCP
   (`.mcp.json.example`). After changing journeys, `pnpm journeys:sync --dry-run` shows what
   would change in the tools. Issues labelled `cjm-regression` or `from-users` come from real
