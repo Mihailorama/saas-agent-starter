@@ -5,6 +5,8 @@ to the organization's own provider if it brought one (BYO), applies the plan's m
 (priced models) or calls/tokens limit (unmetered models), stores the request and response
 content as S3 objects, emits one OpenTelemetry span with GenAI semantic-convention attributes
 (never prompt content), and appends one `ai_calls` row. Providers: worker/providers.py.
+A call may opt in to the organization's MCP tools (worker/mcp.py): a bounded tool loop where
+every tool call is its own `ai_calls` row with its arguments and result in S3.
 """
 
 import json
@@ -31,13 +33,17 @@ from worker.billing import (
     ensure_org_active,
 )
 from worker.flags import is_enabled
+from worker.mcp import McpConfig, Toolbox, toolbox
 from worker.posthog import PostHogAi
 from worker.providers import (
     BlockedEndpoint,
     Network,
     ProviderConfig,
+    ToolCall,
+    ToolSpec,
     byo_provider,
     is_rate_limited,
+    message_dict,
     price_from_litellm,
 )
 from worker.providers import Completion as Completion
@@ -56,12 +62,15 @@ latency_histogram = meter.create_histogram(
     "ai_call_latency_seconds", description="LLM call latency in seconds"
 )
 cost_counter = meter.create_counter("ai_cost_usd", description="LLM cost in USD")
+# MCP tool calls (worker/mcp.py); labels purpose and status only.
+tool_counter = meter.create_counter("ai_tool_calls", description="MCP tool calls by outcome")
 
 
 @dataclass(frozen=True)
 class LlmResult:
     call_id: uuid.UUID
     text: str
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -141,6 +150,11 @@ class ProviderBlocked(ApplicationError):
         super().__init__(message, type="ProviderBlocked", non_retryable=True)
 
 
+class ToolLoopLimit(ApplicationError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, type="ToolLoopLimit", non_retryable=True)
+
+
 class Gateway:
     def __init__(
         self,
@@ -155,9 +169,10 @@ class Gateway:
         posthog: PostHogAi | None = None,
         plans: Plans | None = None,
         byo: Byo | None = None,
+        mcp: McpConfig | None = None,
     ) -> None:
         self.pool, self.s3, self.contour = pool, s3, contour
-        self.posthog, self.plans, self.byo = posthog, plans, byo
+        self.posthog, self.plans, self.byo, self.mcp = posthog, plans, byo, mcp
         self.registry, self.providers = registry, providers
         self.configs = provider_configs or {}
         self.retention = timedelta(days=retention_days)
@@ -178,6 +193,7 @@ class Gateway:
         prompt_template_id: str,
         prompt_template_version: str,
         max_tokens: int,
+        mcp_tools: bool = False,
     ) -> LlmResult:
         """One LLM call, logged. The span joins the current OTel trace (Temporal propagates it).
 
@@ -190,17 +206,71 @@ class Gateway:
         retried once per configured `fallback`; every attempt gets its own ai_calls row.
         Provider errors are logged as status=error and re-raised. OrgSuspended (non-retryable)
         for an organization an operator suspended.
+
+        `mcp_tools=True` (flag `mcp-tools` on, MCP configured) offers the model the allowed tools
+        of the org's MCP servers: up to McpConfig.max_iterations model turns may ask for tools,
+        each turn and each tool call logged as its own ai_calls row; a model still asking after
+        the last turn raises ToolLoopLimit (non-retryable). The result is the final answer.
         """
         # A suspended org (docs/admin.md) gets no call, its own provider included.
         async with self.pool.acquire() as conn:
             await ensure_org_active(conn, org_id)
-        args = (purpose, messages, org_id, actor_id, prompt_template_id, prompt_template_version)
+        args = (purpose, model, provider, org_id, actor_id, prompt_template_id)
+        if (
+            not mcp_tools
+            or self.mcp is None
+            or not await is_enabled("mcp-tools", user_id=actor_id or org_id, org_id=org_id)
+        ):
+            return await self._llm(*args, prompt_template_version, max_tokens, messages, ())
+        # One trace for the whole loop: its model calls and tool calls are child spans.
+        loop = {"gen_ai.operation.name": "invoke_agent", "app.ai.purpose": purpose}
+        with tracer.start_as_current_span(f"invoke_agent {purpose}", attributes=loop):
+            async with toolbox(self.pool, org_id, self.mcp) as box:
+                history = list(messages)
+                for _ in range(self.mcp.max_iterations):
+                    res = await self._llm(
+                        *args, prompt_template_version, max_tokens, history, box.specs
+                    )
+                    if not res.tool_calls:
+                        return res
+                    history.append(Message("assistant", res.text, tool_calls=res.tool_calls))
+                    for tc in res.tool_calls:
+                        text = await self._tool(box, tc, res.call_id, purpose, org_id, actor_id)
+                        history.append(Message("tool", text, tool_call_id=tc.id))
+        raise ToolLoopLimit(
+            f"the model still asked for tools after {self.mcp.max_iterations} turns"
+        )
+
+    async def _llm(
+        self,
+        purpose: str,
+        model: str,
+        provider: str,
+        org_id: str,
+        actor_id: str | None,
+        prompt_template_id: str,
+        prompt_template_version: str,
+        max_tokens: int,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec],
+    ) -> LlmResult:
+        """Routing (BYO, registry, plan limits, fallback) and the logged call."""
+        args = (
+            purpose,
+            messages,
+            org_id,
+            actor_id,
+            prompt_template_id,
+            prompt_template_version,
+            max_tokens,
+            tools,
+        )
         byo = self.byo is not None and await is_enabled(
             "byo-llm-providers", user_id=actor_id or org_id, org_id=org_id
         )
         own = await self._byo_route(org_id, purpose) if byo else None
         if own is not None:
-            return await self._call(own, *args, max_tokens)
+            return await self._call(own, *args)
         tried: set[tuple[str, str]] = set()
         while True:
             allowed, route = self._route(purpose, provider, model)
@@ -210,7 +280,7 @@ class Gateway:
                 else:
                     await check_llm_usage(self.pool, self.plans, org_id, self.unmetered)
             try:
-                return await self._call(route, *args, max_tokens)
+                return await self._call(route, *args)
             except Exception as err:
                 tried.add((provider, model))
                 fb = allowed.fallback
@@ -317,6 +387,7 @@ class Gateway:
         prompt_template_id: str,
         prompt_template_version: str,
         max_tokens: int,
+        tools: Sequence[ToolSpec] = (),
     ) -> LlmResult:
         provider, model, price = route.provider, route.model, route.price
         call_id = uuid.uuid4()
@@ -335,7 +406,8 @@ class Gateway:
                         "id": prompt_template_id,
                         "version": prompt_template_version,
                     },
-                    "messages": [asdict(m) for m in messages],
+                    "messages": [message_dict(m) for m in messages],
+                    **({"tools": list(tools)} if tools else {}),
                 }
             ),
         )
@@ -375,7 +447,7 @@ class Gateway:
                 row["trace_id"], row["span_id"] = f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
             started = time.perf_counter()
             try:
-                completion = await route.call(model, messages, max_tokens)
+                completion = await route.call(model, messages, max_tokens, tools)
             except Exception as err:
                 # Class name only: provider error messages can echo request content.
                 span.set_attribute("error.type", type(err).__qualname__)
@@ -401,9 +473,7 @@ class Gateway:
                     span.set_attribute(key, value)
 
             try:
-                await self.s3.put(
-                    response_key, _json({"text": completion.text, **_meta(completion)})
-                )
+                await self.s3.put(response_key, _json(_response(completion)))
                 row["response_key"] = response_key
                 span.set_attribute(
                     "gen_ai.output.messages_ref", f"s3://{self.s3.bucket}/{response_key}"
@@ -428,7 +498,89 @@ class Gateway:
             await self._insert(row)
         if self.posthog:
             await self.posthog.capture_generation(row, messages, completion.text)
-        return LlmResult(call_id, completion.text)
+        return LlmResult(call_id, completion.text, completion.tool_calls)
+
+    async def _tool(
+        self,
+        box: Toolbox,
+        call: ToolCall,
+        llm_call_id: uuid.UUID,
+        purpose: str,
+        org_id: str,
+        actor_id: str | None,
+    ) -> str:
+        """One tool call the model asked for, logged as its own ai_calls row; returns what the
+        model sees. A tool that is not offered is never called; errors go back to the model."""
+        server = box.servers.get(call.name)
+        call_id = uuid.uuid4()
+        now = datetime.now(UTC)
+        prefix = f"{org_id}/{now:%Y/%m/%d}/{call_id}"
+        request_key, response_key = f"{prefix}/request.json", f"{prefix}/response.json"
+        await self.s3.put(
+            request_key,
+            _json(
+                {
+                    "purpose": purpose,
+                    "llm_call_id": str(llm_call_id),
+                    "server_id": server and server[0],
+                    "tool": call.name,
+                    "tool_call_id": call.id,
+                    "arguments": call.arguments,
+                }
+            ),
+        )
+        row: dict[str, Any] = {
+            "id": call_id,
+            "org_id": org_id,
+            "actor_id": actor_id,
+            "purpose": purpose,
+            # Model-chosen names are content until checked against the offered tools.
+            "provider": f"mcp:{server[1]}" if server else "mcp",
+            "request_model": call.name if server else "unknown",
+            "prompt_template_id": "mcp.tool",
+            "prompt_template_version": "1",
+            "request_key": request_key,
+            "content_expires_at": now + self.retention,
+            "contour": self.contour,
+        }
+        attributes = {
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": row["request_model"],
+            "app.ai.purpose": purpose,
+            "app.ai.call_id": str(call_id),
+            "app.ai.llm_call_id": str(llm_call_id),
+        }
+        with tracer.start_as_current_span(
+            f"execute_tool {row['request_model']}", kind=SpanKind.CLIENT, attributes=attributes
+        ) as span:
+            ctx = span.get_span_context()
+            if ctx.is_valid:
+                row["trace_id"], row["span_id"] = f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
+            started = time.perf_counter()
+            try:
+                if server is None:
+                    raise ToolNotOffered
+                result = await box.call(call)
+            except Exception as err:
+                span.set_attribute("error.type", type(err).__qualname__)
+                span.set_status(Status(StatusCode.ERROR))
+                row |= {"status": "error", "error_class": type(err).__qualname__}
+                text = f"tool error: {type(err).__qualname__}"
+                content: Any = {"error": type(err).__qualname__}
+            else:
+                row["status"] = "error" if result.is_error else "ok"
+                if result.is_error:
+                    row["error_class"] = "ToolResultError"
+                text, content = result.text, result.content
+            row["latency_ms"] = _ms(started)
+            try:
+                await self.s3.put(response_key, _json({"result": content}))
+                row["response_key"] = response_key
+            except Exception:
+                log.exception("tool call %s: storing the result failed", call_id)
+            tool_counter.add(1, {"purpose": purpose, "status": row["status"]})
+            await self._write(row)
+        return text
 
     async def _insert(self, row: dict[str, Any]) -> None:
         # An org's own provider can name any model: one label value for all of them.
@@ -438,6 +590,9 @@ class Gateway:
         latency_histogram.record(row["latency_ms"] / 1000, model)
         if row.get("cost") is not None and row.get("cost_currency") == "USD":
             cost_counter.add(float(row["cost"]), model)
+        await self._write(row)
+
+    async def _write(self, row: dict[str, Any]) -> None:
         columns = list(row)
         async with self.pool.acquire() as conn, conn.transaction():
             await conn.execute("select set_config('app.org_id', $1, true)", row["org_id"])
@@ -456,9 +611,17 @@ def _json(doc: dict[str, Any]) -> bytes:
     return json.dumps(doc, ensure_ascii=False).encode()
 
 
-def _meta(c: Completion) -> dict[str, Any]:
-    return {
+def _response(c: Completion) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "text": c.text,
         "model": c.model,
         "id": c.response_id,
         "usage": {"input_tokens": c.input_tokens, "output_tokens": c.output_tokens},
     }
+    if c.tool_calls:
+        out["tool_calls"] = [asdict(t) for t in c.tool_calls]
+    return out
+
+
+class ToolNotOffered(Exception):
+    """The model named a tool this call did not offer (not allowed, or no such tool)."""

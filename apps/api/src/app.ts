@@ -26,6 +26,7 @@ import { aiProviderRoutes } from './routes/ai-providers.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
 import { hookRoutes } from './routes/hooks.ts';
+import { mcpServerRoutes } from './routes/mcp-servers.ts';
 import { privacyRoutes } from './routes/privacy.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { securityRoutes } from './routes/security.ts';
@@ -220,6 +221,7 @@ export async function buildApp() {
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
   await app.register(aiProviderRoutes, { prefix: '/api/ai-providers' });
+  await app.register(mcpServerRoutes, { prefix: '/api/mcp-servers' });
   await app.register(hookRoutes, { prefix: '/api/hooks' });
   await app.register(billingRoutes, { prefix: '/api/billing' });
   await app.register(billingWebhookRoutes, { prefix: '/api/billing/webhooks' });

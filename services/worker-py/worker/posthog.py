@@ -9,11 +9,12 @@ Best effort: ai_calls stays the record; a PostHog outage never fails an LLM call
 
 import logging
 from collections.abc import Sequence
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
 import httpx2
+
+from worker.providers import Message, message_dict
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class PostHogAi:
         await self._http.aclose()
 
     async def capture_generation(
-        self, row: dict[str, Any], messages: Sequence[Any], output: str | None
+        self, row: dict[str, Any], messages: Sequence[Message], output: str | None
     ) -> None:
         props: dict[str, Any] = {
             "$ai_trace_id": row.get("trace_id") or str(row["id"]),
@@ -55,7 +56,7 @@ class PostHogAi:
         if row.get("cost") is not None and row.get("cost_currency") == "USD":
             props["$ai_total_cost_usd"] = float(row["cost"])
         if not self.privacy_mode:
-            props["$ai_input"] = [asdict(m) for m in messages]
+            props["$ai_input"] = [message_dict(m) for m in messages]
             if output is not None:
                 props["$ai_output_choices"] = [{"role": "assistant", "content": output}]
         body = {

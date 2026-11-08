@@ -31,7 +31,7 @@ jobs:
         with:
           tool: cargo-deny
       - name: Start infra
-        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock
+        run: docker compose --profile billing --profile mcp up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock mcp-server
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web exec playwright install --with-deps chromium
       - run: pnpm db:migrate

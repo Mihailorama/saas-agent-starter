@@ -6,6 +6,12 @@
       "owner": "@mihailorama",
       "default": false,
       "expires": "2027-03-31"
+    },
+    "mcp-tools": {
+      "description": "Settings page where organization admins connect external MCP servers whose allowed tools AI features may call.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
     }
   }
 }

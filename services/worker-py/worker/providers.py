@@ -14,12 +14,12 @@ cannot swap the target between check and connect.
 """
 
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from collections.abc import Awaitable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 import httpx2
@@ -38,9 +38,34 @@ BYO_KINDS: frozenset[str] = frozenset({"api", "aggregator", "custom"})
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    """A tool call the model asked for (OpenAI format); `arguments` is the model's JSON text."""
+
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True)
 class Message:
-    role: Literal["system", "user", "assistant"]
+    role: Literal["system", "user", "assistant", "tool"]
     content: str
+    # Only in a tool loop (worker/mcp.py): the assistant's tool calls, the answered call's id.
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
+
+
+def message_dict(m: Message) -> dict[str, Any]:
+    """OpenAI chat format; a message without tool fields is exactly {role, content}."""
+    out: dict[str, Any] = {"role": m.role, "content": m.content}
+    if m.tool_calls:
+        out["tool_calls"] = [
+            {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+            for c in m.tool_calls
+        ]
+    if m.tool_call_id is not None:
+        out["tool_call_id"] = m.tool_call_id
+    return out
 
 
 @dataclass(frozen=True)
@@ -52,10 +77,24 @@ class Completion:
     input_tokens: int | None
     output_tokens: int | None
     response_id: str | None = None
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
-# (model, messages, max_tokens) -> Completion
-Provider = Callable[[str, Sequence[Message], int], Awaitable[Completion]]
+# An OpenAI tool definition ({"type": "function", "function": {...}}), offered to the model.
+ToolSpec = Mapping[str, Any]
+
+
+class Provider(Protocol):
+    """(model, messages, max_tokens[, tools]) -> Completion; no tools = a plain completion."""
+
+    def __call__(
+        self,
+        model: str,
+        messages: Sequence[Message],
+        max_tokens: int,
+        tools: Sequence[ToolSpec] = (),
+        /,
+    ) -> Awaitable[Completion]: ...
 
 
 @dataclass(frozen=True)
@@ -121,25 +160,30 @@ def _completion(res: Any, prefix: str) -> Completion:
     model: str | None = res.model
     if model and model.startswith(f"{prefix}/"):  # LiteLLM prefixes some reported ids
         model = model[len(prefix) + 1 :]
+    calls: list[Any] = (getattr(choices[0].message, "tool_calls", None) or []) if choices else []
     return Completion(
         (choices[0].message.content or "") if choices else "",
         model,
         usage.prompt_tokens if usage else None,
         usage.completion_tokens if usage else None,
         res.id,
+        tuple(ToolCall(c.id, c.function.name, c.function.arguments or "{}") for c in calls),
     )
 
 
 def litellm_provider(cfg: ProviderConfig, client: AsyncOpenAI | None = None) -> Provider:
-    async def call(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+    async def call(
+        model: str, messages: Sequence[Message], max_tokens: int, tools: Sequence[ToolSpec] = ()
+    ) -> Completion:
         if not cfg.base_url:
             # Never None: LiteLLM would then use OPENAI_BASE_URL, ANTHROPIC_BASE_URL, ... from the
             # environment, or the vendor's default, and send the prompt there.
             raise NotConfigured(f"provider {cfg.name!r} has no base URL")
         res = await litellm.acompletion(
             model=f"{cfg.litellm}/{model}",
-            messages=[asdict(m) for m in messages],
+            messages=[message_dict(m) for m in messages],
             max_tokens=max_tokens,
+            **({"tools": list(tools)} if tools else {}),
             api_base=cfg.base_url,
             # Always explicit: LiteLLM would otherwise fall back to e.g. OPENAI_API_KEY from the
             # environment and send the operator's key to another endpoint.
@@ -224,7 +268,9 @@ async def byo_provider(
         raise BlockedEndpoint(f"base URL host is not allowed ({type(err).__name__})") from err
     cfg = replace(template, base_url=base_url, api_key=api_key)
 
-    async def call(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+    async def call(
+        model: str, messages: Sequence[Message], max_tokens: int, tools: Sequence[ToolSpec] = ()
+    ) -> Completion:
         http = httpx2.AsyncClient(
             transport=PinnedTransport(ip),
             trust_env=False,  # no proxy from the environment: we connect to the checked IP
@@ -235,7 +281,7 @@ async def byo_provider(
             base_url=base_url, api_key=api_key or "none", http_client=http, max_retries=0
         )
         try:
-            return await litellm_provider(cfg, client)(model, messages, max_tokens)
+            return await litellm_provider(cfg, client)(model, messages, max_tokens, tools)
         finally:
             await client.close()
 

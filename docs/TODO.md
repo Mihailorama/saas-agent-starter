@@ -1,5 +1,17 @@
 # Known limitations / backlog
 
+- **MCP tools: a server that dies mid-loop leaves no `ai_calls` row for that tool call**
+  (`services/worker-py/worker/mcp.py`, `Gateway._tool`). The SDK's transport task fails and
+  cancels the activity through its task group, so `_tool` never writes the row; Temporal retries
+  the activity. Fix: run each `call_tool` in its own task (anyio task group) so the failure
+  surfaces as an exception in `_tool`, then log it as `status=error`. Test: stop the reference
+  server between two tool calls in `tests/test_mcp.py`.
+- **MCP tools: admins type tool names; no "test connection"** (docs/mcp.md "Not covered"). The
+  API never connects out. Fix: a small Temporal workflow (`ListMcpToolsWorkflow`) the settings
+  page starts, returning the server's tool names through the SSRF pin; offer them as checkboxes.
+- **MCP tools: no OAuth servers, no a11y/e2e coverage of the settings page** (flag off in e2e,
+  like AI providers). Fix: OAuth via the SDK's client auth provider with tokens stored like the
+  auth header; e2e with `VITE_FLAGS_ON=mcp-tools` on the consent build or a third dev server.
 - **Operator console: no Chatwoot link per user/organization** (docs/admin.md). The integration
   stores none (ADR 0013). If support wants one: read the contact by `identifier` (user id) through
   the Chatwoot API in the worker or API and link `/app/accounts/<id>/contacts/<contact id>`; verify

@@ -156,6 +156,25 @@ services:
     profiles: [billing]
     ports: ["127.0.0.1:${STRIPE_MOCK_PORT:-12111}:12111"]
 
+  # The MCP project's reference server (MIT / Apache-2.0), unmodified, as an external tool server
+  # for local dev and tests (`--profile mcp`, docs/mcp.md "Calling external tools"). Fetched from
+  # npm at start, pinned. Connect it as http://mcp-server:3001/mcp from the worker in compose, or
+  # http://localhost:${MCP_SERVER_PORT:-3001}/mcp from a worker on the host (MCP_ALLOWED_CIDRS).
+  mcp-server:
+    logging: *logging
+    mem_limit: 256m
+    image: node:24-alpine
+    profiles: [mcp]
+    command: ["npx", "-y", "@modelcontextprotocol/server-everything@2.0.1", "streamableHttp"]
+    environment:
+      PORT: "3001"
+    ports: ["127.0.0.1:${MCP_SERVER_PORT:-3001}:3001"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "3001"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
   migrate:
     logging: *logging
     mem_limit: 256m
@@ -247,6 +266,11 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
       # Organization-owned providers: private CIDRs a custom base URL may use (on-prem servers).
       AI_BYO_ALLOWED_CIDRS: ${AI_BYO_ALLOWED_CIDRS:-}
+      # External MCP tools (docs/mcp.md): private CIDRs a server URL may use (with --profile mcp:
+      # this compose network's range), and the tool loop's bounds.
+      MCP_ALLOWED_CIDRS: ${MCP_ALLOWED_CIDRS:-}
+      MCP_TOOL_MAX_ITERATIONS: ${MCP_TOOL_MAX_ITERATIONS:-5}
+      MCP_TOOL_TIMEOUT_SECONDS: ${MCP_TOOL_TIMEOUT_SECONDS:-30}
       # Service desk triage (docs/support.md). Tokens empty = dry run (logs only).
       CHATWOOT_URL: ${CHATWOOT_URL:-} # with --profile support: http://chatwoot:3000
       CHATWOOT_PUBLIC_URL: ${CHATWOOT_PUBLIC_URL:-}
