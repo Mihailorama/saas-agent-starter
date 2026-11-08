@@ -5,42 +5,37 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
   RouterProvider,
   redirect,
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { Crumb } from '@/components/patterns/app-shell';
 import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { devRoutes } from '@/dev/routes';
 import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
-import { AdminShell } from '@/pages/admin';
-import { AdminOrgPage, AdminOrgsPage } from '@/pages/admin-orgs';
-import { AdminUserPage, AdminUsersPage } from '@/pages/admin-users';
-import { AiCallsPage } from '@/pages/ai-calls';
-import { AiProvidersPage } from '@/pages/ai-providers';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
-import { ApiKeysPage } from '@/pages/api-keys';
-import { BillingPage } from '@/pages/billing';
-import { PrivacyPage } from '@/pages/privacy';
-import { ProjectPage } from '@/pages/project';
-import { ProjectsPage } from '@/pages/projects';
 import { ResetPasswordPage } from '@/pages/reset-password';
 import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
 import { SignInPage, safeRedirect } from '@/pages/sign-in';
 import { TwoFactorPage } from '@/pages/two-factor';
-import { WebhooksPage } from '@/pages/webhooks';
 
+// App pages load on first visit (own chunks: data table, forms, zod); the bundle budget in
+// lighthouserc.cjs keeps the entry chunk from regrowing.
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1 } } });
 
 const rootRoute = createRootRoute({
   component: () => (
-    <>
+    <TooltipProvider>
       <Outlet />
-      <Toaster richColors closeButton />
-    </>
+      <Toaster closeButton />
+    </TooltipProvider>
   ),
 });
 
@@ -106,49 +101,57 @@ const appRoute = createRoute({
 const projectsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/',
-  component: ProjectsPage,
+  staticData: { crumbs: [{ label: 'Projects' }] },
+  component: lazyRouteComponent(() => import('@/pages/projects'), 'ProjectsPage'),
 });
 
 const projectRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/projects/$projectId',
-  component: ProjectPage,
+  staticData: { crumbs: [{ label: 'Projects', to: '/' }, { label: 'Project' }] },
+  component: lazyRouteComponent(() => import('@/pages/project'), 'ProjectPage'),
 });
 
 const aiCallsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/ai-calls',
-  component: AiCallsPage,
+  staticData: { crumbs: [{ label: 'AI calls' }] },
+  component: lazyRouteComponent(() => import('@/pages/ai-calls'), 'AiCallsPage'),
 });
 
 const billingRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/billing',
-  component: BillingPage,
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Billing' }] },
+  component: lazyRouteComponent(() => import('@/pages/billing'), 'BillingPage'),
 });
 
 const apiKeysRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/api-keys',
-  component: ApiKeysPage,
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'API keys' }] },
+  component: lazyRouteComponent(() => import('@/pages/api-keys'), 'ApiKeysPage'),
 });
 
 const webhooksRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/webhooks',
-  component: WebhooksPage,
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Webhooks' }] },
+  component: lazyRouteComponent(() => import('@/pages/webhooks'), 'WebhooksPage'),
 });
 
 const aiProvidersRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/ai-providers',
-  component: AiProvidersPage,
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'AI providers' }] },
+  component: lazyRouteComponent(() => import('@/pages/ai-providers'), 'AiProvidersPage'),
 });
 
 const securityRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/security',
-  component: SecurityPage,
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Security' }] },
+  component: SecurityPage, // eager: the shell imports its 2FA policy query anyway
 });
 
 // Operator console (docs/admin.md): its own layout, outside the customer shell. The API decides
@@ -157,32 +160,33 @@ const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/admin',
   beforeLoad: requireSession,
-  component: AdminShell,
+  component: lazyRouteComponent(() => import('@/pages/admin'), 'AdminShell'),
 });
 const adminOrgsRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: '/',
-  component: AdminOrgsPage,
+  component: lazyRouteComponent(() => import('@/pages/admin-orgs'), 'AdminOrgsPage'),
 });
 const adminOrgRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: '/orgs/$orgId',
-  component: AdminOrgPage,
+  component: lazyRouteComponent(() => import('@/pages/admin-orgs'), 'AdminOrgPage'),
 });
 const adminUsersRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: '/users',
-  component: AdminUsersPage,
+  component: lazyRouteComponent(() => import('@/pages/admin-users'), 'AdminUsersPage'),
 });
 const adminUserRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: '/users/$userId',
-  component: AdminUserPage,
+  component: lazyRouteComponent(() => import('@/pages/admin-users'), 'AdminUserPage'),
 });
 const privacyRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/privacy',
-  component: PrivacyPage,
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Privacy' }] },
+  component: lazyRouteComponent(() => import('@/pages/privacy'), 'PrivacyPage'),
 });
 
 const router = createRouter({
@@ -204,6 +208,11 @@ const router = createRouter({
       aiProvidersRoute,
       billingRoute,
     ]),
+    // Dev-only UI gallery (/dev/ui): dead code in production builds, so Vite drops it (and the
+    // gallery chunks); the cast keeps the routes in the types for typed links.
+    ...(import.meta.env.DEV
+      ? devRoutes(rootRoute)
+      : ([] as unknown as ReturnType<typeof devRoutes<typeof rootRoute>>)),
   ]),
 });
 
@@ -214,6 +223,10 @@ router.subscribe('onResolved', () => page(router.state.matches.at(-1)?.fullPath 
 declare module '@tanstack/react-router' {
   interface Register {
     router: typeof router;
+  }
+  interface StaticDataRouteOption {
+    /** Breadcrumb trail shown in the app shell header; the last one is the current page. */
+    crumbs?: Crumb[];
   }
 }
 

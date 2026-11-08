@@ -7,7 +7,10 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 
 - **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
-- **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
+- **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode; a UI kit of shadcn/ui
+  components and page patterns (app shell, data table, forms, empty/loading/error states,
+  command palette), a dev gallery, and CI checks for accessibility, visual regressions and
+  design anti-patterns ([docs/ui.md](docs/ui.md)).
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
   Rust hot paths via PyO3 with a pure-Python fallback.
 - **AI layer**: one logged gateway for every LLM call (Anthropic, any OpenAI-compatible
@@ -101,8 +104,20 @@ pnpm check
 
 Format, lint, typecheck, tests (TS, Python, Rust; integration tests hit the real compose
 services, including a test proving tenant A cannot read tenant B even with a buggy query),
-license gate across npm, PyPI and crates.io, and a Playwright smoke test.
+license gate across npm, PyPI and crates.io, and Playwright end-to-end tests with axe
+accessibility checks.
 `pnpm bench` prints the Rust vs Python speedup of the example hot path.
+
+## UI
+
+`pnpm dev`, then http://localhost:5173/dev/ui: every component and pattern of the kit in light
+and dark, plus reference screens (list, detail, form, settings, empty, loading, error) in the
+app shell. Build new screens from them; [DESIGN.md](DESIGN.md) has the tokens and rules,
+[docs/ui.md](docs/ui.md) the screen checklist. CI checks every page with axe (WCAG 2.2 AA, light
+and dark), compares screenshots with a baseline from `main` (kept as a workflow artifact, not in
+git; accept an intended change with the `visual-change-approved` label), runs Lighthouse on the
+public pages and the [impeccable](https://github.com/pbakaus/impeccable) design detector.
+Agents with the impeccable skill installed read [PRODUCT.md](PRODUCT.md) and DESIGN.md.
 
 ## Deploy
 

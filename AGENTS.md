@@ -69,7 +69,10 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   src/pages/          sign-in, shell (sidebar, org switcher), projects, project detail,
                       admin*.tsx = operator console at /admin (docs/admin.md)
   src/components/ui/  shadcn/ui components (copied source; edit freely)
-  e2e/                Playwright smoke
+  src/components/patterns/  app shell, page header, data table, states, confirm dialog,
+                      settings section, command palette (docs/ui.md)
+  src/dev/            UI gallery + reference screens at /dev/ui (dev builds only)
+  e2e/                Playwright smoke, axe a11y on every page; visual.spec.ts (own config)
 apps/site           Astro static marketing site + blog (docs/marketing.md): reuses web's index.css
                     and analytics.ts; SEO head in src/components/Seo.astro, posts in src/content/blog
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), withOperatorRead(), migrate script
@@ -151,6 +154,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Sentry protocol for errors: Sentry SDKs (MIT) in web/API/worker; GlitchTip (MIT) locally,
   Sentry SaaS/self-hosted for bigger installs. Only the DSN differs.
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
+- UI kit: shadcn/ui via its CLI + our patterns and a dev-only `/dev/ui` gallery (Storybook and
+  Ladle fail the license gate); axe, visual regression, Lighthouse, impeccable in CI (ADR 0023).
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - LiteLLM SDK as the one path to model providers; vendor CLI subscriptions (default mode) in a
   separate llm-cli container; vLLM for multi-user self-hosting, Ollama for dev (ADR 0024,
@@ -203,8 +208,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
    Validate `params`/`body`/`response` with Zod. Register it in `src/app.ts`.
 4. Tests: add integration tests in `apps/api/test/` covering success, 400, 401/403 and
    cross-tenant 404.
-5. Web: add a page in `apps/web/src/pages/`, a route in `src/main.tsx`, a nav link in
-   `pages/shell.tsx`. Use TanStack Query for data and shadcn/ui components.
+5. Web: add a page in `apps/web/src/pages/`, a route in `src/main.tsx` (with
+   `staticData.crumbs`), a nav item in `pages/shell.tsx`. Start from the matching reference
+   screen (docs/ui.md); TanStack Query for data, catalog components only (UI rules below).
 6. Privacy: if rows can hold personal data, add the table to the export and the deletion in
    `services/worker-py/worker/privacy.py` and its decision to the data map in docs/privacy.md.
 7. `pnpm check`.
@@ -433,6 +439,30 @@ Details: docs/marketing.md, ADR 0021.
 - No media in git: images by absolute URL. Keep the Lighthouse budgets green; do not lower them.
 - `pnpm geo:check` is manual and uses the claude CLI on a subscription with the model from
   `config/geo.json`; never add an API key or a CI job for it.
+
+## UI rules
+
+Details: docs/ui.md, DESIGN.md, ADR 0023. Look at `/dev/ui` (`pnpm dev`) before building UI.
+
+- Build screens only from `apps/web/src/components/ui` and `components/patterns`. Missing
+  something? Add the shadcn/ui component with its CLI (`pnpm dlx shadcn@latest add <name>` in
+  `apps/web`, then `cn` from `@/lib/utils`, check its dependencies' licenses) and add it to the
+  gallery (`src/dev/ui-gallery.tsx`). No other component libraries.
+- Tokens only: colors through the semantic Tailwind tokens (`bg-background`, `text-muted-foreground`,
+  `bg-primary`, `text-destructive`...), spacing and sizes from the Tailwind scale, radius from
+  `--radius`. No hex/rgb, palette classes (`text-gray-500`), arbitrary values (`text-[13px]`) or
+  inline styles in app code; new tokens go into `src/index.css` and DESIGN.md.
+- Every data screen covers loading, empty and error (`QueryView`, `DataTable`, `EmptyState`,
+  `ErrorState`); destructive actions go through `ConfirmDialog`; it works in light and dark
+  and at 390px wide.
+- Copy: sentence case, a verb on every button ("Create project"), say what happened and what to
+  do next, no blame, no exclamation marks, no invented facts or customers.
+- `pnpm e2e` runs axe on every page and the gallery; add new pages to `e2e/a11y.spec.ts`. A
+  visual change is accepted with the `visual-change-approved` PR label, never by committing
+  screenshots (docs/ui.md).
+- When the `impeccable` skill is installed (`npx impeccable install`, docs/ui.md), run
+  `/impeccable critique` and `/impeccable audit` on the screens you changed and fix what they
+  find. Do not vendor the skill into this repository.
 
 ## PRs and releases
 
