@@ -181,7 +181,7 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   tracker client in the worker; triage is a Temporal workflow, no own ticket table (ADR 0013).
 - External tools: remote MCP servers per organization through the official `mcp` SDK
   (Streamable HTTP, via LiteLLM's `mcp` extra), a bounded opt-in tool loop in the gateway; the
-  `mcp` profile runs the reference `server-everything` for dev/tests (ADR 0026, docs/mcp.md).
+  `mcp` profile runs the reference `server-everything` for dev/tests (ADR 0028, docs/mcp.md).
 - Web API types generated from the API's OpenAPI document (`openapi-typescript`), calls through
   `openapi-fetch`; no hand-written response types (`apps/web/src/lib/api.ts`).
 

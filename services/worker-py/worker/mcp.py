@@ -1,4 +1,4 @@
-"""External MCP tools for the AI gateway (docs/mcp.md "Calling external tools", ADR 0026).
+"""External MCP tools for the AI gateway (docs/mcp.md "Calling external tools", ADR 0028).
 
 An organization connects remote MCP servers (`mcp_servers`: URL, allowed tool names, an
 encrypted auth header). For a call that opts in, the gateway opens one session per enabled

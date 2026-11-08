@@ -3,7 +3,7 @@
 ## Calling external tools
 
 An AI purpose can let the model call tools on remote MCP servers that an organization connects.
-Why it is built this way: [ADR 0026](adr/0026-mcp-tools.md).
+Why it is built this way: [ADR 0028](adr/0028-mcp-tools.md).
 
 ### How it works
 

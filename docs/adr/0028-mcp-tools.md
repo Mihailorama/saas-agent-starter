@@ -1,4 +1,4 @@
-# 0026. External MCP tools in the AI gateway
+# 0028. External MCP tools in the AI gateway
 
 Status: accepted
 
