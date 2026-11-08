@@ -427,7 +427,7 @@ Details: docs/product-analytics.md, ADR 0012.
 - Never send free text, emails, names or URL ids as props; mark identifying events `pii: true`.
 - No own event tables, collectors, funnel jobs or click detectors: analytics, funnels, replay,
   heatmaps, surveys and alerts live in PostHog (default) or Umami (self-hosted fallback).
-- In-app surveys (NPS, CSAT, micro-questions) are config: the `surveys` block of
+- In-app surveys (NPS, CSAT) are config: the `surveys` block of
   `config/journeys.json`, each linked to a `config/flags.json` flag, synced by `pnpm journeys:sync`.
   Never build them by hand in the PostHog UI or store responses ourselves; Formbricks is the
   env-only connector for the self-hosted contour (docs/product-analytics.md#surveys).

@@ -11,7 +11,8 @@ const CALL = /(?<![.\w])(isEnabled|useFlag|is_enabled)\(\s*/g;
 
 /**
  * Pure check: `flags` from config/flags.json, `sources` as [path, text] pairs, `linked`: flags
- * that PostHog surveys are linked to (config/journeys.json), which count as used.
+ * that PostHog surveys are linked to (config/journeys.json): they count as used and, being the
+ * survey's permanent on/off switch, never expire.
  */
 export function checkFlags(
   flags,
@@ -33,7 +34,7 @@ export function checkFlags(
     const date = /^\d{4}-\d{2}-\d{2}$/.test(f.expires ?? '') && new Date(`${f.expires}T00:00:00Z`);
     if (!date || date.toISOString().slice(0, 10) !== f.expires) {
       errors.push(`catalog: ${name}.expires must be a date (YYYY-MM-DD)`);
-    } else if (f.expires < today) {
+    } else if (f.expires < today && !linked.includes(name)) {
       warnings.push(
         `flag "${name}" expired on ${f.expires} (owner ${f.owner}): finish the rollout, remove it`,
       );

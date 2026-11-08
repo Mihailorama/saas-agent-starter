@@ -75,7 +75,7 @@ test('flags:sync creates new flags at the catalog default rollout', () => {
   assert.equal(newFlag('a', flag).key, 'a');
 });
 
-test('flags linked to surveys count as used', () => {
-  const r = checkFlags({ 'nps-survey': flag }, [], today, ['nps-survey']);
+test('flags linked to surveys count as used and do not expire', () => {
+  const r = checkFlags({ 'nps-survey': flag }, [], '2028-01-01', ['nps-survey']);
   assert.deepEqual(r.warnings, []);
 });

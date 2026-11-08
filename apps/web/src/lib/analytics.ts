@@ -27,7 +27,7 @@ const config = {
   ga4: env.VITE_GA4_ID,
   ym: { id: env.VITE_YM_ID, webvisor: env.VITE_YM_WEBVISOR === 'true' },
   langfuse: { key: env.VITE_LANGFUSE_PUBLIC_KEY, host: env.VITE_LANGFUSE_HOST },
-  formbricks: { envId: env.VITE_FORMBRICKS_ENV_ID, host: env.VITE_FORMBRICKS_API_HOST },
+  formbricks: { workspaceId: env.VITE_FORMBRICKS_WORKSPACE_ID, host: env.VITE_FORMBRICKS_API_HOST },
 };
 
 /** A sink maps `page_view` to its native page view and everything else to a custom event. */
@@ -40,7 +40,7 @@ type Win = Window & {
 };
 const w = window as Win;
 
-const formbricksOn = Boolean(config.formbricks.envId && config.formbricks.host);
+const formbricksOn = Boolean(config.formbricks.workspaceId && config.formbricks.host);
 const analyticsNeedsConsent = Boolean(
   config.posthog.key || config.ga4 || config.ym.id || formbricksOn,
 );
@@ -89,8 +89,9 @@ function applyIdentity() {
   if (!who) return;
   // first_seen_at: survey targeting "active for N days" (config/journeys.json activeForDays).
   posthog?.identify(who.userId, undefined, { first_seen_at: new Date().toISOString() });
-  void formbricks?.setUserId(who.userId); // contact targeting: Formbricks Enterprise
-  if (who.orgId) void formbricks?.setAttribute('orgId', who.orgId);
+  // Contacts are Formbricks Enterprise: Community Edition rejects these, which is fine.
+  formbricks?.setUserId(who.userId).catch(() => {});
+  if (who.orgId) formbricks?.setAttribute('orgId', who.orgId).catch(() => {});
 }
 
 function loadScript(src: string, attrs: Record<string, string> = {}, onload?: () => void) {
@@ -142,14 +143,14 @@ async function posthogSink(): Promise<Sink> {
 }
 
 /** Survey trigger events in config/journeys.json, sent as Formbricks actions of the same key. */
-const surveyTriggers = new Set<string>(
-  journeys.surveys.map((s) => (s.trigger as { event?: string }).event ?? ''),
+const surveyTriggers = new Set(
+  journeys.surveys.map((s) => (s.trigger as { event?: string }).event).filter(Boolean),
 );
 async function formbricksSink(): Promise<Sink> {
   const { default: fb } = await import('@formbricks/js');
-  // VITE_FORMBRICKS_ENV_ID holds the Workspace ID. Not awaited: the SDK queues calls until its
-  // script from the Formbricks host has loaded, and a failed load must not stop the other sinks.
-  void fb.setup({ workspaceId: config.formbricks.envId!, appUrl: config.formbricks.host! });
+  // Not awaited: the SDK queues calls until its script from the Formbricks host has loaded, and a
+  // failed load must not stop the other sinks.
+  void fb.setup({ workspaceId: config.formbricks.workspaceId!, appUrl: config.formbricks.host! });
   formbricks = fb;
   applyIdentity();
   return (name) => {

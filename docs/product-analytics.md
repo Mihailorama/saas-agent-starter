@@ -185,7 +185,7 @@ ever sends generations, in line with ADR 0008 (content stays in our S3 only).
 
 ## Surveys
 
-In-app surveys (NPS, CSAT, one-question micro-surveys) are config, like journeys: the `surveys`
+In-app surveys (NPS, CSAT) are config, like journeys: the `surveys`
 block of `config/journeys.json`. Responses stay in the survey tool; there is no survey or
 response table of ours.
 
@@ -196,10 +196,9 @@ response table of ours.
 | Triggers   | catalog event and/or URL, wait period, re-ask schedule, linked flag                     | Formbricks actions: our survey trigger events are sent as actions with the same key, plus page views |
 | Identity   | PostHog person = user id, `first_seen_at` set once                                      | `setUserId(user id)`, attribute `orgId`; never email or name                                         |
 | Responses  | PostHog Surveys (results, insights, replays), deleted with the person (docs/privacy.md) | Formbricks                                                                                           |
-| Env        | `POSTHOG_*` (sync), `VITE_POSTHOG_*` (web)                                              | `VITE_FORMBRICKS_ENV_ID`, `VITE_FORMBRICKS_API_HOST` (web build)                                     |
+| Env        | `POSTHOG_*` (sync), `VITE_POSTHOG_*` (web)                                              | `VITE_FORMBRICKS_WORKSPACE_ID`, `VITE_FORMBRICKS_API_HOST` (web build)                               |
 
-Each entry: `id`, `type` (`nps` 0-10 numbers, `csat` 1-5 emoji, `question` single choice with
-`choices` or open text without), `question`, optional `followUp` (open text after the rating),
+Each entry: `id`, `type` (`nps` 0-10 numbers, `csat` 1-5 emoji), `question`, optional `followUp` (open text after the rating),
 `trigger` (`event` from `config/events.json`, not `pii`, and/or `url`, matched as a substring),
 `activeForDays` (only people first seen that many days ago or earlier), `waitDays` (skip people
 who saw any survey in the last N days), `repeat` (`{ everyDays, times }`; absent = ask once) and
@@ -212,16 +211,23 @@ it shows only where the flag is on; create the flag first with `pnpm flags:sync`
 `conditions.seenSurveyWaitPeriodInDays`, `schedule` `once`/`recurring` with
 `iteration_frequency_days` and `iteration_count`, and for `activeForDays` a
 `targeting_flag_filters` group on the person property `first_seen_at` (`is_date_before -Nd`).
-`identify()` sets `first_seen_at` with `$set_once`, so people who signed in before this shipped
-count from their first visit after it. Sync compares each field with what PostHog has, PATCHes
-only the changed ones (printed by name, also with `--dry-run`) and keeps question ids, so
-responses stay joined to their question.
+`identify()` sets `first_seen_at` with `$set_once` once PostHog is loaded, i.e. on the person's
+first consented visit after this ships; everyone already signed up counts from then, so the NPS
+(`activeForDays: 14`) reaches no one in the first 14 days after rollout. PostHog does not return
+`targeting_flag_filters` (it returns the flag it built, `targeting_flag`), so sync compares with
+that, and creating that flag needs `feature_flag:write` on the key. Removing `activeForDays`
+sends `remove_targeting_flag`. Sync compares each field with what PostHog has (the managed
+`conditions` keys exactly, so a removed trigger counts), PATCHes only the changed ones (printed by
+name, also with `--dry-run`) and keeps a question's id only while its kind of answer (type and
+scale) stays the same, so responses stay joined and 0-10 and 1-5 answers never share a question.
+Every survey's flag is looked up before anything is written: a missing one stops the sync (dry run:
+reported, shown as `<missing flag ...>`).
 
 Add a survey:
 
 1. Add the entry to `surveys` and a flag (`"default": false`, owner, expiry) to
    `config/flags.json`; `pnpm check:events` validates the entry, `pnpm check:flags` counts the
-   linked flag as used.
+   linked flag as used and exempts it from expiry warnings (it is the survey's permanent switch).
 2. `pnpm flags:sync`, then `pnpm journeys:sync --dry-run` to see the plan, then
    `pnpm journeys:sync`.
 3. Roll out with the flag in PostHog (internal users, then a percentage), like any flag
@@ -229,6 +235,8 @@ Add a survey:
    it by deleting the entry and archiving `Survey: <id>` in PostHog (sync never deletes).
 
 Edit surveys in config, never in the PostHog UI: the next sync overwrites the fields it manages.
+Sync matches by name, so a survey made by hand and named `Survey: <id>` is taken over by the
+config entry with that id.
 
 ### Formbricks (connect your own)
 
@@ -239,7 +247,7 @@ heavier than this whole starter, so there is no compose profile: run it on its o
 
 1. In Formbricks, copy the Workspace ID and the SDK connection URL (Settings -> Workspace ->
    Web & Mobile SDK).
-2. Set `VITE_FORMBRICKS_ENV_ID` (the Workspace ID) and `VITE_FORMBRICKS_API_HOST` (that URL)
+2. Set `VITE_FORMBRICKS_WORKSPACE_ID` (the Workspace ID) and `VITE_FORMBRICKS_API_HOST` (that URL)
    for the web build, and add the URL's origin to `ANALYTICS_ORIGINS` (CSP script and connect).
    Both empty = off: nothing loads, no request.
 3. Create the surveys and their actions in Formbricks. The web sends page views and the
@@ -263,7 +271,8 @@ median time to convert; not alerted on).
 
 - PostHog (`POSTHOG_APP_HOST` e.g. `https://eu.posthog.com`, `POSTHOG_PROJECT_ID`,
   `POSTHOG_PERSONAL_API_KEY` with scopes `insight:write`, `alert:write`, `survey:write`,
-  `feature_flag:read`, `hog_function:write`): one funnel insight `Journey: <name>` (ordered steps, conversion
+  `feature_flag:write` (flag lookup, and the targeting flag behind `activeForDays`),
+  `hog_function:write`): one funnel insight `Journey: <name>` (ordered steps, conversion
   window), one hourly threshold alert (`FunnelsAlertConfig`, `conversion_from_start` below
   `minConversion`), the "Report a problem / suggest an improvement" survey (feedback tab
   widget on every page), the "AI answer feedback" API survey, the `surveys` of the config

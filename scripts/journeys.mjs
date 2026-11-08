@@ -111,13 +111,14 @@ export const survey = (s, flagId, found) => ({
   type: 'popover',
   linked_flag_id: flagId,
   questions: [
-    RATINGS[s.type]
-      ? { type: 'rating', question: s.question, ...RATINGS[s.type] }
-      : s.choices
-        ? { type: 'single_choice', question: s.question, choices: s.choices }
-        : { type: 'open', question: s.question },
+    { type: 'rating', question: s.question, ...RATINGS[s.type] },
     ...(s.followUp ? [{ type: 'open', question: s.followUp, optional: true }] : []),
-  ].map((q, i) => ({ ...q, id: found?.questions?.[i]?.id })), // keep ids: responses stay joined
+  ].map((q, i) => {
+    // Keep the id (responses stay joined) only for the same kind of answer: a 0-10 question
+    // turned 1-5 gets a new id, so the two scales never mix in one column.
+    const was = found?.questions?.[i];
+    return { ...q, id: was?.type === q.type && was?.scale === q.scale ? was.id : undefined };
+  }),
   conditions: {
     ...(s.trigger.url && { url: s.trigger.url, urlMatchType: 'icontains' }),
     ...(s.trigger.event && {
@@ -129,6 +130,8 @@ export const survey = (s, flagId, found) => ({
     seenSurveyWaitPeriodInDays: s.waitDays ?? 0,
   },
   // first_seen_at: person property set once by identify() in apps/web/src/lib/analytics.ts.
+  // Write-only in PostHog (reads return targeting_flag); removing it needs remove_targeting_flag.
+  ...(!s.activeForDays && found?.targeting_flag && { remove_targeting_flag: true }),
   ...(s.activeForDays && {
     targeting_flag_filters: {
       groups: [
@@ -152,6 +155,21 @@ export const survey = (s, flagId, found) => ({
   ...(!found && { start_date: new Date().toISOString() }),
 });
 
+const CONDITIONS = ['url', 'urlMatchType', 'events', 'seenSurveyWaitPeriodInDays'];
+/** Fields of `want` that differ from the survey PostHog has (`found`). */
+export const surveyChanges = (found, want) =>
+  Object.keys(want).filter((k) => {
+    if (k === 'remove_targeting_flag') return true;
+    if (k === 'targeting_flag_filters') return !contains(found.targeting_flag?.filters, want[k]);
+    // Exact on the condition keys we manage, so a removed trigger url/event counts as a change.
+    if (k === 'conditions')
+      return (
+        !contains(found.conditions, want.conditions) ||
+        CONDITIONS.some((c) => found.conditions?.[c] != null && !(c in want.conditions))
+      );
+    return !contains(found[k], want[k]);
+  });
+
 /** Config errors in `surveys` (run by pnpm check:events). */
 export function checkSurveys(list, events, flags) {
   const errors = [];
@@ -162,12 +180,9 @@ export function checkSurveys(list, events, flags) {
     if (!/^[a-z][a-z0-9-]{0,48}$/.test(s.id ?? '') || ids.has(s.id))
       errors.push(`${at}: id must be unique, lowercase and dash-separated`);
     ids.add(s.id);
-    if (!['nps', 'csat', 'question'].includes(s.type))
-      errors.push(`${at}: type must be nps, csat or question`);
+    if (!Object.hasOwn(RATINGS, s.type ?? '')) errors.push(`${at}: type must be nps or csat`);
     if (typeof s.question !== 'string' || !s.question.trim())
       errors.push(`${at}: needs a question`);
-    if (s.choices && (s.type !== 'question' || !(s.choices.length >= 2)))
-      errors.push(`${at}: choices need type question and 2+ options`);
     const { event, url } = s.trigger ?? {};
     if (!event && !url) errors.push(`${at}: trigger needs an event and/or a url`);
     if (event && !events[event])
@@ -264,6 +279,7 @@ export async function upsert(
     body,
     method = 'PATCH',
     createOnly = false,
+    changes = (have, want) => Object.keys(want).filter((k) => !contains(have[k], want[k])),
   },
 ) {
   const found = ((await api('GET', list))[key] ?? []).find((x) => x.name === name);
@@ -273,7 +289,7 @@ export async function upsert(
   }
   const want = typeof body === 'function' ? body(found) : body;
   if (found) {
-    const changed = Object.keys(want).filter((k) => !contains(found[k], want[k]));
+    const changed = changes(found, want);
     if (!changed.length) {
       console.log(`  unchanged ${name}`);
       return found;
@@ -294,6 +310,15 @@ async function syncPosthog(dryRun) {
   );
   const api = client(posthogBase(), ready ? e.POSTHOG_PERSONAL_API_KEY : '', dryRun || !ready);
   const q = encodeURIComponent;
+  // Survey flags first: a missing one stops the sync before anything is written.
+  const flagIds = {};
+  for (const s of surveys) {
+    const flags = await api('GET', `/feature_flags/?search=${q(s.flag)}`);
+    const flag = (flags.results ?? []).find((f) => f.key === s.flag);
+    if (!flag && !api.dryRun) throw new Error(`flag ${s.flag} is not in PostHog: pnpm flags:sync`);
+    if (!flag) console.log(`  flag ${s.flag} not found in PostHog (pnpm flags:sync creates it)`);
+    flagIds[s.flag] = flag?.id ?? `<missing flag ${s.flag}>`;
+  }
   for (const j of journeys) {
     const ins = await upsert(api, {
       list: `/insights/?saved=true&limit=100&search=${q(names.insight(j))}`,
@@ -333,14 +358,12 @@ async function syncPosthog(dryRun) {
     createOnly: true,
   });
   for (const s of surveys) {
-    const flags = await api('GET', `/feature_flags/?search=${q(s.flag)}`);
-    const flag = (flags.results ?? []).find((f) => f.key === s.flag);
-    if (!flag && !api.dryRun) throw new Error(`flag ${s.flag} is not in PostHog: pnpm flags:sync`);
     await upsert(api, {
       list: `/surveys/?search=${q(names.survey(s))}`,
       create: '/surveys/',
       name: names.survey(s),
-      body: (found) => survey(s, flag?.id ?? `<flag ${s.flag}>`, found),
+      body: (found) => survey(s, flagIds[s.flag], found),
+      changes: surveyChanges,
     });
   }
   if (e.PUBLIC_API_URL && e.POSTHOG_WEBHOOK_SECRET) {

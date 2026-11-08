@@ -9,6 +9,7 @@ import {
   funnelQuery,
   insight,
   survey,
+  surveyChanges,
   umamiFunnel,
   webhook,
 } from './journeys.mjs';
@@ -116,7 +117,7 @@ test('NPS survey -> 0-10 popover on a URL, recurring, linked flag, active users 
 });
 
 test('CSAT survey -> 1-5 after a catalog event, asked once; update keeps question ids', () => {
-  const s = survey(csat, 8, { questions: [{ id: 'q1' }] });
+  const s = survey(csat, 8, { questions: [{ id: 'q1', type: 'rating', scale: 5 }] });
   assert.equal(s.questions[0].scale, 5);
   assert.equal(s.questions[0].id, 'q1');
   assert.deepEqual(s.conditions.events.values, [{ name: 'project_created' }]);
@@ -124,7 +125,12 @@ test('CSAT survey -> 1-5 after a catalog event, asked once; update keeps questio
   assert.equal(s.start_date, undefined); // an update must not restart the survey
   assert.equal(s.targeting_flag_filters, undefined);
   assert.ok(contains({ ...s, id: 'x', extra: 1 }, s)); // what PostHog returns -> unchanged
-  assert.ok(!contains(s, survey({ ...csat, waitDays: 7 }, 8, { questions: [{ id: 'q1' }] })));
+  assert.ok(
+    !contains(
+      s,
+      survey({ ...csat, waitDays: 7 }, 8, { questions: [{ id: 'q1', type: 'rating', scale: 5 }] }),
+    ),
+  );
 });
 
 test('survey config errors', () => {
@@ -135,20 +141,61 @@ test('survey config errors', () => {
     checkSurveys(
       [
         { ...csat, type: 'stars', trigger: { event: 'signup_completed' }, flag: 'nope' },
-        { ...csat, trigger: {}, repeat: { everyDays: 0, times: 1.5 }, choices: ['a', 'b'] },
+        { ...csat, trigger: {}, repeat: { everyDays: 0, times: 1.5 } },
       ],
       events,
       flags,
     ),
     [
-      'surveys: csat: type must be nps, csat or question',
+      'surveys: csat: type must be nps or csat',
       'surveys: csat: trigger event "signup_completed" is pii, so it never reaches PostHog',
       'surveys: csat: flag "nope" is not in config/flags.json',
       'surveys: csat: id must be unique, lowercase and dash-separated',
-      'surveys: csat: choices need type question and 2+ options',
       'surveys: csat: trigger needs an event and/or a url',
       'surveys: csat: day counts must be whole numbers',
       'surveys: csat: repeat needs everyDays and times above 0',
     ],
   );
+});
+
+// What PostHog returns for a synced survey: targeting_flag instead of the write-only filters.
+const stored = (want) => {
+  const { targeting_flag_filters, ...rest } = want;
+  return {
+    ...rest,
+    id: 'x',
+    targeting_flag: targeting_flag_filters && { filters: targeting_flag_filters },
+  };
+};
+
+test('survey sync: unchanged when PostHog holds the same survey', () => {
+  const have = stored(survey(nps, 7));
+  assert.deepEqual(surveyChanges(have, survey(nps, 7, have)), []);
+});
+
+test('survey sync: a removed trigger url or activeForDays is a change', () => {
+  const have = stored(survey(nps, 7));
+  const noUrl = { ...nps, trigger: { event: 'project_created' } };
+  assert.deepEqual(surveyChanges(have, survey(noUrl, 7, have)), ['conditions']);
+  const anyone = { ...nps, activeForDays: undefined };
+  const want = survey(anyone, 7, have);
+  assert.equal(want.remove_targeting_flag, true);
+  assert.equal(want.targeting_flag_filters, undefined);
+  assert.deepEqual(surveyChanges(have, want), ['remove_targeting_flag']);
+  // Once removed, PostHog returns no targeting_flag and nothing is sent again.
+  const after = { ...have, targeting_flag: null };
+  assert.deepEqual(surveyChanges(after, survey(anyone, 7, after)), []);
+});
+
+test('survey sync: question id kept only for the same kind of answer', () => {
+  const have = {
+    questions: [
+      { id: 'q1', type: 'rating', scale: 10 },
+      { id: 'q2', type: 'open' },
+    ],
+  };
+  const asNps = survey(nps, 7, have).questions;
+  assert.deepEqual([asNps[0].id, asNps[1].id], ['q1', 'q2']);
+  const asCsat = survey({ ...nps, type: 'csat' }, 7, have).questions;
+  assert.deepEqual([asCsat[0].id, asCsat[1].id], [undefined, 'q2']);
 });
