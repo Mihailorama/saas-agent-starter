@@ -1,0 +1,137 @@
+{
+  "$comment": "One example plan per pricing model (docs/billing.md \"Pricing models\"). Not loaded by default: copy the plans you sell into config/plans.json, or point PLANS_FILE (API and worker) at this file to try them. The API and worker tests parse it. Every `providerPriceId` is a placeholder for a price you create in the provider; plans.json mirrors the provider's catalog, the provider rates usage and writes invoices. `tiers` and `pack` are shown on the billing page only.",
+  "version": 1,
+  "defaultPlan": "free",
+  "pastDueGraceDays": 7,
+  "contours": {
+    "en": { "provider": "stripe", "currencies": ["USD"] }
+  },
+  "plans": {
+    "free": {
+      "name": "Free",
+      "limits": { "seats": 3, "projects": 3, "llmSpendMonthly": { "USD": 1, "EUR": 1 } },
+      "llmSpendMax": { "USD": 1, "EUR": 1 },
+      "features": { "llmLimitRaise": false, "byoLlm": false },
+      "prices": {}
+    },
+    "starter": {
+      "name": "Starter (flat)",
+      "limits": { "seats": 5, "projects": 20, "llmSpendMonthly": { "USD": 10, "EUR": 10 } },
+      "llmSpendMax": { "USD": 50, "EUR": 50 },
+      "features": { "llmLimitRaise": true, "byoLlm": false },
+      "prices": {
+        "USD": {
+          "model": "flat",
+          "amount": "19.00",
+          "interval": "month",
+          "providerPriceId": "price_example_starter_usd"
+        }
+      }
+    },
+    "team": {
+      "name": "Team (per seat)",
+      "limits": { "seats": 500, "projects": 200, "llmSpendMonthly": { "USD": 50, "EUR": 50 } },
+      "llmSpendMax": { "USD": 500, "EUR": 500 },
+      "features": { "llmLimitRaise": true, "byoLlm": false },
+      "prices": {
+        "USD": {
+          "model": "per_seat",
+          "amount": "12.00",
+          "interval": "month",
+          "providerPriceId": "price_example_team_seat_usd"
+        }
+      }
+    },
+    "payg": {
+      "name": "Pay as you go (metered)",
+      "limits": { "seats": 20, "projects": 100, "llmSpendMonthly": { "USD": 100, "EUR": 100 } },
+      "llmSpendMax": { "USD": 5000, "EUR": 5000 },
+      "features": { "llmLimitRaise": true, "byoLlm": false },
+      "prices": {
+        "USD": {
+          "model": "metered",
+          "meter": "llm_cost_micros",
+          "interval": "month",
+          "tiers": [{ "upTo": null, "unitAmount": "0.0000015" }],
+          "providerPriceId": "price_example_payg_llm_usd"
+        }
+      }
+    },
+    "growth": {
+      "name": "Growth (base + overage)",
+      "limits": { "seats": 20, "projects": 500, "llmSpendMonthly": { "USD": 50, "EUR": 50 } },
+      "llmSpendMax": { "USD": 500, "EUR": 500 },
+      "features": { "llmLimitRaise": true, "byoLlm": false },
+      "prices": {
+        "USD": [
+          {
+            "model": "flat",
+            "amount": "49.00",
+            "interval": "month",
+            "providerPriceId": "price_example_growth_base_usd"
+          },
+          {
+            "model": "metered",
+            "meter": "api_calls",
+            "interval": "month",
+            "tiers": [
+              { "upTo": 10000, "unitAmount": "0" },
+              { "upTo": null, "unitAmount": "0.001" }
+            ],
+            "providerPriceId": "price_example_growth_api_usd"
+          }
+        ]
+      }
+    },
+    "prepaid": {
+      "name": "Prepaid (credit packs)",
+      "limits": { "seats": 10, "projects": 50, "llmSpendMonthly": { "USD": 100, "EUR": 100 } },
+      "llmSpendMax": { "USD": 1000, "EUR": 1000 },
+      "features": { "llmLimitRaise": true, "byoLlm": false },
+      "prices": {
+        "USD": [
+          {
+            "model": "metered",
+            "meter": "llm_cost_micros",
+            "interval": "month",
+            "tiers": [{ "upTo": null, "unitAmount": "0.000001" }],
+            "providerPriceId": "price_example_prepaid_llm_usd"
+          },
+          {
+            "model": "credits",
+            "meter": "llm_cost_micros",
+            "pack": { "credits": 1000, "amount": "10.00" },
+            "expiresDays": 365,
+            "providerPriceId": "price_example_prepaid_pack_usd"
+          }
+        ]
+      }
+    },
+    "enterprise": {
+      "name": "Enterprise (contract, invoiced by you)",
+      "limits": { "seats": 100, "projects": 1000, "llmSpendMonthly": { "USD": 500, "EUR": 500 } },
+      "llmSpendMax": { "USD": 10000, "EUR": 10000 },
+      "limitsMax": { "seats": 10000, "projects": 100000 },
+      "features": { "llmLimitRaise": true, "byoLlm": false },
+      "prices": {
+        "USD": { "model": "contract", "provider": "manual", "invoicing": "external" }
+      }
+    },
+    "enterprise-invoiced": {
+      "name": "Enterprise (contract, invoiced by Stripe)",
+      "limits": { "seats": 100, "projects": 1000, "llmSpendMonthly": { "USD": 500, "EUR": 500 } },
+      "llmSpendMax": { "USD": 10000, "EUR": 10000 },
+      "limitsMax": { "seats": 10000, "projects": 100000 },
+      "features": { "llmLimitRaise": true, "byoLlm": false },
+      "prices": {
+        "USD": {
+          "model": "contract",
+          "provider": "stripe",
+          "invoicing": "provider",
+          "providerPriceId": "price_example_enterprise_year_usd",
+          "daysUntilDue": 30
+        }
+      }
+    }
+  }
+}

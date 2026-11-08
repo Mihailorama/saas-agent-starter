@@ -104,6 +104,7 @@ services:
       # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
       - AI_CONTOUR=${AI_CONTOUR:-}
       - BILLING_CONTOUR
+      - PLANS_FILE
       - STRIPE_SECRET_KEY
       - STRIPE_WEBHOOK_SECRET
       # operator console (docs/admin.md); empty OPERATOR_EMAILS = no operators

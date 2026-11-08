@@ -31,8 +31,10 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { entitlementsOf, type LimitOverrides, llmSpend } from '../billing/entitlements.ts';
 import { type Limit, plans } from '../billing/plans.ts';
-import { providerFor } from '../billing/registry.ts';
+import { providerFor, providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
+import { env } from '../env.ts';
+import { startContractPeriod } from '../temporal.ts';
 import { httpError } from '../tenant.ts';
 import {
   audit,
@@ -94,7 +96,17 @@ const safeUrl = (raw: string) => {
   }
 };
 
-/** Organizations: list, detail, suspend/unsuspend, limits (docs/admin.md). */
+/** The contract component of a plan in a currency (a contract price stands alone). */
+const contractOf = (planId: string, currency: string) => {
+  const c = plans.plans[planId]?.prices[currency]?.[0];
+  return c?.model === 'contract' ? c : undefined;
+};
+const contractPlans = Object.entries(plans.plans).flatMap(([id, p]) => {
+  const currencies = Object.keys(p.prices).filter((cur) => contractOf(id, cur));
+  return currencies.length ? [{ id, name: p.name, currencies }] : [];
+});
+
+/** Organizations: list, detail, suspend/unsuspend, limits, contracts (docs/admin.md). */
 export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
   const tags = ['admin'];
   const op = { preHandler: requireOperator, schema: { tags, hide: true } };
@@ -210,9 +222,14 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
         currency: z.string(),
         currentPeriodEnd: z.string().nullable(),
         cancelAtPeriodEnd: z.boolean(),
+        contractRef: z.string().nullable(),
         dashboardUrl: z.string().nullable(),
       })
       .nullable(),
+    /** Plans an operator can put this org on by contract: id, name, currencies. */
+    contractPlans: z.array(
+      z.object({ id: z.string(), name: z.string(), currencies: z.array(z.string()) }),
+    ),
     planId: z.string(),
     planName: z.string(),
     period: z.object({ start: z.string(), end: z.string() }),
@@ -299,7 +316,7 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
           .limit(50);
         let dashboardUrl: string | null = null;
         try {
-          dashboardUrl = sub ? providerFor(sub.contour).dashboardUrl(sub) : null;
+          dashboardUrl = sub ? providerOf(sub).dashboardUrl(sub) : null;
         } catch {} // provider not configured in this deployment: no link
         const usage = (name: Limit, used: number) => ({
           used,
@@ -327,8 +344,10 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
             currency: sub.currency,
             currentPeriodEnd: iso(sub.currentPeriodEnd),
             cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+            contractRef: sub.contractRef,
             dashboardUrl,
           },
+          contractPlans,
           planId: e.planId,
           planName: e.plan.name,
           period: { start: e.period.start.toISOString(), end: e.period.end.toISOString() },
@@ -505,6 +524,92 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
           .where(eq(organization.id, id));
         await audit(tx, req, id, 'limits.changed', changes.join(' '), b.reason);
       });
+      return reply.code(204).send(null);
+    },
+  );
+
+  // A negotiated contract (docs/billing.md "Contract"). `manual` (invoiced outside any PSP): the
+  // row is ours, written here, and a Temporal timer marks it past_due at the period end unless an
+  // operator extends it. A provider that sends invoices (Stripe `send_invoice`) creates the
+  // subscription itself; its state arrives through the webhook. Seats/projects: PATCH .../limits.
+  const Contract = WithReason.extend({
+    planId: z.string().min(1).max(64),
+    currency: z.string().length(3),
+    contractRef: z.string().trim().min(1).max(200),
+    periodStart: z.iso.datetime().optional(),
+    periodEnd: z.iso.datetime().optional(),
+  });
+  app.put(
+    '/orgs/:id/contract',
+    {
+      ...op,
+      schema: {
+        ...op.schema,
+        params: Id,
+        body: Contract,
+        response: { 204: z.null(), 400: ErrorBody, 404: ErrorBody, 409: ErrorBody },
+      },
+    },
+    async (req, reply) => {
+      const id = req.params.id;
+      const b = req.body;
+      const contract = contractOf(b.planId, b.currency);
+      if (!contract) throw httpError(400, `${b.planId} has no contract price in ${b.currency}`);
+      const target = `${b.planId} ${b.contractRef}`;
+      const [org, sub] = await withOrg(db, id, async (tx) => [
+        (await tx.select().from(organization).where(eq(organization.id, id)))[0],
+        (await tx.select().from(subscriptions))[0],
+      ]);
+      if (!org) throw httpError(404, 'not found');
+      if (sub && PAID.includes(sub.status as 'active') && sub.provider !== contract.provider) {
+        throw httpError(
+          409,
+          `the organization has a ${sub.provider} subscription: cancel it first`,
+        );
+      }
+      const contourId = sub?.contour ?? env.BILLING_CONTOUR;
+      if (contract.provider !== 'manual') {
+        const provider = providerFor(contourId, contract.provider);
+        if (!provider.invoice) throw httpError(400, `${contract.provider} cannot invoice`);
+        await provider.invoice({
+          orgId: id,
+          orgName: org.name,
+          planId: b.planId,
+          planName: plans.plans[b.planId]!.name,
+          currency: b.currency,
+          prices: [contract],
+          customerId: sub?.customerId ?? null,
+          contractRef: b.contractRef,
+          daysUntilDue: contract.daysUntilDue,
+        });
+        await withOrg(db, id, (tx) => audit(tx, req, id, 'contract.invoiced', target, b.reason));
+        return reply.code(204).send(null);
+      }
+      if (!b.periodStart || !b.periodEnd || b.periodStart >= b.periodEnd) {
+        throw httpError(400, 'a manual contract needs periodStart before periodEnd');
+      }
+      const row = {
+        planId: b.planId,
+        status: 'active' as const,
+        contour: contourId,
+        provider: 'manual',
+        providerSubscriptionId: null,
+        currency: b.currency,
+        currentPeriodStart: new Date(b.periodStart),
+        currentPeriodEnd: new Date(b.periodEnd),
+        cancelAtPeriodEnd: false,
+        contractRef: b.contractRef,
+        lastEventAt: new Date(),
+        updatedAt: new Date(),
+      };
+      await withOrg(db, id, async (tx) => {
+        await tx
+          .insert(subscriptions)
+          .values({ orgId: id, ...row })
+          .onConflictDoUpdate({ target: subscriptions.orgId, set: row });
+        await audit(tx, req, id, 'contract.set', `${target} until ${b.periodEnd}`, b.reason);
+      });
+      await startContractPeriod({ orgId: id, periodEnd: row.currentPeriodEnd.toISOString() });
       return reply.code(204).send(null);
     },
   );

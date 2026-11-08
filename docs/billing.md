@@ -1,13 +1,16 @@
 # Billing, plans and LLM spend limits
 
-Design and alternatives: [ADR 0019](adr/0019-billing.md). This page is the how-to.
+Design and alternatives: [ADR 0019](adr/0019-billing.md), pricing models
+[ADR 0029](adr/0029-pricing-models.md). This page is the how-to.
 
 ## What is where
 
 - `config/plans.json`: plans (id, limits: seats, projects, monthly LLM spend per currency;
-  `llmSpendMax`; feature flags), prices per currency with the provider's price id, and the
+  `llmSpendMax`; feature flags), prices per currency (one or more components with a pricing
+  `model`, see [Pricing models](#pricing-models)) with the provider's price id, and the
   billing **contours** (a contour names one provider and its currencies; the template ships
-  `en` = Stripe in USD/EUR). Versioned with the
+  `en` = Stripe in USD/EUR). `PLANS_FILE` (API and worker) points at another file;
+  `config/plans.examples.json` has one plan per pricing model. Versioned with the
   code; the API and the worker both read it. The web never hard-codes a price: the billing page
   gets plans and prices from `GET /api/billing`.
 - `subscriptions` table: the organization's current plan, status (`incomplete`, `active`,
@@ -15,11 +18,119 @@ Design and alternatives: [ADR 0019](adr/0019-billing.md). This page is the how-t
   table with RLS like the others; no row means the default plan. **Not a payments ledger**:
   invoices, receipts and payment history stay in the provider (Stripe: its customer portal).
 - `apps/api/src/billing/`: `plans.ts` (config), `entitlements.ts` (`entitlements(orgId)`,
-  `requireEntitlement`, `llmSpend`), `provider.ts` (the provider interface and normalized
-  events), `stripe.ts`, `registry.ts` (contour -> configured provider).
+  `requireEntitlement`, `llmSpend`), `provider.ts` (the provider interface, its
+  `capabilities()` and normalized events), `stripe.ts`, `manual.ts` (contracts invoiced outside
+  any provider), `registry.ts` (contour -> configured provider).
   Routes: `apps/api/src/routes/billing.ts`.
 - `services/worker-py/worker/billing.py`: the LLM spend check used by `Gateway.call_llm`,
   and applying provider events to `subscriptions`.
+
+## Pricing models
+
+The template assumes no pricing model and no payment rail. A plan's price in a currency is one
+component or an array of components, each with a `model`; `config/plans.json` mirrors the
+provider's catalog (the price objects you create there) and the provider does the rating:
+tiers, proration, taxes and invoices. There is no rating engine here. A price object without
+`model` (the format before) is read as `flat`, so older files keep working.
+
+| `model`    | Fields                                                                           | Sold by                                |
+| ---------- | -------------------------------------------------------------------------------- | -------------------------------------- |
+| `flat`     | `amount`, `interval`, `providerPriceId`                                          | checkout                               |
+| `per_seat` | `amount` per seat, `interval`, `providerPriceId`                                 | checkout, quantity = members           |
+| `metered`  | `meter`, `interval`, `tiers` (display only), `providerPriceId`                   | checkout, no quantity                  |
+| `credits`  | `meter`, `pack: {credits, amount}`, `expiresDays`, `providerPriceId` (one-time)  | top-up checkout (credit packs)         |
+| `contract` | `provider`, `invoicing: provider \| external`, `providerPriceId`, `daysUntilDue` | the operator console, never self-serve |
+
+Rules (checked when the file is read): at most one `flat` or `per_seat` component; a `contract`
+stands alone; `credits` need a `metered` component on the same meter (credit grants apply to
+metered prices only). Meters: `llm_cost_micros` (AI cost in millionths of the cost currency),
+`llm_tokens`, `api_calls` (requests with an organization API key).
+
+`entitlements()` reads the model of the plan in force (`models`): per seat, the purchased
+quantity is the seat limit; the others use the plan's limits. The billing page shows the base
+price, "per seat", "+ usage", "Pay as you go" or "Contact us" from the same data; a plan gets an
+"Upgrade" button only where the contour's provider sells all its components through checkout
+(`capabilities()`).
+
+### Flat
+
+One recurring price, the shipped default (`pro`). Limits are the plan's.
+
+### Per seat
+
+`per_seat` with the price per seat. Checkout subscribes with quantity = current members; the
+seat limit is the purchased quantity (`subscriptions.seats`, from the provider's webhook). To add
+seats the customer changes the quantity in the provider's portal (Stripe: enable quantity
+updates in the portal settings). An operator override (`limit_overrides`) still wins.
+
+### Usage-based (pay as you go)
+
+`metered` on one meter, with the provider's metered price (Stripe: a price on a
+[Meter](https://docs.stripe.com/billing/subscriptions/usage-based) with the same event name as
+`meter`). Checkout adds it without quantity. Reporting usage to the meter is the follow-up in
+docs/TODO.md; until then such a plan is billed for nothing beyond its base price.
+
+### Hybrid (base + overage)
+
+An array: `flat` (or `per_seat`) plus `metered`. Included usage is a free first tier of the
+metered price in the provider (`tiers` shows it on the page). Example: `growth` in
+`config/plans.examples.json`.
+
+### Prepaid credits
+
+`metered` plus `credits` on the same meter: the customer buys packs, usage draws them down in the
+provider. Example: `prepaid`. Selling packs is the follow-up in docs/TODO.md; until then such a
+plan is not offered at checkout.
+
+### Contract
+
+Negotiated terms for one customer, on a plan with a `contract` price; the operator sets it on the
+organization page in the console (`PUT /api/admin/orgs/:id/contract`, reason required, audit row
+`operator.contract.set` or `.invoiced`). Seats and projects beyond the plan: "Adjust limits"
+(`limit_overrides`, up to the plan's `limitsMax`). Customers see "Contact us" instead of a
+checkout.
+
+- `"provider": "manual", "invoicing": "external"`: invoiced outside any payment provider (your
+  accounting, bank transfer). The console writes plan, currency, period and contract reference to
+  `subscriptions` (provider `manual`) and starts `ContractPeriodWorkflow`
+  (`billing-contract-<org>-<period end>`), a durable Temporal timer: at the period end the
+  subscription becomes `past_due` (the plan holds for `pastDueGraceDays`), or `canceled` if it
+  was set to end (organization deletion). Setting the contract again with a later period end is
+  the renewal; the old timer then does nothing. No checkout, portal or cancel button.
+- `"provider": "stripe", "invoicing": "provider"`: Stripe sends the invoices. The console
+  creates the customer and a subscription with `collection_method: send_invoice` and
+  `days_until_due`, on the contract's `providerPriceId` (idempotency key per org and contract
+  reference); the customer pays by bank transfer, and state arrives through the webhook like a
+  checkout's. Example: `enterprise-invoiced`.
+
+## Provider capabilities
+
+`BillingProvider.capabilities()` says what a provider does, so routes and pages ask instead of
+assuming:
+
+```ts
+{ checkout, portal, cancel, priceModels, usageReporting, creditBalance, merchantOfRecord,
+  invoicing: 'provider' | 'external' }
+```
+
+Stripe: checkout, portal, cancel, `flat`/`per_seat`/`metered`/`contract`, invoicing by the
+provider. `manual`: `contract` only, nothing self-serve, invoicing external. A subscription is
+served by the provider it was made with (`subscriptions.provider`), so a `manual` contract can
+sit in a Stripe contour.
+
+## Connect vs install
+
+The template connects to a provider that rates and invoices; it does not rate usage itself. When
+that stops being enough:
+
+- **OpenMeter** (Apache-2.0): the "install" option, a self-hosted metering and entitlement
+  service for usage aggregation outside the payment provider (follow-up).
+- **Orb** or **Metronome**: hosted usage billing for complex contracts and rating (connect;
+  follow-up).
+- **Polar**: a merchant of record (sales tax, invoices in its name) with checkout and usage
+  billing (connect; `merchantOfRecord: true`; follow-up).
+
+Each is another provider adapter behind the same interface, plus a meter adapter in the worker.
 
 ## Entitlements
 
@@ -137,8 +248,9 @@ No real provider keys anywhere, including CI.
 A provider is one file implementing `BillingProvider` (`apps/api/src/billing/provider.ts`).
 Nothing in the interface is Stripe-shaped.
 
-1. **Adapter**: `checkout` (hosted payment page for the first period; put `orgId` and `planId`
-   into metadata the provider echoes back), `portal` (a hosted self-service page, or `null`),
+1. **Adapter**: `capabilities()` (above), `checkout` (hosted payment page for the first period
+   with the plan's components as line items; put `orgId` and `planId` into metadata the provider
+   echoes back), optional `invoice` (a subscription billed by invoice, for contracts), `portal` (a hosted self-service page, or `null`),
    `cancel` (stop renewing at period end), `webhook` (verify, then map to `BillingEvent`s with a
    stable `eventId` so redeliveries are deduplicated). Verify webhooks with the provider's
    documented mechanism: a signature if it signs, otherwise what it documents instead (for

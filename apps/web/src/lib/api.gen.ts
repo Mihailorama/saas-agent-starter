@@ -967,6 +967,10 @@ export interface paths {
                             periodEnd: string;
                             cancelAtPeriodEnd: boolean;
                             canManage: boolean;
+                            selfService: {
+                                portal: boolean;
+                                cancel: boolean;
+                            };
                             usage: {
                                 seats: {
                                     used: number;
@@ -998,6 +1002,8 @@ export interface paths {
                                     amount: string;
                                     interval: string;
                                 } | null;
+                                models: string[];
+                                checkout: boolean;
                             }[];
                         };
                     };

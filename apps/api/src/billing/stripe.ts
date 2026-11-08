@@ -1,6 +1,15 @@
 import Stripe from 'stripe';
-import { planByProviderPriceId } from './plans.ts';
+import { componentByProviderPriceId, type PriceComponent } from './plans.ts';
 import { type BillingEvent, type BillingProvider, WebhookRejected } from './provider.ts';
+
+/** Checkout/subscription items: metered prices take no quantity, per-seat prices the seats. */
+export function lineItems(prices: PriceComponent[], seats: number) {
+  return prices.map((c) => {
+    if (!c.providerPriceId) throw new Error(`no Stripe price id for a ${c.model} price`);
+    if (c.model === 'metered') return { price: c.providerPriceId };
+    return { price: c.providerPriceId, quantity: c.model === 'per_seat' ? Math.max(1, seats) : 1 };
+  });
+}
 
 /**
  * Stripe adapter (official `stripe` SDK, MIT). Stripe owns the subscription: Checkout creates it,
@@ -36,9 +45,13 @@ export function stripeProvider(opts: {
     const orgId = sub.metadata?.orgId;
     const item = sub.items.data[0];
     if (!orgId || !item) return []; // not created by our checkout
+    const known = sub.items.data.map((i) => ({ i, ...componentByProviderPriceId(i.price.id) }));
+    const seats = known.find((k) => k.component?.model === 'per_seat')?.i.quantity;
     const state = {
       ...base(e, orgId),
-      planId: planByProviderPriceId(item.price.id) ?? sub.metadata.planId,
+      planId: known.find((k) => k.planId)?.planId ?? sub.metadata.planId,
+      ...(seats !== undefined && { seats }),
+      ...(sub.metadata.contractRef && { contractRef: sub.metadata.contractRef }),
       currency: sub.currency.toUpperCase(),
       customerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
       subscriptionId: sub.id,
@@ -64,12 +77,22 @@ export function stripeProvider(opts: {
   return {
     id: 'stripe',
 
+    capabilities: () => ({
+      checkout: true,
+      portal: true,
+      cancel: true,
+      priceModels: ['flat', 'per_seat', 'metered', 'contract'],
+      usageReporting: false,
+      creditBalance: false,
+      merchantOfRecord: false,
+      invoicing: 'provider',
+    }),
+
     async checkout(input) {
-      if (!input.price.providerPriceId) throw new Error(`no Stripe price id for ${input.planId}`);
       const metadata = { orgId: input.orgId, planId: input.planId };
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
-        line_items: [{ price: input.price.providerPriceId, quantity: 1 }],
+        line_items: lineItems(input.prices, input.seats),
         client_reference_id: input.orgId,
         ...(input.customerId && { customer: input.customerId }),
         metadata,
@@ -79,6 +102,25 @@ export function stripeProvider(opts: {
       });
       if (!session.url) throw new Error('Stripe returned a checkout session without url');
       return { url: session.url };
+    },
+
+    // Contract billed by invoice: no payment page; Stripe emails the invoice (bank transfer).
+    async invoice(input) {
+      const metadata = { orgId: input.orgId, planId: input.planId, contractRef: input.contractRef };
+      const customer =
+        input.customerId ??
+        (await stripe.customers.create({ name: input.orgName, metadata: { orgId: input.orgId } }))
+          .id;
+      await stripe.subscriptions.create(
+        {
+          customer,
+          items: lineItems(input.prices, 1),
+          collection_method: 'send_invoice',
+          days_until_due: input.daysUntilDue,
+          metadata,
+        },
+        { idempotencyKey: `contract-${input.orgId}-${input.contractRef}` },
+      );
     },
 
     async portal(sub, returnUrl) {

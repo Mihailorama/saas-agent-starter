@@ -202,6 +202,10 @@ export const subscriptions = pgTable(
     currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
     currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
     cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+    /** Purchased seats of a per_seat price: the seat limit (docs/billing.md "Per seat"). */
+    seats: integer('seats'),
+    /** Contract reference (order form, PO) of an invoiced contract, set by an operator. */
+    contractRef: text('contract_ref'),
     /** Admin-raised LLM spend limits per currency, capped by the plan's llmSpendMax. */
     llmSpendLimits: jsonb('llm_spend_limits').$type<Record<string, number>>(),
     /** Time of the newest provider event applied; older (replayed) events are ignored. */

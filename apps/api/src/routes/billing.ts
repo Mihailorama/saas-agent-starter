@@ -4,10 +4,15 @@ import { count, eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { entitlements, llmSpend, requireEntitlement } from '../billing/entitlements.ts';
-import { contour, plans } from '../billing/plans.ts';
-import { ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
-import { contourOfProvider, providerFor } from '../billing/registry.ts';
+import {
+  entitlements,
+  llmSpend,
+  requireEntitlement,
+  type Subscription,
+} from '../billing/entitlements.ts';
+import { contour, type Price, plans, subscribable } from '../billing/plans.ts';
+import { NotSupported, ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
+import { contourOfProvider, providerFor, providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { env } from '../env.ts';
 import { startBillingEvent } from '../temporal.ts';
@@ -40,6 +45,8 @@ const Billing = z.object({
   periodEnd: z.string(),
   cancelAtPeriodEnd: z.boolean(),
   canManage: z.boolean(),
+  /** What the subscription's provider offers its customers (a manual contract: neither). */
+  selfService: z.object({ portal: z.boolean(), cancel: z.boolean() }),
   usage: z.object({ seats: Usage, projects: Usage }),
   llmSpend: z.array(
     z.object({
@@ -58,7 +65,11 @@ const Billing = z.object({
       seats: z.number(),
       projects: z.number(),
       llmSpendMonthly: z.number().nullable(),
+      /** The flat or per-seat base price, if any. */
       price: z.object({ amount: z.string(), interval: z.string() }).nullable(),
+      models: z.array(z.string()),
+      /** Sold through the provider's checkout (else: free, or a contract via sales). */
+      checkout: z.boolean(),
     }),
   ),
 });
@@ -71,6 +82,28 @@ const Url = z.object({ url: z.url() });
 const ErrorBody = z.object({ error: z.string() });
 
 const currentSubscription = async (tx: Tx) => (await tx.select().from(subscriptions))[0] ?? null;
+const basePrice = (price: Price | undefined) =>
+  price?.find((c) => c.model === 'flat' || c.model === 'per_seat');
+/** Whether the contour's provider sells these components through its checkout. */
+function sellable(contourId: string, price: Price | undefined) {
+  if (!price || !subscribable(price).length) return false; // free, contract or packs only
+  try {
+    const caps = providerFor(contourId).capabilities();
+    return caps.checkout && price.every((c) => caps.priceModels.includes(c.model));
+  } catch {
+    return false; // provider not configured here
+  }
+}
+
+function selfService(sub: Subscription | null) {
+  if (!sub) return { portal: false, cancel: false };
+  try {
+    const caps = providerOf(sub).capabilities();
+    return { portal: caps.portal, cancel: caps.cancel };
+  } catch {
+    return { portal: false, cancel: false };
+  }
+}
 
 /** Maps provider failures to clear errors without leaking provider responses. */
 async function viaProvider<T>(log: FastifyBaseLogger, fn: () => Promise<T>): Promise<T> {
@@ -78,6 +111,7 @@ async function viaProvider<T>(log: FastifyBaseLogger, fn: () => Promise<T>): Pro
     return await fn();
   } catch (err) {
     if (err instanceof ProviderNotConfigured) throw httpError(503, 'billing is not configured');
+    if (err instanceof NotSupported) throw httpError(409, err.message);
     if ((err as { statusCode?: number }).statusCode) throw err;
     log.error({ err }, 'payment provider call failed');
     throw httpError(502, 'payment provider error');
@@ -116,6 +150,7 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
           periodEnd: e.period.end.toISOString(),
           cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
           canManage: rank >= 2,
+          selfService: selfService(sub),
           usage: {
             seats: { used: seatCount?.n ?? 0, limit: e.limits.seats },
             projects: { used: projectCount?.n ?? 0, limit: e.limits.projects },
@@ -131,16 +166,19 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
           features: e.features,
           plans: Object.entries(plans.plans)
             .filter(([id, p]) => id === plans.defaultPlan || p.prices[currency])
-            .map(([id, p]) => ({
-              id,
-              name: p.name,
-              seats: p.limits.seats,
-              projects: p.limits.projects,
-              llmSpendMonthly: p.limits.llmSpendMonthly[costCurrencies[0] ?? currency] ?? null,
-              price: p.prices[currency]
-                ? { amount: p.prices[currency].amount, interval: p.prices[currency].interval }
-                : null,
-            })),
+            .map(([id, p]) => {
+              const base = basePrice(p.prices[currency]);
+              return {
+                id,
+                name: p.name,
+                seats: p.limits.seats,
+                projects: p.limits.projects,
+                llmSpendMonthly: p.limits.llmSpendMonthly[costCurrencies[0] ?? currency] ?? null,
+                price: base ? { amount: base.amount, interval: base.interval } : null,
+                models: (p.prices[currency] ?? []).map((c) => c.model),
+                checkout: sellable(contourId, p.prices[currency]),
+              };
+            }),
         };
       });
     },
@@ -162,16 +200,24 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!plan || !price || !contour(contourId).currencies.includes(currency)) {
         throw httpError(400, 'this plan is not sold in this currency');
       }
+      if (!sellable(contourId, price)) {
+        throw httpError(400, 'this plan is not sold through checkout: contact sales');
+      }
       if (sub && (sub.status === 'active' || sub.status === 'past_due')) {
         throw httpError(409, 'already subscribed: change or cancel the current plan first');
       }
+      const [seats] = await db
+        .select({ n: count() })
+        .from(member)
+        .where(eq(member.organizationId, req.tenant.orgId));
       const result = await viaProvider(req.log, () =>
         providerFor(contourId).checkout({
           orgId: req.tenant.orgId,
           planId: req.body.planId,
           planName: plan.name,
           currency,
-          price,
+          prices: subscribable(price),
+          seats: seats?.n ?? 1,
           customerId: sub?.customerId ?? null,
           returnUrl,
         }),
@@ -189,8 +235,7 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
     { ...admin, schema: { tags, response: { 200: Url, 404: ErrorBody } } },
     async (req) => {
       const sub = await withOrg(db, req.tenant.orgId, currentSubscription);
-      const url =
-        sub && (await viaProvider(req.log, () => providerFor(sub.contour).portal(sub, returnUrl)));
+      const url = sub && (await viaProvider(req.log, () => providerOf(sub).portal(sub, returnUrl)));
       if (!url) throw httpError(404, 'no billing portal for this subscription');
       return { url };
     },
@@ -204,7 +249,7 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!sub || (sub.status !== 'active' && sub.status !== 'past_due')) {
         throw httpError(409, 'no active subscription');
       }
-      await viaProvider(req.log, () => providerFor(sub.contour).cancel(sub));
+      await viaProvider(req.log, () => providerOf(sub).cancel(sub));
       await withTenant(req, (tx) =>
         tx
           .update(subscriptions)

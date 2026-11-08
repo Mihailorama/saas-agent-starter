@@ -13,7 +13,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
-import { providerFor } from '../billing/registry.ts';
+import { providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { pickLocale, renderEmail } from '../email.ts';
 import { env } from '../env.ts';
@@ -111,7 +111,9 @@ async function stopRenewal(req: FastifyRequest) {
   const [sub] = await withOrg(db, req.tenant.orgId, (tx) => tx.select().from(subscriptions));
   if (!sub || sub.cancelAtPeriodEnd || !['active', 'past_due'].includes(sub.status)) return;
   try {
-    await providerFor(sub.contour).cancel(sub);
+    // A manual contract has nothing to stop with a provider: the flag below ends it.
+    const provider = providerOf(sub);
+    if (provider.capabilities().cancel) await provider.cancel(sub);
   } catch (err) {
     req.log.error({ err }, 'payment provider cancel failed');
     throw httpError(502, 'could not cancel the subscription, try again later');

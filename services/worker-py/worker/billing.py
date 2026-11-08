@@ -8,6 +8,8 @@
 - `BillingActivities.apply_billing_event`: writes a normalized provider event (from the API's
   webhook route, via BillingEventWorkflow) to `subscriptions`. Idempotent: older events never
   overwrite newer state, and audit rows are written once per event.
+- `BillingActivities.end_contract_period`: a manual contract's period ran out
+  (ContractPeriodWorkflow).
 """
 
 import json
@@ -47,8 +49,22 @@ PAID = frozenset({"active", "past_due"})
 
 @dataclass(frozen=True)
 class Price:
-    amount: str
-    interval: str
+    """One priced component (`model`: flat, per_seat, metered, credits, contract). Rating stays
+    in the provider; the worker needs the model and the meter."""
+
+    model: str
+    amount: str | None = None
+    interval: str | None = None
+    meter: str | None = None
+
+
+def _prices(raw: dict[str, Any] | list[dict[str, Any]]) -> list[Price]:
+    """One component or an array; a component without `model` is a (pre-model) flat price."""
+    parts = raw if isinstance(raw, list) else [raw]
+    return [
+        Price(c.get("model", "flat"), c.get("amount"), c.get("interval"), c.get("meter"))
+        for c in parts
+    ]
 
 
 @dataclass(frozen=True)
@@ -57,7 +73,7 @@ class Plan:
     llm_spend_monthly: dict[str, Decimal]
     llm_spend_max: dict[str, Decimal]
     llm_limit_raise: bool
-    prices: dict[str, Price]
+    prices: dict[str, list[Price]]
     # Unmetered models (subscriptions, self-hosted): {"calls": n, "tokens": n}, either optional.
     llm_usage_monthly: dict[str, int] = field(default_factory=dict[str, int])
     byo_llm: bool = False  # organizations may bring their own provider (ai_providers)
@@ -96,7 +112,7 @@ def load_plans(path: Path) -> Plans:
             llm_spend_monthly=_money(p["limits"]["llmSpendMonthly"]),
             llm_spend_max=_money(p["llmSpendMax"]),
             llm_limit_raise=bool(p["features"].get("llmLimitRaise", False)),
-            prices={c: Price(x["amount"], x["interval"]) for c, x in p["prices"].items()},
+            prices={c: _prices(x) for c, x in p["prices"].items()},
             llm_usage_monthly={
                 k: int(v) for k, v in p["limits"].get("llmUsageMonthly", {}).items()
             },
@@ -276,6 +292,16 @@ class BillingEvent:
     periodStart: str | None = None
     periodEnd: str | None = None
     cancelAtPeriodEnd: bool | None = None
+    seats: int | None = None
+    contractRef: str | None = None
+
+
+@dataclass(frozen=True)
+class ContractPeriod:
+    """Contract with apps/api/src/temporal.ts (ContractPeriod)."""
+
+    orgId: str
+    periodEnd: str
 
 
 STATUS = {
@@ -323,9 +349,9 @@ class BillingActivities:
                 insert into subscriptions as s (org_id, plan_id, status, contour, provider,
                   currency, customer_id, provider_subscription_id,
                   current_period_start, current_period_end, cancel_at_period_end,
-                  last_event_at, updated_at)
+                  last_event_at, updated_at, seats, contract_ref)
                 values ($1, coalesce($2, $13), $3, $4, $5, coalesce($6, ''), $7, $8, $9, $10,
-                  coalesce($11, false), $12, now())
+                  coalesce($11, false), $12, now(), $14, $15)
                 on conflict (org_id) do update set
                   plan_id = coalesce($2, s.plan_id), status = $3, contour = $4, provider = $5,
                   currency = coalesce($6, s.currency),
@@ -334,7 +360,8 @@ class BillingActivities:
                   current_period_start = coalesce($9, s.current_period_start),
                   current_period_end = coalesce($10, s.current_period_end),
                   cancel_at_period_end = coalesce($11, s.cancel_at_period_end),
-                  last_event_at = $12, updated_at = now()
+                  last_event_at = $12, updated_at = now(), seats = coalesce($14, s.seats),
+                  contract_ref = coalesce($15, s.contract_ref)
                 """,
                 e.orgId,
                 e.planId,
@@ -349,7 +376,31 @@ class BillingActivities:
                 e.cancelAtPeriodEnd,
                 occurred,
                 self.plans.default,
+                e.seats,
+                e.contractRef,
             )
             await _audit_once(conn, e.orgId, f"billing.{e.type}", f"{e.provider}:{e.eventId}")
         activity.logger.info("billing event %s (%s) applied for org %s", e.eventId, e.type, e.orgId)
         return True
+
+    @activity.defn(name="end_contract_period")
+    async def end_contract_period(self, p: ContractPeriod) -> str:
+        """A manual contract reached its period end: `past_due` (the plan holds for
+        pastDueGraceDays), or `canceled` if it was set to end. A no-op once an operator moved the
+        period (a renewal) or the org changed provider; safe to retry."""
+        end = datetime.fromisoformat(p.periodEnd)
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute("select set_config('app.org_id', $1, true)", p.orgId)
+            status: str | None = await conn.fetchval(
+                "update subscriptions set status = case when cancel_at_period_end"
+                " then 'canceled' else 'past_due' end, last_event_at = now(), updated_at = now()"
+                " where provider = 'manual' and status = 'active' and current_period_end = $1"
+                " returning status",
+                end,
+            )
+            if status is not None:
+                await _audit_once(
+                    conn, p.orgId, f"billing.contract.{status}", f"manual:{p.periodEnd}"
+                )
+        activity.logger.info("contract period of org %s ended: %s", p.orgId, status or "unchanged")
+        return status or "unchanged"
