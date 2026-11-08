@@ -162,6 +162,10 @@ services:
       - VLLM_API_KEY
       - OLLAMA_BASE_URL
       - AI_BYO_ALLOWED_CIDRS
+      # external MCP tools (docs/mcp.md)
+      - MCP_ALLOWED_CIDRS
+      - MCP_TOOL_MAX_ITERATIONS
+      - MCP_TOOL_TIMEOUT_SECONDS
       - EMAIL_TASK_QUEUE
       - SMTP_URL
       - MAIL_FROM

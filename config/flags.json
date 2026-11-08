@@ -19,6 +19,12 @@
       "default": false,
       "expires": "2027-05-31"
     },
+    "mcp-tools": {
+      "description": "Settings page where organization admins connect external MCP servers whose allowed tools AI features may call.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "mcp-server": {
       "description": "MCP endpoint (/mcp) where customers' AI agents use the product with an organization API key.",
       "owner": "@mihailorama",

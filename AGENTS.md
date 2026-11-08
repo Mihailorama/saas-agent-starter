@@ -24,6 +24,7 @@ tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do no
 ```sh
 docker compose up -d --wait postgres redis s3 temporal-ui mailpit   # infra only
 docker compose --profile billing up -d stripe-mock                  # Stripe API mock (API tests)
+docker compose --profile mcp up -d mcp-server                       # reference MCP server (worker tests)
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173 (Vite proxies /api)
 pnpm worker     # Python Temporal worker (also delivers mail; Mailpit UI :8025)
@@ -56,6 +57,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       support.ts = Chatwoot/Plane/GitHub hooks, crm.ts = booking hook (Cal.diy),
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md),
+                      mcp-servers.ts = the org's external MCP servers (docs/mcp.md),
                       mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
@@ -80,6 +82,7 @@ packages/db         Drizzle schema, migrations, RLS policies, withOrg(), withOpe
 services/worker-py  Python, Temporal workflows + activities (AI/data work goes here)
   worker/ai.py        AI gateway: Gateway.call_llm, model registry, BYO routing, fallback (the ONLY LLM caller)
   worker/providers.py providers via LiteLLM (every kind), prices from LiteLLM's cost map, BYO SSRF pin
+  worker/mcp.py       the org's MCP servers as tools for the gateway's tool loop (docs/mcp.md)
   worker/prompts.py   versioned prompt loader (prompts/<purpose>/<name>.v<N>.md)
   worker/posthog.py   each LLM call as a PostHog `$ai_generation` (when POSTHOG_* is set)
   worker/s3.py        S3 via the MinIO SDK (AI request/response content)
@@ -130,6 +133,7 @@ docs/support.md     service desk: Chatwoot setup, channels, triage, tracker retu
 docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync flows, mapping
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
+docs/mcp.md         external MCP tools: connect a server, the reference server, the tool loop
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
 
@@ -181,6 +185,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items, alerts and feedback in
   Plane (Intake, official Python SDK `plane-sdk`), GitHub Issues (plain REST) optional, one
   tracker client in the worker; triage is a Temporal workflow, no own ticket table (ADR 0013).
+- External tools: remote MCP servers per organization through the official `mcp` SDK
+  (Streamable HTTP, via LiteLLM's `mcp` extra), a bounded opt-in tool loop in the gateway; the
+  `mcp` profile runs the reference `server-everything` for dev/tests (ADR 0028, docs/mcp.md).
 - MCP server: official TypeScript SDK v2 (`@modelcontextprotocol/server`, Apache-2.0), Streamable
   HTTP at `/mcp`, stateless, organization API keys as bearer; tools wrap the REST routes (ADR 0027).
 - Web API types generated from the API's OpenAPI document (`openapi-typescript`), calls through
@@ -219,6 +226,7 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 7. `pnpm check`.
 
 A Claude Code command with the same steps: `/add-resource <name>`.
+Before building a product at all: `/validate-idea <idea>` (opt-in founder-skill plugin, real-signal plan; docs/validate-idea.md).
 
 Schema changes are expand/contract (docs/deploy.md "Schema changes"): the previous release
 must keep working on the new schema. Drops, renames, type changes and new NOT NULL columns
@@ -275,7 +283,7 @@ Details: docs/mcp.md, ADR 0027. A tool is a REST route that already accepts API 
    the purpose, an explicit `model` and `provider` (from a per-purpose env setting such as
    `AI_PROJECT_SUMMARY_MODEL`; unset = feature off, never a fallback), the org and actor ids,
    `prompt_template_id=prompt.id`, `prompt_template_version=prompt.version` and
-   `max_tokens`. Read user content from the DB inside the activity; pass ids, not content,
+   `max_tokens` (plus `mcp_tools=True` if the model may call the org's MCP tools, docs/mcp.md). Read user content from the DB inside the activity; pass ids, not content,
    through workflow arguments.
 3. Oversight: if the output is stored and shown, store it with `ai_status='generated'` and
    `ai_call_id`, add confirm/correct endpoints like `projects.ts` and show `<AiBadge>` in the
@@ -400,6 +408,11 @@ the replacement map.
   version. A prompt change is a new version file with a passing eval (recipe above).
 - No LLM API key in CI or in scripts. Real-model evals run locally through the Claude
   subscription (`pnpm eval:real`); `pnpm check` and CI stay key-free (`pnpm eval --fake-llm`).
+- Tools: a purpose offers the organization's MCP tools only by passing `mcp_tools=True` to
+  `call_llm` (flag `mcp-tools`), and only servers that list that purpose. Never call an MCP server or another tool outside the gateway's
+  loop, never offer a tool that is not in the server's `allowed_tools`, never connect to a server
+  URL without the SSRF pin (worker/mcp.py), and never put tool arguments or results anywhere but
+  the tool call's `ai_calls` S3 objects. No stdio servers.
 - PostHog privacy mode stays on (`POSTHOG_PRIVACY_MODE=true`) unless the DPA and the users'
   information allow sending prompt and output text to PostHog.
 
