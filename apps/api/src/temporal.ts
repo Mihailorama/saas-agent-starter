@@ -101,7 +101,7 @@ export const startTrackerItem = (item: TrackerItem, hash: string) =>
   startOnce('TrackerItemWorkflow', `tracker-item-${hash}`, item);
 /** Contract with services/worker-py (worker/mail.py): one rendered email to one recipient. */
 export type SendEmail = {
-  kind: 'verify-email' | 'reset-password' | 'invitation' | 'data-export-ready';
+  kind: 'sign-in-code' | 'verify-email' | 'invitation' | 'data-export-ready';
   to: string;
   subject: string;
   html: string;

@@ -3,7 +3,8 @@ import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { admin, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { randomUUID } from 'node:crypto';
+import { admin, emailOTP, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
 import { db } from './db.ts';
@@ -20,7 +21,7 @@ async function sendEmail(
   url: string,
   key: string,
   request: Request | undefined,
-  vars: { name?: string; org?: string; inviter?: string },
+  vars: { name?: string; org?: string; inviter?: string } = {},
 ) {
   try {
     const locale = pickLocale(request?.headers.get('accept-language'));
@@ -59,6 +60,10 @@ const oidc =
     : [];
 export const ssoEnabled = oidc.length > 0;
 
+// 2FA and passkeys (ADR 0017). TOTP + backup codes + trusted devices; passwordless: no account
+// has a password, so enrolment and changes ask for a recent sign-in instead (mfa.ts).
+const totp = twoFactor({ issuer: env.APP_NAME, allowPasswordless: true });
+
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   basePath: '/api/auth',
@@ -70,29 +75,36 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        // A code sign-up sends no name; mails and invitations greet by it, so start with the
+        // address's local part (the user can change it).
+        before: async (user) => ({ data: { ...user, name: user.name || user.email.split('@')[0] } }),
         after: async (user) => {
           if (user.emailVerified) await personSync(user.id);
         },
       },
     },
   },
-  emailAndPassword: {
-    enabled: true,
-    minPasswordLength: 12,
-    requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION,
-    revokeSessionsOnPasswordReset: true,
-    sendResetPassword: ({ user, url, token }, request) =>
-      sendEmail('reset-password', user.email, url, token, request, { name: user.name }),
-  },
-  emailVerification: {
-    sendOnSignUp: true,
-    sendOnSignIn: true, // an unverified sign-in attempt mails a fresh link
-    autoSignInAfterVerification: true,
-    afterEmailVerification: (user) => personSync(user.id),
-    sendVerificationEmail: ({ user, url, token }, request) =>
-      sendEmail('verify-email', user.email, url, token, request, { name: user.name }),
-  },
+  // Passwordless (ADR 0029): one-time e-mail codes, passkeys and SSO. No passwords anywhere.
+  emailAndPassword: { enabled: false },
+  // Code sign-in verifies the address itself; this covers OIDC users the IdP does not vouch for.
+  emailVerification: { afterEmailVerification: (user) => personSync(user.id) },
   plugins: [
+    // Sign-in (and sign-up on first use) by a 6-digit code mailed to the address. Codes are stored
+    // encrypted, expire after 5 minutes and allow 3 tries; the resend cooldown is in app.ts.
+    emailOTP({
+      otpLength: 6,
+      expiresIn: 5 * 60,
+      allowedAttempts: 3,
+      storeOTP: 'encrypted',
+      overrideDefaultEmailVerification: true,
+      // Only these two kinds: the password-reset and change-email codes are never mailed, so
+      // their endpoints have nothing to accept.
+      sendVerificationOTP: async ({ email, otp, type }, ctx) => {
+        const kind = { 'sign-in': 'sign-in-code', 'email-verification': 'verify-email' } as const;
+        if (type !== 'sign-in' && type !== 'email-verification') return;
+        await sendEmail(kind[type], email, otp, randomUUID(), ctx?.request);
+      },
+    }),
     organization({
       // Seats come from the plan (config/plans.json); checked on add-member and invite accept.
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
@@ -118,9 +130,15 @@ export const auth = betterAuth({
         ),
     }),
     apiKeys,
-    // 2FA and passkeys (ADR 0017). TOTP + backup codes + trusted devices; passwordless = SSO
-    // users may enrol too (a password is still asked whenever the account has one).
-    twoFactor({ issuer: env.APP_NAME, allowPasswordless: true }),
+    totp,
+    // The twoFactor plugin only challenges password sign-ins; run its same step after a code
+    // sign-in, so an account with TOTP gets { twoFactorRedirect } and no session.
+    {
+      id: 'two-factor-email-otp',
+      hooks: {
+        after: [{ matcher: (c) => c.path === '/sign-in/email-otp', handler: totp.hooks.after[0]!.handler }],
+      },
+    },
     // A passkey sign-in is multi-factor on its own (device + PIN/biometric): no TOTP step.
     passkey({
       rpID: env.PASSKEY_RP_ID ?? new URL(env.BETTER_AUTH_URL).hostname,
@@ -144,7 +162,7 @@ export const auth = betterAuth({
   // Rate limiting is done by @fastify/rate-limit backed by Redis (shared across replicas).
   rateLimit: { enabled: false },
   advanced: {
-    // Mail callbacks run after the response: a reset request answers equally fast whether or
+    // Mail callbacks run after the response: a code request answers equally fast whether or
     // not the account exists (no enumeration by timing).
     backgroundTasks: { handler: (task) => void task.catch((err) => Sentry.captureException(err)) },
     useSecureCookies: env.NODE_ENV === 'production',

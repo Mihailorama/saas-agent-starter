@@ -16,6 +16,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 // Small per-key limit so the test can hit it; set before the app reads its env.
 process.env.API_KEY_RATE_LIMIT_PER_MINUTE = '25';
 const { buildApp } = await import('../src/app.ts');
+const { signUp: codeSignUp } = await import('./sign-in.ts');
 const { auth } = await import('../src/auth.ts');
 const { db, pool } = await import('../src/db.ts');
 const { allowedOrigins } = await import('../src/env.ts');
@@ -34,32 +35,7 @@ afterAll(async () => {
 type User = { id: string; cookie: string };
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
-/** Signs up and signs in. The address is marked verified in the DB: the mailed confirmation
- * flow itself is covered in api.test.ts. */
-async function signUp(): Promise<User> {
-  const credentials = { email: `${randomUUID()}@example.com`, password: 'correct-horse-battery' };
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { ...credentials, name: 'T' },
-  });
-  expect(res.statusCode).toBe(200);
-  await db.update(user).set({ emailVerified: true }).where(eq(user.email, credentials.email));
-  const signedIn = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-in/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: credentials,
-  });
-  expect(signedIn.statusCode).toBe(200);
-  return {
-    id: res.json().user.id,
-    cookie: signedIn.cookies.map((c) => `${c.name}=${c.value}`).join('; '),
-  };
-}
+const signUp = () => codeSignUp(app);
 
 const call = (user: User | null, method: Method, url: string, payload?: object) =>
   app.inject({

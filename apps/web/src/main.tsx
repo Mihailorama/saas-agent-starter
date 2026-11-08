@@ -20,7 +20,6 @@ import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
-import { ResetPasswordPage } from '@/pages/reset-password';
 import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
 import { SignInPage, safeRedirect } from '@/pages/sign-in';
@@ -57,17 +56,6 @@ const twoFactorRoute = createRoute({
     redirect: safeRedirect(s.redirect),
   }),
   component: TwoFactorPage,
-});
-
-// Public: the emailed reset link lands here with ?token= (or ?error= when it is invalid).
-const resetPasswordRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/reset-password',
-  validateSearch: (s: Record<string, unknown>): { token?: string; error?: string } => ({
-    token: typeof s.token === 'string' ? s.token : undefined,
-    error: typeof s.error === 'string' ? s.error : undefined,
-  }),
-  component: ResetPasswordPage,
 });
 
 /** Session required; signed-out visitors come back here after signing in. */
@@ -200,7 +188,6 @@ const router = createRouter({
   routeTree: rootRoute.addChildren([
     signInRoute,
     twoFactorRoute,
-    resetPasswordRoute,
     acceptInvitationRoute,
     aiTransparencyRoute,
     adminRoute.addChildren([adminOrgsRoute, adminOrgRoute, adminUsersRoute, adminUserRoute]),

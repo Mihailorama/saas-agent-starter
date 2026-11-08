@@ -6,6 +6,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
+import { signUp } from './sign-in.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { closeTemporal } from '../src/temporal.ts';
@@ -25,7 +26,6 @@ afterAll(async () => {
 });
 
 async function newOrg() {
-  const credentials = { email: `${randomUUID()}@example.com`, password: 'correct-horse-battery' };
   const post = (url: string, payload: object, cookie?: string) =>
     app.inject({
       method: 'POST',
@@ -34,12 +34,7 @@ async function newOrg() {
       headers: { origin, ...(cookie && { cookie }) },
       payload,
     });
-  expect((await post('/api/auth/sign-up/email', { ...credentials, name: 'T' })).statusCode).toBe(
-    200,
-  );
-  await db.update(user).set({ emailVerified: true }).where(eq(user.email, credentials.email));
-  const signedIn = await post('/api/auth/sign-in/email', credentials);
-  const cookie = signedIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+  const { cookie } = await signUp(app);
   const org = (
     await post('/api/auth/organization/create', { name: 'Org', slug: randomUUID() }, cookie)
   ).json().id;

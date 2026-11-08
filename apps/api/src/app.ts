@@ -52,7 +52,7 @@ export async function buildApp() {
         const ctx = trace.getActiveSpan()?.spanContext();
         return ctx ? { trace_id: ctx.traceId, span_id: ctx.spanId } : {};
       },
-      redact: { paths: ['*.password', '*.token', '*.secret', '*.cookie', '*.authorization'] },
+      redact: { paths: ['*.password', '*.otp', '*.token', '*.secret', '*.cookie', '*.authorization'] },
       serializers: {
         // Never log query strings or reset tokens (mailed auth links carry them) or headers.
         req: (req) => ({ method: req.method, url: redactUrl(req.url), ip: req.ip }),
@@ -217,8 +217,27 @@ export async function buildApp() {
   // Second factors and passkey sign-in (the twoFactor plugin also locks the account itself).
   authRoute('/api/auth/two-factor/*', 10, ['POST']);
   authRoute('/api/auth/passkey/verify-authentication', 10, ['POST']);
-  authRoute('/api/auth/request-password-reset', 10, ['POST']);
   authRoute('/api/auth/send-verification-email', 10, ['POST']);
+  authRoute('/api/auth/email-otp/*', 10, ['POST']);
+  // Resend cooldown: one code per address per 30 s, whoever asks. Each request replaces the
+  // address's code, so this also stops others from invalidating a code faster than that.
+  const codeCooldown = app.rateLimit({
+    max: 1,
+    timeWindow: '30 seconds',
+    keyGenerator: (req) =>
+      `otp:${createHash('sha256')
+        .update(String((req.body as { email?: unknown })?.email ?? '').toLowerCase())
+        .digest('base64url')}`,
+  });
+  app.post(
+    '/api/auth/email-otp/send-verification-otp',
+    {
+      schema: { hide: true },
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+      preHandler: codeCooldown,
+    },
+    authHandler,
+  );
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });

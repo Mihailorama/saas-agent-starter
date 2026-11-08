@@ -214,15 +214,6 @@ export function AdminUserPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!u.emailVerified && (
-            <ReasonDialog
-              trigger={<Button variant="outline">Resend verification</Button>}
-              title="Resend verification email"
-              description={`Sends a new confirmation link to ${u.email}.`}
-              confirm="Send"
-              onConfirm={act('resend-verification', 'Verification email sent')}
-            />
-          )}
           <ReasonDialog
             trigger={<Button variant="outline">Revoke sessions</Button>}
             title="Revoke all sessions"

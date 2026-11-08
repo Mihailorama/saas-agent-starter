@@ -89,7 +89,8 @@ function BackupCodes({ codes }: { codes: string[] }) {
   );
 }
 
-/** Password field for re-confirming identity; SSO-only accounts have no password to ask. */
+/** Password field for re-confirming identity: only accounts from before passwordless sign-in
+ * (ADR 0029) still have a password to ask. */
 function PasswordField({ hasPassword }: { hasPassword: boolean }) {
   if (!hasPassword) return null;
   return (
@@ -329,7 +330,7 @@ function TwoFactorCard({
           <Badge variant={enabled ? 'default' : 'outline'}>{enabled ? 'On' : 'Off'}</Badge>
         </div>
         <CardDescription>
-          Sign-in with a password also asks for a code from your authenticator app.
+          Sign-in with an email code also asks for a code from your authenticator app.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">
@@ -356,7 +357,7 @@ function TwoFactorCard({
         open={dialog === 'disable'}
         onOpenChange={(o) => !o && close()}
         title="Turn off two-factor authentication?"
-        description="Your account will be protected by the password only. If your organization requires two-factor, you lose access until you set it up again."
+        description="Your account will be protected by email codes only. If your organization requires two-factor, you lose access until you set it up again."
       >
         <form onSubmit={disable} className="space-y-4" aria-label="Turn off two-factor">
           <PasswordField hasPassword={hasPassword} />
@@ -457,8 +458,8 @@ function PasskeysCard({ onReauth }: { onReauth: (e: AuthError) => boolean }) {
           <KeyRound className="size-4" aria-hidden /> Passkeys
         </CardTitle>
         <CardDescription>
-          Sign in with your fingerprint, face, screen lock or a security key instead of a password
-          and code.
+          Sign in with your fingerprint, face, screen lock or a security key instead of an email
+          code.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
