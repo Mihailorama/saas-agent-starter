@@ -399,6 +399,25 @@ async def test_org_deletion_then_record_purge(
         endpoint,
         org,
     )
+    await in_org(
+        pool,
+        org,
+        "insert into mcp_servers (org_id, name, url, purposes, allowed_tools, auth_header,"
+        " auth_secret) values ($1, 'tools', 'https://mcp.example.com/mcp', '{project.summary}',"
+        " '{search}', 'Authorization', 'x')"
+        " returning id",
+        org,
+    )
+    exp = await new_request(pool, "export", "org", org, datetime.now(UTC))
+    await client.execute_workflow(
+        DataExportWorkflow.run, exp, id=f"privacy-export-{exp.requestId}", task_queue=TASK_QUEUE
+    )
+    key = await pool.fetchval(
+        "select result_key from privacy_requests where id = $1", exp.requestId
+    )
+    z = zipfile.ZipFile(io.BytesIO(await acts.files.get(key)))
+    [server] = json.loads(z.read("db/mcp_servers.json"))
+    assert server["allowed_tools"] == ["search"] and "auth_secret" not in server
     # Renewal was stopped by the API when the deletion was requested (cancel_at_period_end).
     await in_org(
         pool,
@@ -423,6 +442,7 @@ async def test_org_deletion_then_record_purge(
     assert await pool.fetchval("select count(*) from member where organization_id = $1", org) == 0
     assert await in_org(pool, org, "select 1 from projects") == []
     assert await in_org(pool, org, "select 1 from webhook_endpoints") == []
+    assert await in_org(pool, org, "select 1 from mcp_servers") == []
     assert not await exists(acts.files, p["file"])
     assert not await exists(acts.ai_content, f"{p['ai']}/request.json")
     name = await pool.fetchval("select name from organization where id = $1", org)

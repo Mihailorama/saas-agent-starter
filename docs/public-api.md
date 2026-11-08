@@ -28,14 +28,16 @@ like a session would (ADR 0002), and `audit_log.actor_id` is `apikey:<key id>`.
 Each scope maps to the role a signed-in user needs for the same routes, so a key never does
 more than an org role could. The UI only offers scopes the creator's role covers.
 
-| Scope             | Same as role | Routes                                                       |
-| ----------------- | ------------ | ------------------------------------------------------------ |
-| `projects:read`   | member       | `GET /api/projects...`, attachment list and download         |
-| `projects:write`  | member       | create/update projects, attachments, AI summary review       |
-| `projects:delete` | admin        | `DELETE /api/projects/{id}`                                  |
-| `ai_calls:read`   | admin        | `GET /api/orgs/{orgId}/ai-calls...`                          |
-| `webhooks:read`   | admin        | `GET /api/webhooks/...` (endpoints, deliveries, event types) |
-| `webhooks:write`  | admin        | manage endpoints, rotate secrets, replay deliveries          |
+| Scope               | Same as role | Routes                                                       |
+| ------------------- | ------------ | ------------------------------------------------------------ |
+| `projects:read`     | member       | `GET /api/projects...`, attachment list and download         |
+| `projects:write`    | member       | create/update projects, attachments, AI summary review       |
+| `projects:delete`   | admin        | `DELETE /api/projects/{id}`                                  |
+| `ai_calls:read`     | admin        | `GET /api/orgs/{orgId}/ai-calls...`                          |
+| `webhooks:read`     | admin        | `GET /api/webhooks/...` (endpoints, deliveries, event types) |
+| `webhooks:write`    | admin        | manage endpoints, rotate secrets, replay deliveries          |
+| `mcp_servers:read`  | admin        | `GET /api/mcp-servers` (docs/mcp.md, flag `mcp-tools`)       |
+| `mcp_servers:write` | admin        | connect, change and remove MCP servers                       |
 
 Only routes declared with `access('<scope>')` (`apps/api/src/tenant.ts`) accept keys. They are
 marked in `/api/openapi.json` with the `apiKey` security scheme and "API key scope: ..." in the

@@ -28,6 +28,7 @@ from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
+from worker.mcp import McpConfig
 from worker.posthog import PostHogAi
 from worker.privacy import PrivacyActivities, configured_tools
 from worker.providers import load_providers, providers_from_config
@@ -131,6 +132,14 @@ async def main() -> None:
             posthog=posthog,
             plans=plans,
             byo=Byo(secret_keys, [ip_network(c) for c in settings.AI_BYO_ALLOWED_CIDRS])
+            if secret_keys
+            else None,
+            mcp=McpConfig(
+                secret_keys,
+                [ip_network(c) for c in settings.MCP_ALLOWED_CIDRS],
+                settings.MCP_TOOL_MAX_ITERATIONS,
+                settings.MCP_TOOL_TIMEOUT_SECONDS,
+            )
             if secret_keys
             else None,
         )

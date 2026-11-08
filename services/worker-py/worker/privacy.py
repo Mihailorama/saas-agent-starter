@@ -56,6 +56,7 @@ SECRET_COLUMNS = {
     "passkey": {"public_key"},
     "apikey": {"key"},
     "webhook_endpoints": {"secret", "previous_secret"},
+    "mcp_servers": {"auth_secret"},
 }
 
 
@@ -691,6 +692,7 @@ class PrivacyActivities:
             "webhook_deliveries",
             "webhook_attempts",
             "subscriptions",
+            "mcp_servers",
         )
 
         async def q(conn: Conn, _: str) -> dict[str, list[Doc]]:
@@ -952,6 +954,7 @@ class PrivacyActivities:
                 "webhook_deliveries",
                 "webhook_events",
                 "webhook_endpoints",
+                "mcp_servers",
                 "projects",  # attachments cascade
             ):
                 removed += int((await conn.execute(f"delete from {table}")).split()[-1])  # noqa: S608

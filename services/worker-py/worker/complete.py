@@ -38,7 +38,7 @@ async def main() -> None:
     doc = json.load(sys.stdin)
     call = providers_from_config(configs)[args.provider]
     completion = await call(
-        args.model, [Message("system", doc["system"]), Message("user", doc["prompt"])], 4096
+        args.model, [Message("system", doc["system"]), Message("user", doc["prompt"])], 4096, ()
     )
     sys.stdout.write(completion.text)
 
