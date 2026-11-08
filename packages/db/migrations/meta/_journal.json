@@ -68,8 +68,29 @@
     {
       "idx": 9,
       "version": "7",
-      "when": 1794153673336,
-      "tag": "0009_reward_grants",
+      "when": 1794157280622,
+      "tag": "0009_billing_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794157678760,
+      "tag": "0010_billing_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794160189545,
+      "tag": "0011_telegram_support",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794161494426,
+      "tag": "0012_reward_grants",
       "breakpoints": true
     }
   ]

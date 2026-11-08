@@ -12,7 +12,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx2
 from temporalio import activity
@@ -21,6 +21,9 @@ from worker import pii, prompts
 from worker.activities import ModelChoice
 from worker.ai import Gateway, Message
 from worker.tracker import GitHub, Item, Tracker, obj
+
+if TYPE_CHECKING:
+    from worker.telegram import TelegramActivities
 
 log = logging.getLogger(__name__)
 
@@ -150,8 +153,9 @@ class SupportActivities:
         model: ModelChoice | None,
         ai_org_id: str,
         notify: str = "",
+        telegram: "TelegramActivities | None" = None,
     ) -> None:
-        self.chatwoot, self.tracker = chatwoot, tracker
+        self.chatwoot, self.tracker, self.telegram = chatwoot, tracker, telegram
         self.ai, self.model, self.ai_org_id = ai, model, ai_org_id
         self.notify = notify  # "" | "close" | "release": when the customer hears it is resolved
 
@@ -287,9 +291,6 @@ class SupportActivities:
             return 0
         resolved = bool(e.release) or item.group == "completed"
         conversations = linked_conversations(item.texts)
-        if self.chatwoot is None:
-            log.info("dry run: would notify %d conversations", len(conversations))
-            return len(conversations)
         if e.release:
             note = f"Linked issue {item.url} is live in {e.release}."
         elif resolved:
@@ -297,9 +298,18 @@ class SupportActivities:
         else:
             note = f"Linked issue {item.url} was closed without a fix (not planned)."
         tell = resolved and self.notify == ("release" if e.release else "close")
+        # Topics of the lite Telegram support (worker/telegram.py), linked the same way.
+        topics = 0
+        if self.telegram:
+            topics = await self.telegram.notify_closed(
+                item.texts, note, RESOLVED_MESSAGE if tell else ""
+            )
+        if self.chatwoot is None:
+            log.info("dry run: would notify %d conversations", len(conversations))
+            return len(conversations) + topics
         for c in conversations:
             await self.chatwoot.note(c, note)
             if tell:
                 await self.chatwoot.reply(c, RESOLVED_MESSAGE)
         activity.logger.info("issue %s closed: notified %d conversations", e, len(conversations))
-        return len(conversations)
+        return len(conversations) + topics

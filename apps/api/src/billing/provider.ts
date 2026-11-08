@@ -1,36 +1,39 @@
 import type { Subscription } from './entitlements.ts';
-import type { Price } from './plans.ts';
+import type { PriceComponent } from './plans.ts';
 
 /**
  * A payment provider, normalized (docs/billing.md "Adding a provider"). Nothing here is
- * provider-specific: an adapter maps its own objects to these shapes.
+ * provider-specific: an adapter maps its own objects to these shapes. What a provider can do is
+ * which optional methods it has; routes and the billing page check for them.
  */
 export interface BillingProvider {
   readonly id: string;
+  /** Who sends invoices: the provider, or someone outside it (`manual` contracts). Rewards for
+   * `external` orgs wait for operators (docs/growth.md). */
+  readonly invoicing: 'provider' | 'external';
   /** Hosted payment page for the first period of `planId`; returns where to send the browser. */
-  checkout(input: CheckoutInput): Promise<{ url: string }>;
-  /** Hosted self-service page (invoices, payment method), or null if the provider has none. */
-  portal(sub: Subscription, returnUrl: string): Promise<string | null>;
+  checkout?(input: CheckoutInput): Promise<{ url: string }>;
+  /** Optional: hosted payment page for one prepaid credit pack (docs/billing.md). */
+  topUp?(input: TopUpInput): Promise<{ url: string }>;
+  /** Optional: the provider's prepaid balance left, in minor units of the currency. */
+  creditBalance?(sub: Subscription): Promise<number>;
+  /** Hosted self-service page (invoices, payment method), or null for this subscription. */
+  portal?(sub: Subscription, returnUrl: string): Promise<string | null>;
   /** Stop renewing at the end of the paid period. */
-  cancel(sub: Subscription): Promise<void>;
+  cancel?(sub: Subscription): Promise<void>;
   /** Verifies a webhook and maps it to events; throws WebhookRejected if it is not authentic. */
   webhook(req: WebhookRequest): Promise<BillingEvent[]>;
   /** The subscription in the provider's own dashboard, for operators (docs/admin.md). */
   dashboardUrl(sub: Subscription): string | null;
-  /**
-   * Who issues the invoices: `provider` (this adapter), or `external` (a manual contract invoiced
-   * outside any PSP): rewards for such orgs wait for operators (docs/growth.md).
-   */
-  readonly invoicing: 'provider' | 'external';
-  /** Credits money to the customer's balance (used by its next invoices, metered ones too);
-   * returns the provider object's id. Absent = the provider cannot. */
+  /** Optional (rewards, docs/growth.md): credits money to the customer's balance, used by its
+   * next invoices (metered ones too); returns the provider object's id. */
   applyCredit?(sub: Subscription, credit: Credit): Promise<string>;
-  /** Adds a provider coupon to the subscription, keeping its other discounts; returns its id. */
+  /** Optional (rewards): adds a coupon to the subscription, keeping its other discounts. */
   applyCoupon?(sub: Subscription, coupon: { couponId: string; key: string }): Promise<string>;
 }
 
 export type Credit = {
-  /** Decimal string in major units ("5.00"), in `currency` (ISO 4217, the customer's). */
+  /** Decimal string in major units ("5.00"; money.ts converts), in `currency` (the customer's). */
   amount: string;
   currency: string;
   description: string;
@@ -43,10 +46,22 @@ export type CheckoutInput = {
   planId: string;
   planName: string;
   currency: string;
-  price: Price;
+  /** The plan's components in `currency` to subscribe to (flat, per_seat, metered). */
+  prices: PriceComponent[];
+  /** Quantity for a per_seat component: the org's current members. */
+  seats: number;
   /** Provider customer id from an earlier subscription, if any. */
   customerId: string | null;
   /** Page the provider sends the user back to (`?checkout=success|canceled` is appended). */
+  returnUrl: string;
+};
+
+export type TopUpInput = {
+  orgId: string;
+  planId: string;
+  customerId: string;
+  /** The plan's `credits` component in the subscription's currency. */
+  pack: Extract<PriceComponent, { model: 'credits' }>;
   returnUrl: string;
 };
 
@@ -68,7 +83,9 @@ export type BillingEvent = {
     | 'subscription.past_due'
     | 'subscription.canceled'
     | 'payment.succeeded'
-    | 'payment.failed';
+    | 'payment.failed'
+    /** A paid credit pack: the worker grants the plan's pack value once per eventId. */
+    | 'credits.purchased';
   orgId: string;
   /** ISO time the provider produced the event; older events never overwrite newer state. */
   occurredAt: string;
@@ -79,6 +96,10 @@ export type BillingEvent = {
   periodStart?: string;
   periodEnd?: string;
   cancelAtPeriodEnd?: boolean;
+  /** Purchased seats of a per_seat price. */
+  seats?: number;
+  /** Contract reference (order form, PO number), from the subscription's metadata. */
+  contractRef?: string;
 };
 
 export class WebhookRejected extends Error {}

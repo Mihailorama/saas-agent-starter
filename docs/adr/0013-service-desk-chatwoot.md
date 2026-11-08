@@ -89,3 +89,40 @@ Picks that are not obvious, one line each:
 - Webhook starts are not transactional: if Temporal is down when Chatwoot calls, that triage is
   lost (Chatwoot does not retry account webhooks). Same gap as the project workflow start
   (docs/TODO.md, outbox).
+
+## Amendment (2026-11-08): lite Telegram support without Chatwoot
+
+Owner request: support done simply in Telegram, built into the boilerplate, for products whose
+users live in Telegram (the first one is a marketplace built from the template). Chatwoot's
+Telegram inbox works but brings Rails, Sidekiq and ~1 GiB for what is a relay.
+
+- **Pattern**: a bot plus the team's forum supergroup, one topic per Telegram user; the team
+  replies in the topic and the bot copies the reply back (`copyMessage`, so media pass and no
+  "forwarded from" header shows). Behind the flag `telegram-support`, off by default.
+- **Built in, no container, no new dependency**: plain Bot API over `httpx2` in the worker
+  (`worker/telegram.py`, five methods). Checked 2026-11-08 for an "install" option:
+  [MasterGroosha/telegram-feedback-bot-topics](https://github.com/MasterGroosha/telegram-feedback-bot-topics)
+  (MIT, aiogram 3 + its own PostgreSQL, the closest match) says "still under development", has had
+  no release since v2025.02.1 (February 2025) and is built from source;
+  [bostrot/telegram-support-bot](https://github.com/bostrot/telegram-support-bot) is active but
+  GPL-3.0 and ticket-per-staff-thread rather than topic-per-user. Neither could link app accounts
+  or file through our tracker without being modified. aiogram (MIT) would add a framework and its
+  dispatcher for five calls; python-telegram-bot is LGPL-3.0 (banned by ADR 0005).
+- **Same shape as the Chatwoot path**: a webhook on the API (`POST /api/hooks/telegram`, Telegram's
+  `X-Telegram-Bot-Api-Secret-Token` compared in constant time) signals one Temporal workflow
+  per chat or topic (signal-with-start), which relays its messages in order, one activity per step;
+  the worker does the Bot API calls. Ids only in workflow arguments: the API verifies `/start`
+  links (10 minutes, single use) and puts `/bug` titles in S3. `/bug` and
+  `/feature` in a topic use the triage's producers and tracker client; the return path notes the
+  outcome in linked topics as it does in conversations (the topic link in the item is the link).
+- **Two small tables**: `telegram_support_users` (Telegram user, group, topic, linked app user;
+  Telegram has no "find topic by user" call; deleted with the app user) and
+  `telegram_support_links` (used link signatures). Not tenant data.
+- **The support group is the trust boundary**: private, no invite links, no anonymous admins.
+- **Keys derived from the bot token** (HMAC with a purpose label) for the webhook secret and the
+  deep-link signature: one secret to manage, rotated with the token.
+- **"Connect" for teams that outgrow it** is the Chatwoot Telegram inbox above: same bot, unset
+  the `TELEGRAM_SUPPORT_*` variables.
+
+Consequence: support content is processed by Telegram only (no self-hosted variant), and a busy
+group hits Telegram's 20-messages-per-minute group limit (docs/support.md, "Limits").

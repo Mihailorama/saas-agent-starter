@@ -7,6 +7,18 @@
       "default": false,
       "expires": "2027-05-31"
     },
+    "billing-credits": {
+      "description": "Prepaid credit packs: \"Buy credits\" and the balance on the billing page, credit grants after payment, and AI calls stop when the prepaid balance is used up.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "billing-usage": {
+      "description": "Usage-based billing: usage reported to the payment provider's meters, API-key requests counted, and on pay-as-you-go plans the LLM spend limit as a warning (calls stop only at the organization's own cap).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "byo-llm-providers": {
       "description": "Settings page where organization admins add their own AI provider (API key or OpenAI-compatible endpoint).",
       "owner": "@mihailorama",
@@ -45,6 +57,12 @@
     },
     "onboarding": {
       "description": "Onboarding checklist on the projects page and the first-visit product tour (docs/onboarding.md).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "telegram-support": {
+      "description": "Lite support in Telegram: the bot relays users' messages to a topic per user in the team's forum group and the team's replies back; \"Telegram\" in the app's Help menu (docs/support.md). Needs TELEGRAM_SUPPORT_BOT_TOKEN, TELEGRAM_SUPPORT_CHAT_ID and, for the menu, VITE_TELEGRAM_SUPPORT_BOT.",
       "owner": "@mihailorama",
       "default": false,
       "expires": "2027-05-31"

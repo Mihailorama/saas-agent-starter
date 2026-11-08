@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -8,13 +9,14 @@ import {
   numeric,
   pgPolicy,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { organization } from './auth-schema.ts';
+import { organization, user } from './auth-schema.ts';
 
 export * from './auth-schema.ts';
 
@@ -230,6 +232,12 @@ export const subscriptions = pgTable(
     currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
     currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
     cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+    /** Purchased seats of a per_seat price: the seat limit (docs/billing.md "Per seat"). */
+    seats: integer('seats'),
+    /** Contract reference (order form, PO) of an invoiced contract, set by an operator. */
+    contractRef: text('contract_ref'),
+    /** Usage is reported to the provider's meters up to this hour (worker/usage.py). */
+    usageReportedUntil: timestamp('usage_reported_until', { withTimezone: true }),
     /** Admin-raised LLM spend limits per currency, capped by the plan's llmSpendMax. */
     llmSpendLimits: jsonb('llm_spend_limits').$type<Record<string, number>>(),
     /** Time of the newest provider event applied; older (replayed) events are ignored. */
@@ -243,6 +251,22 @@ export const subscriptions = pgTable(
     ),
     tenantIsolation(),
   ],
+);
+
+/**
+ * API-key requests per org and hour, the source of the `api_calls` meter (docs/billing.md
+ * "Usage-based"). The worker reports each closed hour once to the provider; not a usage ledger
+ * (the provider rates and invoices). Written only while the `billing-usage` flag is on.
+ */
+export const usageCounters = pgTable(
+  'usage_counters',
+  {
+    orgId: orgId(),
+    meter: text('meter').notNull(),
+    hour: timestamp('hour', { withTimezone: true }).notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.meter, t.hour] }), tenantIsolation()],
 );
 
 /**
@@ -428,3 +452,31 @@ export const rewardGrants = pgTable(
     tenantIsolation(),
   ],
 );
+
+/**
+ * Lite Telegram support (docs/support.md "Lite: Telegram only"): which forum topic of the support
+ * group belongs to which Telegram user, and the app user they linked with the Help menu's deep
+ * link. Not tenant-scoped: a Telegram user is not an organization's data. Messages are not stored
+ * here; they stay in Telegram. Deleting the app user deletes the row (docs/privacy.md).
+ */
+export const telegramSupportUsers = pgTable(
+  'telegram_support_users',
+  {
+    telegramUserId: bigint('telegram_user_id', { mode: 'number' }).primaryKey(),
+    /** Support group (TELEGRAM_SUPPORT_CHAT_ID) the topic is in; another group = a new topic. */
+    chatId: bigint('chat_id', { mode: 'number' }).notNull(),
+    topicId: integer('topic_id').notNull(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex().on(t.chatId, t.topicId), index().on(t.userId)],
+);
+
+/**
+ * Deep-link signatures already used (docs/support.md "Account link"): a payload links one
+ * Telegram account once. Written by the API; rows past the payload's 10 minutes are pruned there.
+ */
+export const telegramSupportLinks = pgTable('telegram_support_links', {
+  signature: text('signature').primaryKey(),
+  usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+});

@@ -1176,6 +1176,18 @@ export interface paths {
                             periodEnd: string;
                             cancelAtPeriodEnd: boolean;
                             canManage: boolean;
+                            selfService: {
+                                portal: boolean;
+                                cancel: boolean;
+                            };
+                            payg: boolean;
+                            credits: {
+                                balance: number | null;
+                                pack: {
+                                    credits: number;
+                                    amount: string;
+                                };
+                            } | null;
                             usage: {
                                 seats: {
                                     used: number;
@@ -1207,6 +1219,8 @@ export interface paths {
                                     amount: string;
                                     interval: string;
                                 } | null;
+                                models: string[];
+                                checkout: boolean;
                             }[];
                         };
                     };
@@ -1266,6 +1280,55 @@ export interface paths {
                     content: {
                         "application/json": {
                             error: string;
+                        };
+                    };
+                };
+                /** @description Default Response */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/credits/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Default Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** Format: uri */
+                            url: string;
                         };
                     };
                 };
@@ -2222,6 +2285,76 @@ export interface paths {
                             name: string;
                             email: string;
                             orgId: string | null;
+                        };
+                    };
+                };
+                /** @description Default Response */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                        };
+                    };
+                };
+                /** @description Default Response */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                        };
+                    };
+                };
+                /** @description Default Response */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            error: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Default Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            start: string;
                         };
                     };
                 };

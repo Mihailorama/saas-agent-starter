@@ -92,6 +92,9 @@ const sub = (over: Partial<Subscription> = {}): Subscription => ({
   currentPeriodStart: null,
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
+  seats: null,
+  contractRef: null,
+  usageReportedUntil: null,
   llmSpendLimits: null,
   lastEventAt: null,
   updatedAt: new Date(),
@@ -120,7 +123,9 @@ describe('config/rewards.json', () => {
     expect(bad({ ...money, trigger: 'button_clicked' })).toBe(false); // client events never count
     expect(
       bad({ ...money, reward: { kind: 'balance_credit', amount: '500.00', currency: 'JPY' } }),
-    ).toBe(false); // not a two-decimal currency
+    ).toBe(false); // JPY has no minor digits (money.ts)
+    const yen = { kind: 'balance_credit', amount: '500', currency: 'JPY' };
+    expect(bad({ ...money, reward: yen })).toBe(true);
     const spend = { kind: 'entitlement', key: 'llmSpendMonthly', delta: 2, months: 1 };
     expect(bad({ ...money, fallback: spend })).toBe(false); // spend rewards name their currency
     expect(bad({ ...money, trigger: 'org.profile_completed' })).toBe(false); // no requiredMetadata

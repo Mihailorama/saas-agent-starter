@@ -40,6 +40,9 @@ agreements with the tools it configures.
 | `mcp_servers`                                              | server URLs; auth header value (encrypted)        | - / yes, without the auth header value             | -                                                                   | deleted                                                        | contract                                                                            |
 | `subscriptions`                                            | none (provider customer/subscription ids)         | - / yes                                            | -                                                                   | renewal stopped at request, row deleted                        | contract                                                                            |
 | `reward_grants`                                            | ids only (subject: the invited user's id)         | rows where they are the subject / yes              | **row kept** (random id; the org's billing record)                  | kept until the organization row is deleted (cascade)           | contract                                                                            |
+| `telegram_support_users`                                   | Telegram user id, topic id, linked user id        | the user's (linked) rows / -                       | deleted (cascade); the topic stays in your Telegram group (below)   | -                                                              | legitimate interest (answering support requests)                                    |
+| `telegram_support_links`                                   | none (signatures of used deep links)              | - / -                                              | - (pruned after 20 minutes)                                         | -                                                              | security                                                                            |
+| `usage_counters`                                           | none (API-key requests per org and hour)          | - / yes                                            | -                                                                   | deleted with the organization                                  | contract                                                                            |
 | `privacy_requests`                                         | ids only                                          | the user's / the organization's                    | **kept** as the record of the request (report has no personal data) | **kept**                                                       | legal obligation (demonstrating compliance)                                         |
 
 `ai_calls.actor_id` and `audit_log.actor_id` keep a random user id after erasure. The user row
@@ -60,6 +63,12 @@ no longer identifies anyone through our systems.
 - **Temporal history**: workflow arguments hold ids, plus the recipient address and rendered body
   of transactional mails (incl. the export-ready mail) and, for a user deletion, the GA4 client id.
   Kept for the namespace retention period (docs/TODO.md, "Mailed links live in Temporal history").
+- **Telegram (lite support, docs/support.md)**: users' messages and the team's answers live in
+  the user's chat with the bot and in their topic of your support group, not with us. A deletion
+  removes the mapping row; delete the user's topic in the group by hand (the topic link is in any
+  tracker item filed from it). Telegram users who never linked an app account can only be found by
+  their topic. Temporal history holds message ids and the linked user id; a `/bug` / `/feature`
+  title waits in S3 (`tracker-inbox/`, deleted after filing, leftovers after a day).
 - **Logs and traces** (Loki, Jaeger/Langfuse): ids and counts only by rule (AGENTS.md
   "Observability"); no content, no addresses.
 - **Mail provider**: delivery logs with recipient addresses, under the provider's retention.

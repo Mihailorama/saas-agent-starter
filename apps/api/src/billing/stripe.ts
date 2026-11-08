@@ -1,6 +1,16 @@
 import Stripe from 'stripe';
-import { planByProviderPriceId } from './plans.ts';
+import { toMinor } from './money.ts';
+import { componentByProviderPriceId, type PriceComponent } from './plans.ts';
 import { type BillingEvent, type BillingProvider, WebhookRejected } from './provider.ts';
+
+/** Checkout/subscription items: metered prices take no quantity, per-seat prices the seats. */
+export function lineItems(prices: PriceComponent[], seats: number) {
+  return prices.map((c) => {
+    if (!c.providerPriceId) throw new Error(`no Stripe price id for a ${c.model} price`);
+    if (c.model === 'metered') return { price: c.providerPriceId };
+    return { price: c.providerPriceId, quantity: c.model === 'per_seat' ? Math.max(1, seats) : 1 };
+  });
+}
 
 /**
  * Stripe adapter (official `stripe` SDK, MIT). Stripe owns the subscription: Checkout creates it,
@@ -36,9 +46,13 @@ export function stripeProvider(opts: {
     const orgId = sub.metadata?.orgId;
     const item = sub.items.data[0];
     if (!orgId || !item) return []; // not created by our checkout
+    const known = sub.items.data.map((i) => ({ i, ...componentByProviderPriceId(i.price.id) }));
+    const seats = known.find((k) => k.component?.model === 'per_seat')?.i.quantity;
     const state = {
       ...base(e, orgId),
-      planId: planByProviderPriceId(item.price.id) ?? sub.metadata.planId,
+      planId: known.find((k) => k.planId)?.planId ?? sub.metadata.planId,
+      ...(seats !== undefined && { seats }),
+      ...(sub.metadata.contractRef && { contractRef: sub.metadata.contractRef }),
       currency: sub.currency.toUpperCase(),
       customerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
       subscriptionId: sub.id,
@@ -64,12 +78,13 @@ export function stripeProvider(opts: {
   return {
     id: 'stripe',
 
+    invoicing: 'provider',
+
     async checkout(input) {
-      if (!input.price.providerPriceId) throw new Error(`no Stripe price id for ${input.planId}`);
       const metadata = { orgId: input.orgId, planId: input.planId };
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
-        line_items: [{ price: input.price.providerPriceId, quantity: 1 }],
+        line_items: lineItems(input.prices, input.seats),
         client_reference_id: input.orgId,
         ...(input.customerId && { customer: input.customerId }),
         metadata,
@@ -79,6 +94,35 @@ export function stripeProvider(opts: {
       });
       if (!session.url) throw new Error('Stripe returned a checkout session without url');
       return { url: session.url };
+    },
+
+    // A credit pack: a one-time payment; the worker grants it after checkout.session.completed.
+    async topUp(input) {
+      if (!input.pack.providerPriceId) throw new Error('no Stripe price id for the credit pack');
+      const metadata = { orgId: input.orgId, planId: input.planId, kind: 'credits' };
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer: input.customerId,
+        line_items: [{ price: input.pack.providerPriceId, quantity: 1 }],
+        metadata,
+        payment_intent_data: { metadata },
+        success_url: `${input.returnUrl}?checkout=success`,
+        cancel_url: `${input.returnUrl}?checkout=canceled`,
+      });
+      if (!session.url) throw new Error('Stripe returned a checkout session without url');
+      return { url: session.url };
+    },
+
+    async creditBalance(sub) {
+      if (!sub.customerId) return 0;
+      const summary = await stripe.billing.creditBalanceSummaries.retrieve({
+        customer: sub.customerId,
+        filter: { type: 'applicability_scope', applicability_scope: { price_type: 'metered' } },
+      });
+      return summary.balances
+        .map((b) => b.available_balance.monetary)
+        .filter((m) => m?.currency.toUpperCase() === sub.currency)
+        .reduce((sum, m) => sum + (m?.value ?? 0), 0);
     },
 
     async portal(sub, returnUrl) {
@@ -104,15 +148,13 @@ export function stripeProvider(opts: {
 
     // Rewards (docs/growth.md). The balance pays the next invoices (flat, per-seat and metered
     // alike); a coupon joins the subscription's discounts. Each call carries an idempotency key.
-    invoicing: 'provider',
 
     async applyCredit(sub, c) {
       if (!sub.customerId) throw new Error('no Stripe customer');
-      // Two-decimal currencies only (rewards.ts refuses the others), so cents = digits.
       const txn = await stripe.customers.createBalanceTransaction(
         sub.customerId,
         {
-          amount: -Number(c.amount.replace('.', '')), // negative = a credit
+          amount: -toMinor(c.amount, c.currency), // negative = a credit
           currency: c.currency.toLowerCase(),
           description: c.description,
         },
@@ -147,6 +189,26 @@ export function stripeProvider(opts: {
         case 'customer.subscription.updated':
         case 'customer.subscription.deleted':
           return subscriptionEvent(e, e.data.object);
+        case 'checkout.session.completed':
+        case 'checkout.session.async_payment_succeeded': {
+          const session = e.data.object;
+          const orgId = session.metadata?.orgId;
+          if (session.metadata?.kind !== 'credits' || !orgId || session.payment_status !== 'paid') {
+            return [];
+          }
+          // The grant is the plan's pack value (the worker reads it), never amount_total, which
+          // includes tax and discounts.
+          return [
+            {
+              ...base(e, orgId),
+              eventId: session.id, // one grant per paid session, whichever event reports it
+              type: 'credits.purchased',
+              planId: session.metadata.planId,
+              currency: session.currency?.toUpperCase(),
+              customerId: typeof session.customer === 'string' ? session.customer : undefined,
+            },
+          ];
+        }
         case 'invoice.paid':
         case 'invoice.payment_failed': {
           const orgId = e.data.object.parent?.subscription_details?.metadata?.orgId;
