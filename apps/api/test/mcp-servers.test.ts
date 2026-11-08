@@ -74,6 +74,7 @@ async function newOrg() {
 const server = {
   name: 'Docs search',
   url: 'https://mcp.example.com/mcp',
+  purposes: ['project.summary'],
   allowedTools: ['search', 'fetch_page'],
   authHeader: 'Authorization',
   authSecret: 'Bearer local-dev-mcp-token-1234',
@@ -125,6 +126,31 @@ describe('MCP servers', () => {
     ]);
   });
 
+  it('a stored secret is never sent to a new URL or header without entering it again', async () => {
+    const { owner } = await newOrg();
+    const { id } = (await call(owner, 'POST', '/api/mcp-servers', server)).json();
+    const patch = (body: object) => call(owner, 'PATCH', `/api/mcp-servers/${id}`, body);
+    expect((await patch({ url: 'https://evil.example.com/mcp' })).statusCode).toBe(400);
+    expect((await patch({ authHeader: 'X-Forward-To-Me' })).statusCode).toBe(400);
+    expect((await patch({ url: server.url, enabled: false })).statusCode).toBe(200); // unchanged
+    const moved = await patch({
+      url: 'https://mcp2.example.com/mcp',
+      authSecret: 'Bearer new-9999',
+    });
+    expect(moved.json()).toMatchObject({
+      url: 'https://mcp2.example.com/mcp',
+      authSecretHint: '9999',
+    });
+  });
+
+  it('caps servers per organization', async () => {
+    const { owner } = await newOrg();
+    for (let i = 0; i < 10; i++) {
+      expect((await call(owner, 'POST', '/api/mcp-servers', server)).statusCode).toBe(201);
+    }
+    expect((await call(owner, 'POST', '/api/mcp-servers', server)).statusCode).toBe(400);
+  });
+
   it('400 on bad input', async () => {
     const { owner } = await newOrg();
     const bad = async (payload: object) =>
@@ -136,6 +162,8 @@ describe('MCP servers', () => {
     expect(await bad({ authHeader: 'Bad Header' })).toBe(400);
     expect(await bad({ authHeader: undefined })).toBe(400); // a secret needs a header
     expect(await bad({ name: '' })).toBe(400);
+    expect(await bad({ purposes: [] })).toBe(400);
+    expect(await bad({ purposes: ['judge'] })).toBe(400);
   });
 
   it('401 without a session, 403 for members, keys need the scope', async () => {

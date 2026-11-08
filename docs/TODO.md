@@ -1,11 +1,5 @@
 # Known limitations / backlog
 
-- **MCP tools: a server that dies mid-loop leaves no `ai_calls` row for that tool call**
-  (`services/worker-py/worker/mcp.py`, `Gateway._tool`). The SDK's transport task fails and
-  cancels the activity through its task group, so `_tool` never writes the row; Temporal retries
-  the activity. Fix: run each `call_tool` in its own task (anyio task group) so the failure
-  surfaces as an exception in `_tool`, then log it as `status=error`. Test: stop the reference
-  server between two tool calls in `tests/test_mcp.py`.
 - **MCP tools: admins type tool names; no "test connection"** (docs/mcp.md "Not covered"). The
   API never connects out. Fix: a small Temporal workflow (`ListMcpToolsWorkflow`) the settings
   page starts, returning the server's tool names through the SSRF pin; offer them as checkboxes.

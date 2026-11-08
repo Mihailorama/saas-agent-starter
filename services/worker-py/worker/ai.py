@@ -13,16 +13,16 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import asyncpg
 from opentelemetry import metrics, trace
-from opentelemetry.trace import SpanKind, Status, StatusCode
+from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from temporalio.exceptions import ApplicationError
 
 from worker.billing import (
@@ -33,7 +33,7 @@ from worker.billing import (
     ensure_org_active,
 )
 from worker.flags import is_enabled
-from worker.mcp import McpConfig, Toolbox, toolbox
+from worker.mcp import McpConfig, Toolbox, ToolResult, toolbox
 from worker.posthog import PostHogAi
 from worker.providers import (
     BlockedEndpoint,
@@ -53,6 +53,7 @@ from worker.s3 import S3
 from worker.webhooks import decrypt_secret
 
 log = logging.getLogger(__name__)
+T = TypeVar("T")
 tracer = trace.get_tracer("worker.ai")
 meter = metrics.get_meter("worker.ai")
 # Names and labels agreed with the Grafana "LLM" dashboard and alerts (AGENTS.md "Observability").
@@ -208,9 +209,9 @@ class Gateway:
         for an organization an operator suspended.
 
         `mcp_tools=True` (flag `mcp-tools` on, MCP configured) offers the model the allowed tools
-        of the org's MCP servers: up to McpConfig.max_iterations model turns may ask for tools,
-        each turn and each tool call logged as its own ai_calls row; a model still asking after
-        the last turn raises ToolLoopLimit (non-retryable). The result is the final answer.
+        of the org's MCP servers that list `purpose`, for up to McpConfig.max_iterations turns;
+        the last turn offers none, so the model must answer (one that asks anyway raises
+        ToolLoopLimit, non-retryable). Each turn and each tool call is its own ai_calls row.
         """
         # A suspended org (docs/admin.md) gets no call, its own provider included.
         async with self.pool.acquire() as conn:
@@ -225,21 +226,22 @@ class Gateway:
         # One trace for the whole loop: its model calls and tool calls are child spans.
         loop = {"gen_ai.operation.name": "invoke_agent", "app.ai.purpose": purpose}
         with tracer.start_as_current_span(f"invoke_agent {purpose}", attributes=loop):
-            async with toolbox(self.pool, org_id, self.mcp) as box:
-                history = list(messages)
-                for _ in range(self.mcp.max_iterations):
-                    res = await self._llm(
-                        *args, prompt_template_version, max_tokens, history, box.specs
-                    )
-                    if not res.tool_calls:
-                        return res
-                    history.append(Message("assistant", res.text, tool_calls=res.tool_calls))
-                    for tc in res.tool_calls:
-                        text = await self._tool(box, tc, res.call_id, purpose, org_id, actor_id)
-                        history.append(Message("tool", text, tool_call_id=tc.id))
-        raise ToolLoopLimit(
-            f"the model still asked for tools after {self.mcp.max_iterations} turns"
-        )
+            box = await toolbox(self.pool, org_id, purpose, self.mcp)
+            history, turn = list(messages), 1
+            while True:
+                # The last turn offers no tools: the model answers with what it has.
+                last = turn >= self.mcp.max_iterations
+                tools = () if last else box.specs
+                res = await self._llm(*args, prompt_template_version, max_tokens, history, tools)
+                if not res.tool_calls:
+                    return res
+                if last:  # asked for tools although none were offered
+                    raise ToolLoopLimit(f"the model still asked for tools after {turn} turns")
+                history.append(Message("assistant", res.text, tool_calls=res.tool_calls))
+                for tc in res.tool_calls:
+                    text = await self._tool(box, tc, res.call_id, purpose, org_id, actor_id)
+                    history.append(Message("tool", text, tool_call_id=tc.id))
+                turn += 1
 
     async def _llm(
         self,
@@ -377,6 +379,66 @@ class Gateway:
             ) from None
         return _Route(f"byo:{row['provider']}", row["model"], call, None)
 
+    async def _logged(
+        self,
+        row: dict[str, Any],
+        request: dict[str, Any],
+        span_name: str,
+        attributes: dict[str, Any],
+        work: Callable[[], Awaitable[T]],
+        finish: Callable[[T, Span], dict[str, Any]],
+        write: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> T:
+        """Every ai_calls record: request content in S3, one span, the timed `work`, `finish`
+        (fills the row, returns the response content for S3), the row; on failure the row with
+        the error class, then re-raised. Spans get content references, never content."""
+        now = datetime.now(UTC)
+        prefix = f"{row['org_id']}/{now:%Y/%m/%d}/{row['id']}"
+        row |= {
+            "request_key": f"{prefix}/request.json",
+            "content_expires_at": now + self.retention,
+            "contour": self.contour,
+        }
+        await self.s3.put(row["request_key"], _json(request))
+        attributes |= {
+            # Opt-in *_ref attributes point at the stored content without copying it.
+            "gen_ai.input.messages_ref": f"s3://{self.s3.bucket}/{row['request_key']}",
+            "app.ai.purpose": row["purpose"],
+            "app.ai.call_id": str(row["id"]),
+            "app.ai.contour": self.contour,
+        }
+        with tracer.start_as_current_span(
+            span_name, kind=SpanKind.CLIENT, attributes=attributes
+        ) as span:
+            ctx = span.get_span_context()
+            if ctx.is_valid:
+                row["trace_id"], row["span_id"] = f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
+            started = time.perf_counter()
+            try:
+                result = await work()
+            except Exception as err:
+                # Class name only: error messages can echo request content.
+                span.set_attribute("error.type", type(err).__qualname__)
+                span.set_status(Status(StatusCode.ERROR))
+                row |= {
+                    "latency_ms": _ms(started),
+                    "status": "error",
+                    "error_class": type(err).__qualname__,
+                }
+                await write(row)
+                raise
+            row["latency_ms"] = _ms(started)
+            response = finish(result, span)
+            key = f"{prefix}/response.json"
+            try:
+                await self.s3.put(key, _json(response))
+                row["response_key"] = key
+                span.set_attribute("gen_ai.output.messages_ref", f"s3://{self.s3.bucket}/{key}")
+            except Exception:  # it happened: keep its row even without the content
+                log.exception("ai call %s: storing response content failed", row["id"])
+            await write(row)
+        return result
+
     async def _call(
         self,
         route: _Route,
@@ -387,32 +449,11 @@ class Gateway:
         prompt_template_id: str,
         prompt_template_version: str,
         max_tokens: int,
-        tools: Sequence[ToolSpec] = (),
+        tools: Sequence[ToolSpec],
     ) -> LlmResult:
         provider, model, price = route.provider, route.model, route.price
-        call_id = uuid.uuid4()
-        now = datetime.now(UTC)
-        prefix = f"{org_id}/{now:%Y/%m/%d}/{call_id}"
-        request_key, response_key = f"{prefix}/request.json", f"{prefix}/response.json"
-        await self.s3.put(
-            request_key,
-            _json(
-                {
-                    "purpose": purpose,
-                    "provider": provider,
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "prompt_template": {
-                        "id": prompt_template_id,
-                        "version": prompt_template_version,
-                    },
-                    "messages": [message_dict(m) for m in messages],
-                    **({"tools": list(tools)} if tools else {}),
-                }
-            ),
-        )
         row: dict[str, Any] = {
-            "id": call_id,
+            "id": uuid.uuid4(),
             "org_id": org_id,
             "actor_id": actor_id,
             "purpose": purpose,
@@ -420,85 +461,68 @@ class Gateway:
             "request_model": model,
             "prompt_template_id": prompt_template_id,
             "prompt_template_version": prompt_template_version,
-            "request_key": request_key,
-            "content_expires_at": now + self.retention,
-            "contour": self.contour,
         }
-
+        request = {
+            "purpose": purpose,
+            "provider": provider,
+            "model": model,
+            "max_tokens": max_tokens,
+            "prompt_template": {"id": prompt_template_id, "version": prompt_template_version},
+            "messages": [message_dict(m) for m in messages],
+            **({"tools": list(tools)} if tools else {}),
+        }
         # OTel GenAI semantic conventions (client inference spans). gen_ai.system is the
         # deprecated name of gen_ai.provider.name; both are set so older backends map the span.
-        attributes = {
+        attributes: dict[str, Any] = {
             "gen_ai.operation.name": "chat",
             "gen_ai.provider.name": provider,
             "gen_ai.system": provider,
             "gen_ai.request.model": model,
             "gen_ai.request.max_tokens": max_tokens,
-            # Opt-in *_ref attributes point at the stored content without copying it.
-            "gen_ai.input.messages_ref": f"s3://{self.s3.bucket}/{request_key}",
-            "app.ai.purpose": purpose,
-            "app.ai.call_id": str(call_id),
-            "app.ai.contour": self.contour,
         }
-        with tracer.start_as_current_span(
-            f"chat {model}", kind=SpanKind.CLIENT, attributes=attributes
-        ) as span:
-            ctx = span.get_span_context()
-            if ctx.is_valid:
-                row["trace_id"], row["span_id"] = f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
-            started = time.perf_counter()
-            try:
-                completion = await route.call(model, messages, max_tokens, tools)
-            except Exception as err:
-                # Class name only: provider error messages can echo request content.
-                span.set_attribute("error.type", type(err).__qualname__)
-                span.set_status(Status(StatusCode.ERROR))
-                row |= {
-                    "latency_ms": _ms(started),
-                    "status": "error",
-                    "error_class": type(err).__qualname__,
-                }
-                await self._insert(row)
-                if self.posthog:
-                    await self.posthog.capture_generation(row, messages, None)
-                raise
-            row["latency_ms"] = _ms(started)
 
+        def finish(c: Completion, span: Span) -> dict[str, Any]:
             for key, value in {
-                "gen_ai.response.model": completion.model,
-                "gen_ai.response.id": completion.response_id,
-                "gen_ai.usage.input_tokens": completion.input_tokens,
-                "gen_ai.usage.output_tokens": completion.output_tokens,
+                "gen_ai.response.model": c.model,
+                "gen_ai.response.id": c.response_id,
+                "gen_ai.usage.input_tokens": c.input_tokens,
+                "gen_ai.usage.output_tokens": c.output_tokens,
             }.items():
                 if value is not None:
                     span.set_attribute(key, value)
-
-            try:
-                await self.s3.put(response_key, _json(_response(completion)))
-                row["response_key"] = response_key
-                span.set_attribute(
-                    "gen_ai.output.messages_ref", f"s3://{self.s3.bucket}/{response_key}"
-                )
-            except Exception:  # the call happened: keep its row even without the content
-                log.exception("ai call %s: storing response content failed", call_id)
-
-            tokens_in, tokens_out = completion.input_tokens, completion.output_tokens
+            tokens_in, tokens_out = c.input_tokens, c.output_tokens
             total = (
                 tokens_in + tokens_out if tokens_in is not None and tokens_out is not None else None
             )
-            row |= {
-                "response_model": completion.model,
-                "input_tokens": tokens_in,
-                "output_tokens": tokens_out,
-                "total_tokens": total,
-                "status": "ok",
-            }
+            row.update(
+                response_model=c.model,
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                total_tokens=total,
+                status="ok",
+            )
             if price and tokens_in is not None and tokens_out is not None:
                 row["cost"] = (tokens_in * price.input + tokens_out * price.output) / 1000
                 row["cost_currency"] = price.currency
-            await self._insert(row)
+            return _response(c)
+
+        try:
+            completion = await self._logged(
+                row,
+                request,
+                f"chat {model}",
+                attributes,
+                lambda: route.call(model, messages, max_tokens, tools),
+                finish,
+                self._insert,
+            )
+        except Exception:
+            if self.posthog and "status" in row:
+                await self.posthog.capture_generation(row, messages, None)
+            raise
         if self.posthog:
             await self.posthog.capture_generation(row, messages, completion.text)
-        return LlmResult(call_id, completion.text, completion.tool_calls)
+        return LlmResult(row["id"], completion.text, completion.tool_calls)
 
     async def _tool(
         self,
@@ -510,77 +534,56 @@ class Gateway:
         actor_id: str | None,
     ) -> str:
         """One tool call the model asked for, logged as its own ai_calls row; returns what the
-        model sees. A tool that is not offered is never called; errors go back to the model."""
+        model sees. A tool that is not offered is never called; every failure (the server
+        unreachable or gone mid-loop included) goes back to the model as a tool error."""
         server = box.servers.get(call.name)
-        call_id = uuid.uuid4()
-        now = datetime.now(UTC)
-        prefix = f"{org_id}/{now:%Y/%m/%d}/{call_id}"
-        request_key, response_key = f"{prefix}/request.json", f"{prefix}/response.json"
-        await self.s3.put(
-            request_key,
-            _json(
-                {
-                    "purpose": purpose,
-                    "llm_call_id": str(llm_call_id),
-                    "server_id": server and server[0],
-                    "tool": call.name,
-                    "tool_call_id": call.id,
-                    "arguments": call.arguments,
-                }
-            ),
-        )
+        name = call.name if server else "unknown"  # model-chosen names are content until checked
         row: dict[str, Any] = {
-            "id": call_id,
+            "id": uuid.uuid4(),
             "org_id": org_id,
             "actor_id": actor_id,
             "purpose": purpose,
-            # Model-chosen names are content until checked against the offered tools.
-            "provider": f"mcp:{server[1]}" if server else "mcp",
-            "request_model": call.name if server else "unknown",
+            "provider": f"mcp:{server.name}" if server else "mcp",
+            "request_model": name,
             "prompt_template_id": "mcp.tool",
             "prompt_template_version": "1",
-            "request_key": request_key,
-            "content_expires_at": now + self.retention,
-            "contour": self.contour,
         }
-        attributes = {
+        request = {
+            "purpose": purpose,
+            "llm_call_id": str(llm_call_id),
+            "server_id": server and server.id,
+            "tool": call.name,
+            "tool_call_id": call.id,
+            "arguments": call.arguments,
+        }
+
+        async def work() -> ToolResult:
+            if server is None:
+                raise ToolNotOffered
+            return await box.call(call)
+
+        def finish(r: ToolResult, _: Span) -> dict[str, Any]:
+            row["status"] = "error" if r.is_error else "ok"
+            if r.is_error:
+                row["error_class"] = "ToolResultError"
+            return {"result": r.content}
+
+        async def write(r: dict[str, Any]) -> None:
+            tool_counter.add(1, {"purpose": purpose, "status": r["status"]})
+            await self._write(r)
+
+        attributes: dict[str, Any] = {
             "gen_ai.operation.name": "execute_tool",
-            "gen_ai.tool.name": row["request_model"],
-            "app.ai.purpose": purpose,
-            "app.ai.call_id": str(call_id),
+            "gen_ai.tool.name": name,
             "app.ai.llm_call_id": str(llm_call_id),
         }
-        with tracer.start_as_current_span(
-            f"execute_tool {row['request_model']}", kind=SpanKind.CLIENT, attributes=attributes
-        ) as span:
-            ctx = span.get_span_context()
-            if ctx.is_valid:
-                row["trace_id"], row["span_id"] = f"{ctx.trace_id:032x}", f"{ctx.span_id:016x}"
-            started = time.perf_counter()
-            try:
-                if server is None:
-                    raise ToolNotOffered
-                result = await box.call(call)
-            except Exception as err:
-                span.set_attribute("error.type", type(err).__qualname__)
-                span.set_status(Status(StatusCode.ERROR))
-                row |= {"status": "error", "error_class": type(err).__qualname__}
-                text = f"tool error: {type(err).__qualname__}"
-                content: Any = {"error": type(err).__qualname__}
-            else:
-                row["status"] = "error" if result.is_error else "ok"
-                if result.is_error:
-                    row["error_class"] = "ToolResultError"
-                text, content = result.text, result.content
-            row["latency_ms"] = _ms(started)
-            try:
-                await self.s3.put(response_key, _json({"result": content}))
-                row["response_key"] = response_key
-            except Exception:
-                log.exception("tool call %s: storing the result failed", call_id)
-            tool_counter.add(1, {"purpose": purpose, "status": row["status"]})
-            await self._write(row)
-        return text
+        try:
+            result = await self._logged(
+                row, request, f"execute_tool {name}", attributes, work, finish, write
+            )
+        except Exception as err:
+            return f"tool error: {type(err).__qualname__}"
+        return result.text
 
     async def _insert(self, row: dict[str, Any]) -> None:
         # An org's own provider can name any model: one label value for all of them.

@@ -4,6 +4,8 @@ Needs the reference server of the `mcp` compose profile (docker compose --profil
 mcp-server) on localhost:MCP_SERVER_PORT, plus Postgres, S3 and Temporal.
 """
 
+import asyncio
+import contextlib
 import json
 import os
 import uuid
@@ -11,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from ipaddress import ip_network
-from typing import Any
+from typing import Any, cast
 
 import asyncpg
 import pytest
@@ -28,7 +30,7 @@ from worker.providers import ToolCall, ToolSpec
 from worker.s3 import S3
 from worker.webhooks import encrypt_secret, parse_keys
 
-SERVER = f"http://127.0.0.1:{os.environ.get('MCP_SERVER_PORT', '3001')}/mcp"
+SERVER = f"http://127.0.0.1:{os.environ.get('MCP_SERVER_PORT', '3600')}/mcp"
 KEYS = parse_keys("local-dev:local-dev-mcp-test-encryption-key-0123456789")
 KEY_ID, KEY = next(iter(KEYS.items()))
 LOOPBACK = [ip_network("127.0.0.0/8"), ip_network("::1/128")]
@@ -89,20 +91,25 @@ async def in_org(pool: asyncpg.Pool, org_id: str, sql: str, *args: Any) -> list[
 
 
 async def add_server(
-    pool: asyncpg.Pool, org_id: str, url: str = SERVER, tools: Sequence[str] = ("echo", "get-sum")
+    pool: asyncpg.Pool,
+    org_id: str,
+    url: str = SERVER,
+    tools: Sequence[str] = ("echo", "get-sum"),
+    purposes: Sequence[str] = ("tools.test",),
 ) -> str:
     row_id = str(uuid.uuid4())
     secret = encrypt_secret("Bearer local-dev-mcp-token", f"{org_id}/{row_id}", KEY_ID, KEY)
     await in_org(
         pool,
         org_id,
-        "insert into mcp_servers (id, org_id, name, url, allowed_tools, auth_header, auth_secret)"
-        " values ($1, $2, 'everything', $3, $4, 'Authorization', $5)",
+        "insert into mcp_servers (id, org_id, name, url, allowed_tools, auth_header, auth_secret,"
+        " purposes) values ($1, $2, 'everything', $3, $4, 'Authorization', $5, $6)",
         row_id,
         org_id,
         url,
         list(tools),
         secret,
+        list(purposes),
     )
     return row_id
 
@@ -155,16 +162,64 @@ async def test_tool_loop_calls_the_server_and_logs_every_step(pool: asyncpg.Pool
     assert json.loads(await s3.get(llm1["response_key"]))["tool_calls"][0]["name"] == "echo"
 
 
-async def test_iteration_cap(pool: asyncpg.Pool, s3: S3):
+async def test_last_turn_offers_no_tools(pool: asyncpg.Pool, s3: S3):
     org_id = await new_org(pool)
     await add_server(pool, org_id)
-    model = Script([asks("get-sum", '{"a": 1, "b": 2}')])  # never stops asking
+    cfg = McpConfig(KEYS, LOOPBACK, max_iterations=2)
+    model = Script([asks("get-sum", '{"a": 1, "b": 2}'), FINAL])
+    assert (await run(gateway(pool, s3, model, cfg), org_id)).text == FINAL.text
+    assert model.offered(0) and model.offered(1) == []  # the sum came back, then: answer
+    assert [r["provider"] for r in await rows(pool, org_id)] == ["fake", "mcp:everything", "fake"]
+
+    stubborn = Script([asks("get-sum", '{"a": 1, "b": 2}')])  # asks even with no tools
     with pytest.raises(ToolLoopLimit):
-        await run(gateway(pool, s3, model, McpConfig(KEYS, LOOPBACK, max_iterations=2)), org_id)
-    assert len(model.seen) == 2
-    logged = await rows(pool, org_id)
-    assert [r["provider"] for r in logged] == ["fake", "mcp:everything"] * 2
-    assert all(r["status"] == "ok" for r in logged)
+        await run(gateway(pool, s3, stubborn, cfg), org_id)
+    assert len(stubborn.seen) == 2 and stubborn.offered(1) == []
+
+
+async def test_server_dying_mid_loop_is_a_tool_error(pool: asyncpg.Pool, s3: S3):
+    """The server answers the listing, then goes away: the tool call fails like any other,
+    gets its row, and the model answers; nothing is cancelled or retried."""
+    port = int(SERVER.split(":")[2].split("/")[0])
+
+    async def pipe(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+        with contextlib.suppress(OSError):
+            while data := await r.read(65536):
+                w.write(data)
+                await w.drain()
+        w.close()
+
+    async def relay(client_r: asyncio.StreamReader, client_w: asyncio.StreamWriter) -> None:
+        up_r, up_w = await asyncio.open_connection("127.0.0.1", port)
+        await asyncio.gather(pipe(client_r, up_w), pipe(up_r, client_w))
+
+    proxy = await asyncio.start_server(relay, "127.0.0.1", 0)
+    proxy_port = proxy.sockets[0].getsockname()[1]
+    org_id = await new_org(pool)
+    await add_server(pool, org_id, f"http://127.0.0.1:{proxy_port}/mcp")
+    model = Script([asks("echo", '{"message": "hi"}'), FINAL])
+    original = model.__call__
+
+    async def first_turn_kills(*args: Any) -> Completion:
+        proxy.close()  # the server is gone before the tool call
+        await proxy.wait_closed()
+        return await original(*args)
+
+    gw = gateway(pool, s3, cast(Any, first_turn_kills), McpConfig(KEYS, LOOPBACK, timeout=5))
+    assert (await run(gw, org_id)).text == FINAL.text
+    assert model.seen[1][0][-1].content.startswith("tool error: ")
+    llm1, tool, llm2 = await rows(pool, org_id)
+    assert (tool["provider"], tool["status"]) == ("mcp:everything", "error")
+    assert (llm1["status"], llm2["status"]) == ("ok", "ok")
+
+
+async def test_only_servers_of_the_purpose_with_tools(pool: asyncpg.Pool, s3: S3):
+    org_id = await new_org(pool)
+    await add_server(pool, org_id, purposes=("project.summary",))  # another purpose
+    await add_server(pool, org_id, tools=())  # nothing allowed: not even listed
+    model = Script([FINAL])
+    await run(gateway(pool, s3, model, McpConfig(KEYS, LOOPBACK)), org_id)
+    assert model.offered() == []
 
 
 async def test_tool_not_offered_is_never_called(pool: asyncpg.Pool, s3: S3):

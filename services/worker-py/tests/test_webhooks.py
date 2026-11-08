@@ -486,8 +486,8 @@ async def test_key_rotation_reencrypts_old_secrets(pool: asyncpg.Pool) -> None:
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("select set_config('app.org_id', $1, true)", org_id)
         await conn.execute(
-            "insert into mcp_servers (id, org_id, name, url, allowed_tools, auth_header,"
-            " auth_secret) values ($1, $2, 'x', 'https://mcp.example.com', '{}', 'X-Key', $3)",
+            "insert into mcp_servers (id, org_id, name, url, purposes, allowed_tools, auth_header,"
+            " auth_secret) values ($1, $2, 'x', 'https://mcp.example.com', '{}', '{}', 'X-Key', $3)",
             server_id,
             org_id,
             encrypt_secret("Bearer t", f"{org_id}/{server_id}", key_id, key),

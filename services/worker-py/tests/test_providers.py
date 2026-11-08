@@ -216,7 +216,7 @@ async def test_routes_each_kind_through_litellm(
     mock.seen.clear()
     call = providers_from_config(configs)[provider]
 
-    completion = await call(model, MESSAGES, 64)
+    completion = await call(model, MESSAGES, 64, ())
 
     assert completion.text == "Hello."
     assert (completion.input_tokens, completion.output_tokens) == (12, 3)
@@ -289,7 +289,7 @@ async def test_unconfigured_provider_is_refused_without_a_request(
             )
         # Below the gateway too: a provider without a base URL never calls LiteLLM.
         with pytest.raises(NotConfigured):
-            await providers_from_config(bare)[provider](model, MESSAGES, 16)
+            await providers_from_config(bare)[provider](model, MESSAGES, 16, ())
     assert mock.posts() == []
 
 
@@ -310,7 +310,7 @@ async def test_vendor_base_url_is_explicit_for_byo_keys(
     )
     call = await byo_provider(bare["anthropic"], base_url=None, api_key="org-key", allowed=[])
     with pytest.raises(RuntimeError, match="stop"):
-        await call("claude-haiku-5-5", MESSAGES, 16)
+        await call("claude-haiku-5-5", MESSAGES, 16, ())
     assert (sent[0]["api_base"], sent[0]["api_key"]) == ("https://api.anthropic.com", "org-key")
 
 
@@ -342,7 +342,7 @@ async def test_byo_custom_endpoint_is_pinned_and_guarded(
         api_key="local-dev-org-key",
         allowed=[],
     )
-    completion = await call("org-model", MESSAGES, 16)
+    completion = await call("org-model", MESSAGES, 16, ())
     assert completion == Completion("Hello.", "reported-model", 12, 3, "chatcmpl-1")
     assert checked == [("llm.example.com", mock.port)]
     [sent] = mock.posts()

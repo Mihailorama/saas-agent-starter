@@ -962,6 +962,7 @@ export interface paths {
                             id: string;
                             name: string;
                             url: string;
+                            purposes: string[];
                             allowedTools: string[];
                             authHeader: string | null;
                             authSecretHint: string | null;
@@ -988,6 +989,7 @@ export interface paths {
                         name: string;
                         /** Format: uri */
                         url: string;
+                        purposes: string[];
                         allowedTools: string[];
                         authHeader?: string | null;
                         authSecret?: string;
@@ -1007,6 +1009,7 @@ export interface paths {
                             id: string;
                             name: string;
                             url: string;
+                            purposes: string[];
                             allowedTools: string[];
                             authHeader: string | null;
                             authSecretHint: string | null;
@@ -1084,6 +1087,7 @@ export interface paths {
                         name?: string;
                         /** Format: uri */
                         url?: string;
+                        purposes?: string[];
                         allowedTools?: string[];
                         authHeader?: string | null;
                         authSecret?: string;
@@ -1103,6 +1107,7 @@ export interface paths {
                             id: string;
                             name: string;
                             url: string;
+                            purposes: string[];
                             allowedTools: string[];
                             authHeader: string | null;
                             authSecretHint: string | null;

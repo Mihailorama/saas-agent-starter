@@ -402,8 +402,9 @@ async def test_org_deletion_then_record_purge(
     await in_org(
         pool,
         org,
-        "insert into mcp_servers (org_id, name, url, allowed_tools, auth_header, auth_secret)"
-        " values ($1, 'tools', 'https://mcp.example.com/mcp', '{search}', 'Authorization', 'x')"
+        "insert into mcp_servers (org_id, name, url, purposes, allowed_tools, auth_header,"
+        " auth_secret) values ($1, 'tools', 'https://mcp.example.com/mcp', '{project.summary}',"
+        " '{search}', 'Authorization', 'x')"
         " returning id",
         org,
     )

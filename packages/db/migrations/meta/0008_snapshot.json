@@ -1,5 +1,5 @@
 {
-  "id": "6caa5346-c3b3-487a-bf71-35731898dea9",
+  "id": "c419bc40-233e-4f6f-a4ac-34eabe4152ec",
   "prevId": "6fe76018-52ae-473a-aeac-2966c13cb78e",
   "version": "7",
   "dialect": "postgresql",
@@ -637,6 +637,12 @@
         "url": {
           "name": "url",
           "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purposes": {
+          "name": "purposes",
+          "type": "text[]",
           "primaryKey": false,
           "notNull": true
         },

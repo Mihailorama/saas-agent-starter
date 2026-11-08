@@ -3,6 +3,7 @@ CREATE TABLE "mcp_servers" (
 	"org_id" text NOT NULL,
 	"name" text NOT NULL,
 	"url" text NOT NULL,
+	"purposes" text[] NOT NULL,
 	"allowed_tools" text[] NOT NULL,
 	"auth_header" text,
 	"auth_secret" text,

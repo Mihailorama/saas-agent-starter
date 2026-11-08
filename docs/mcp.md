@@ -9,23 +9,32 @@ Why it is built this way: [ADR 0028](adr/0028-mcp-tools.md).
 
 1. An org admin connects a server in **Settings → MCP servers** (`/settings/mcp-servers`, API
    `POST /api/mcp-servers`, scopes `mcp_servers:read` / `mcp_servers:write`): a name, the server
-   URL (Streamable HTTP endpoint, usually `.../mcp`), the **allowed tool names**, and optionally
-   an auth header (name + value, e.g. `Authorization: Bearer ...`). The value is encrypted at
-   once with `WEBHOOK_ENCRYPTION_KEYS`, bound to the organization and row, and never shown
-   again. The API never connects to the URL.
+   URL (Streamable HTTP endpoint, usually `.../mcp`), the **AI features (purposes) that may use
+   it**, the **allowed tool names**, and optionally an auth header (name + value, e.g.
+   `Authorization: Bearer ...`). The value is encrypted at once with `WEBHOOK_ENCRYPTION_KEYS`,
+   bound to the organization and row, and never shown again; changing the URL or the header
+   needs the value again, so a stored secret cannot be redirected to another host. At most 10
+   servers per organization. The API never connects to the URL.
 2. A purpose opts in per call: `gateway.call_llm(..., mcp_tools=True)`. Without it, or with the
    flag `mcp-tools` off for the organization, or without `WEBHOOK_ENCRYPTION_KEYS` on the worker,
    the call is exactly a plain call (no tools, same request and response objects).
-3. The gateway (`services/worker-py/worker/mcp.py`) opens one session per enabled server with the
-   official `mcp` Python SDK, lists its tools with LiteLLM's `load_mcp_tools` and offers the model
-   only the allowed ones. A server that is blocked, unreachable or whose secret cannot be
-   decrypted is left out (logged by id and error class); the call goes on without its tools.
-4. Tool loop: the model may ask for tools in up to `MCP_TOOL_MAX_ITERATIONS` turns (default 5).
-   Each tool call runs with `MCP_TOOL_TIMEOUT_SECONDS` (default 30, also the session start
-   timeout). A tool the call did not offer is never called; the model gets
-   `tool error: ToolNotOffered` instead, like any other failure, so it can answer without it.
-   A model that still asks after the last turn ends the call with `ToolLoopLimit`
-   (non-retryable). Results longer than 20 000 characters are cut for the model (stored whole).
+3. The gateway (`services/worker-py/worker/mcp.py`) takes the enabled servers whose purposes
+   include the call's purpose and that allow at least one tool, lists their tools concurrently
+   with the official `mcp` Python SDK and LiteLLM's `load_mcp_tools`, and offers the model only
+   the allowed ones. A server that is blocked, unreachable or whose secret cannot be decrypted
+   is left out (logged by id and error class); the call goes on without its tools.
+4. Tool loop: at most `MCP_TOOL_MAX_ITERATIONS` model turns (default 5); the last one offers no
+   tools, so the model answers with what it has (one that asks anyway ends the call with
+   `ToolLoopLimit`, non-retryable). Every tool call opens its own short session (URL checked
+   again) with `MCP_TOOL_TIMEOUT_SECONDS` (default 30, also for listing) and calls the tool with
+   LiteLLM's `call_openai_tool`. Any failure, a server that went away mid-loop included, goes
+   back to the model as `tool error: <class>` and gets its row; a tool the call did not offer
+   is never called (`ToolNotOffered`). Results longer than 20 000 characters are cut for the
+   model (stored whole).
+5. Retries: a tool failure never fails the activity. If the activity fails for another reason
+   (worker crash, provider error, limit) and Temporal retries it, the whole loop runs again,
+   earlier tools included: tool calls are **at least once**. Give side-effecting tools
+   idempotent semantics on the server, or leave them out of `allowed_tools`.
 
 ### What is recorded
 
@@ -49,8 +58,10 @@ Any remote MCP server that speaks Streamable HTTP:
 
 1. Turn on the flag for the organization (`pnpm flags:sync`, then PostHog; locally
    `FLAGS_ON=mcp-tools` for API and worker, `VITE_FLAGS_ON=mcp-tools` for the web).
-2. Settings → MCP servers → Connect server: URL `https://mcp.example.com/mcp`, the tools the
-   organization wants AI features to use, and its token as `Authorization` / `Bearer <token>`.
+2. Settings → MCP servers → Connect server: URL `https://mcp.example.com/mcp`, the AI features
+   that may use it, the tools they may call, and its token as `Authorization` /
+   `Bearer <token>`. Each server reaches only the purposes listed: a prompt injection in one
+   feature's input cannot reach another feature's tools.
 3. The URL must resolve to public addresses only: the worker checks every address of the host
    when it opens the session and connects to the checked address (same guard as BYO base URLs,
    so DNS cannot switch to a private address between check and connect). For an on-prem server
@@ -63,11 +74,11 @@ The `mcp` compose profile runs the MCP project's reference server, `server-every
 (MIT / Apache-2.0), unmodified, in the `node` image (fetched from npm at start, version pinned):
 
 ```sh
-docker compose --profile mcp up -d --wait mcp-server   # http://localhost:${MCP_SERVER_PORT:-3001}/mcp
+docker compose --profile mcp up -d --wait mcp-server   # http://localhost:${MCP_SERVER_PORT:-3600}/mcp
 ```
 
 It offers test tools such as `echo`, `get-sum` and `get-env` (the last one shows why the allow-list
-matters). Connect it as `http://127.0.0.1:3001/mcp` with a worker on the host and
+matters). Connect it as `http://127.0.0.1:3600/mcp` with a worker on the host and
 `MCP_ALLOWED_CIDRS=127.0.0.0/8`, or as `http://mcp-server:3001/mcp` with the worker in compose and
 `MCP_ALLOWED_CIDRS` set to the compose network's range. Use `127.0.0.1`, not `localhost`: the
 guard connects to the first address the name resolves to, which can be `::1`. The worker tests

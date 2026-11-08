@@ -391,7 +391,7 @@ the replacement map.
 - No LLM API key in CI or in scripts. Real-model evals run locally through the Claude
   subscription (`pnpm eval:real`); `pnpm check` and CI stay key-free (`pnpm eval --fake-llm`).
 - Tools: a purpose offers the organization's MCP tools only by passing `mcp_tools=True` to
-  `call_llm` (flag `mcp-tools`). Never call an MCP server or another tool outside the gateway's
+  `call_llm` (flag `mcp-tools`), and only servers that list that purpose. Never call an MCP server or another tool outside the gateway's
   loop, never offer a tool that is not in the server's `allowed_tools`, never connect to a server
   URL without the SSRF pin (worker/mcp.py), and never put tool arguments or results anywhere but
   the tool call's `ai_calls` S3 objects. No stdio servers.

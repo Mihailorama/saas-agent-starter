@@ -131,7 +131,7 @@ export const aiProviders = pgTable(
 
 /**
  * Remote MCP servers an organization connects (docs/mcp.md "Calling external tools"): AI calls
- * that opt in may use the listed `allowed_tools` of its enabled servers, nothing else. The auth
+ * of the listed `purposes` that opt in may use its `allowed_tools`, nothing else. The auth
  * header value is stored encrypted like BYO keys (`v1:<key id>:<iv>:<data>`, AES-256-GCM,
  * WEBHOOK_ENCRYPTION_KEYS, bound to `<org id>/<id>`); only the worker's gateway decrypts it.
  */
@@ -142,6 +142,8 @@ export const mcpServers = pgTable(
     orgId: orgId(),
     name: text('name').notNull(),
     url: text('url').notNull(),
+    /** AI purposes that may use this server (config/ai-models.json); others never see it. */
+    purposes: text('purposes').array().notNull(),
     allowedTools: text('allowed_tools').array().notNull(),
     /** Header name sent with the secret, e.g. Authorization. */
     authHeader: text('auth_header'),

@@ -1,16 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mcpServers } from '@app/db';
-import { desc, eq } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 import type { preHandlerAsyncHookHandler } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { isEnabled } from '../flags.ts';
 import { access, httpError, withTenant } from '../tenant.ts';
-import { encryptSecret } from '../webhook-secret.ts';
+import { requireSecretAgain, sealSecret } from '../webhook-secret.ts';
 
 /**
  * Remote MCP servers an organization connects (docs/mcp.md "Calling external tools"): AI features
- * that opt in may call the listed tools of its enabled servers. Org admins, or API keys with
+ * of the server's purposes that opt in may call its listed tools. Org admins, or API keys with
  * mcp_servers:read / mcp_servers:write; feature flag `mcp-tools` (off: 404). The auth header value
  * is encrypted at once (bound to org and row id) and never returned. The API never connects to the
  * URL: the worker checks it against private ranges (MCP_ALLOWED_CIDRS) each time it opens a
@@ -37,9 +38,20 @@ const headerName = z
   .string()
   .regex(/^[A-Za-z0-9-]{1,100}$/, 'invalid header name')
   .refine((h) => !RESERVED.has(h.toLowerCase()), 'this header is set by the MCP transport');
+/** Every purpose of config/ai-models.json (all contours) except the operator's judge. */
+const config = JSON.parse(
+  readFileSync(new URL('../../../../config/ai-models.json', import.meta.url), 'utf8'),
+) as { contours: Record<string, { purposes: string[] }[]> };
+const PURPOSES = [
+  ...new Set(Object.values(config.contours).flatMap((c) => c.flatMap((m) => m.purposes))),
+].filter((p) => p !== 'judge');
 const Fields = z.object({
   name: z.string().trim().min(1).max(100),
   url,
+  purposes: z
+    .array(z.string())
+    .min(1)
+    .refine((ps) => ps.every((p) => PURPOSES.includes(p)), 'unknown purpose'),
   allowedTools: z.array(z.string().regex(/^[A-Za-z0-9_.-]{1,128}$/, 'invalid tool name')).max(100),
   authHeader: headerName.nullable().optional(),
   authSecret: z.string().min(1).max(4096).optional(),
@@ -49,6 +61,7 @@ const Server = z.object({
   id: z.uuid(),
   name: z.string(),
   url: z.string(),
+  purposes: z.array(z.string()),
   allowedTools: z.array(z.string()),
   authHeader: z.string().nullable(),
   authSecretHint: z.string().nullable(),
@@ -65,10 +78,12 @@ const dto = ({ orgId: _, authSecret: __, createdAt, updatedAt, ...s }: Row) => (
   createdAt: createdAt.toISOString(),
   updatedAt: updatedAt.toISOString(),
 });
-const secretFields = (secret: string, orgId: string, id: string) => ({
-  authSecret: encryptSecret(secret, `${orgId}/${id}`),
-  authSecretHint: secret.slice(-4),
-});
+const secretFields = (secret: string, orgId: string, id: string) => {
+  const { cipher, hint } = sealSecret(secret, orgId, id);
+  return { authSecret: cipher, authSecretHint: hint };
+};
+/** The worker lists at most this many per call (worker/mcp.py MAX_SERVERS). */
+const MAX_SERVERS = 10;
 /** A secret needs a header to travel in. */
 const checkAuth = (header: string | null | undefined, hasSecret: boolean) => {
   if (hasSecret && !header) throw httpError(400, 'authHeader is required with authSecret');
@@ -104,6 +119,8 @@ export const mcpServerRoutes: FastifyPluginAsyncZod = async (app) => {
       const row = await withTenant(
         req,
         async (tx) => {
+          const [{ n } = { n: 0 }] = await tx.select({ n: count() }).from(mcpServers);
+          if (n >= MAX_SERVERS) throw httpError(400, `at most ${MAX_SERVERS} servers`);
           const [created] = await tx
             .insert(mcpServers)
             .values({
@@ -145,6 +162,13 @@ export const mcpServerRoutes: FastifyPluginAsyncZod = async (app) => {
         const header = authHeader === undefined ? current.authHeader : authHeader;
         const clear = header === null ? { authSecret: null, authSecretHint: null } : {};
         checkAuth(header, Boolean(authSecret));
+        const moved =
+          (rest.url !== undefined && rest.url !== current.url) || header !== current.authHeader;
+        requireSecretAgain(
+          moved && header !== null,
+          Boolean(current.authSecret),
+          Boolean(authSecret),
+        );
         const [updated] = await tx
           .update(mcpServers)
           .set({

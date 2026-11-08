@@ -14,12 +14,12 @@ cannot swap the target between check and connect.
 """
 
 import json
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 import httpx2
@@ -84,17 +84,8 @@ class Completion:
 ToolSpec = Mapping[str, Any]
 
 
-class Provider(Protocol):
-    """(model, messages, max_tokens[, tools]) -> Completion; no tools = a plain completion."""
-
-    def __call__(
-        self,
-        model: str,
-        messages: Sequence[Message],
-        max_tokens: int,
-        tools: Sequence[ToolSpec] = (),
-        /,
-    ) -> Awaitable[Completion]: ...
+# (model, messages, max_tokens, tools) -> Completion; no tools = a plain completion.
+Provider = Callable[[str, Sequence[Message], int, Sequence[ToolSpec]], Awaitable[Completion]]
 
 
 @dataclass(frozen=True)

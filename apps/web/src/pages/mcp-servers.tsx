@@ -10,8 +10,10 @@ import { ConfirmDialog } from '@/components/patterns/confirm-dialog';
 import { DataTable, RowActions, sortable } from '@/components/patterns/data-table';
 import { PageContainer, PageHeader } from '@/components/patterns/page-header';
 import { EmptyState } from '@/components/patterns/states';
+import { SecretField } from '@/components/secret-field';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -30,15 +32,21 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { track } from '@/lib/analytics';
 import { type Body, client, type Ok, ok } from '@/lib/api';
 import { useFlag } from '@/lib/flags';
+import models from '../../../../config/ai-models.json';
 
 /** External MCP servers whose allowed tools AI features may call (docs/mcp.md). Org admins. */
 type Server = Ok<'/api/mcp-servers/', 'get'>[number];
 const listQuery = { queryKey: ['mcp-servers'], queryFn: () => ok(client.GET('/api/mcp-servers/')) };
 
 // Same limits as the API schema (apps/api/src/routes/mcp-servers.ts); the API stays the authority.
+/** Purposes of config/ai-models.json, as the API accepts them (the judge is the operator's). */
+const PURPOSES = [
+  ...new Set(Object.values(models.contours).flatMap((c) => c.flatMap((m) => m.purposes))),
+].filter((p) => p !== 'judge');
 const toolList = (s: string) =>
   s
     .split(/[\s,]+/)
@@ -56,6 +64,7 @@ const schema = z
       ),
     authHeader: z.string().regex(/^([A-Za-z0-9-]{1,100})?$/, 'Use letters, digits and -.'),
     authSecret: z.string().max(4096),
+    purposes: z.array(z.string()).min(1, 'Choose at least one AI feature.'),
   })
   .refine((v) => !v.authSecret || v.authHeader, {
     path: ['authHeader'],
@@ -73,7 +82,14 @@ function NewServerDialog({
   const queryClient = useQueryClient();
   const form = useForm<ServerInput>({
     resolver: zodResolver(schema),
-    defaultValues: { name: '', url: '', tools: '', authHeader: 'Authorization', authSecret: '' },
+    defaultValues: {
+      name: '',
+      url: '',
+      tools: '',
+      authHeader: 'Authorization',
+      authSecret: '',
+      purposes: [],
+    },
   });
   const create = useMutation({
     mutationFn: (json: Body<'/api/mcp-servers/', 'post'>) =>
@@ -94,12 +110,13 @@ function NewServerDialog({
     create.mutate({
       name: v.name,
       url: v.url,
+      purposes: v.purposes,
       allowedTools: toolList(v.tools),
       ...(v.authSecret && { authHeader: v.authHeader, authSecret: v.authSecret }),
     });
 
   const field = (
-    name: keyof ServerInput,
+    name: Exclude<keyof ServerInput, 'purposes'>,
     label: string,
     help?: string,
     props: ComponentProps<'input'> = {},
@@ -145,11 +162,34 @@ function NewServerDialog({
             {field('tools', 'Allowed tools', 'Tool names, separated by commas or spaces.', {
               placeholder: 'search, fetch_page',
             })}
+            <FormField
+              control={form.control}
+              name="purposes"
+              render={({ field: f }) => (
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium">Used by</legend>
+                  {PURPOSES.map((p) => (
+                    <Label key={p} className="font-normal">
+                      <Checkbox
+                        checked={f.value.includes(p)}
+                        onCheckedChange={(on) =>
+                          f.onChange(on ? [...f.value, p] : f.value.filter((x) => x !== p))
+                        }
+                      />
+                      <code className="text-xs">{p}</code>
+                    </Label>
+                  ))}
+                  <FormMessage />
+                </fieldset>
+              )}
+            />
             {field('authHeader', 'Auth header (optional)')}
-            {field('authSecret', 'Auth header value (optional)', 'For example: Bearer <token>.', {
-              type: 'password',
-              autoComplete: 'off',
-            })}
+            <SecretField
+              id="mcp-secret"
+              label="Auth header value (optional)"
+              help="For example: Bearer <token>."
+              {...form.register('authSecret')}
+            />
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
@@ -189,6 +229,9 @@ export function McpServersPage() {
         <div>
           <div className="font-medium">{row.original.name}</div>
           <div className="text-xs text-muted-foreground break-all">{row.original.url}</div>
+          <div className="text-xs text-muted-foreground">
+            Used by {row.original.purposes.join(', ')}
+          </div>
         </div>
       ),
     },
