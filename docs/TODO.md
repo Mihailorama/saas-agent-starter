@@ -1,5 +1,10 @@
 # Known limitations / backlog
 
+- **Onboarding: tour "seen" and checklist "dismissed" are per browser** (docs/onboarding.md,
+  `apps/web/src/lib/onboarding.ts`). They live in `localStorage` to avoid a table and a migration,
+  so a user on a second device sees the tour once more and the card again. If that bothers users:
+  a nullable `user.onboarding_tour_seen_at` column (Better Auth `additionalFields`) set from the
+  tour, read in the session; keep `onboarding_item_completed` client-side, it is analytics only.
 - **MCP: OAuth 2.1 sign-in for hosted connectors** (docs/mcp.md, ADR 0027). `/mcp` accepts only
   organization API keys as a bearer header; ChatGPT connectors and claude.ai custom connectors
   expect OAuth 2.1 (RFC 9728 protected resource metadata, PKCE, client registration). Better Auth
