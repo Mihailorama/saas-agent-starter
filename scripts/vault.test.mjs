@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
-const SECRET = 'sk-test-0123456789abcdef'; // fake value, must never leak
+const SECRET = 'local-dev-fake-value'; // must never leak into argv, stdout or stderr
 const fakeBw = `#!/usr/bin/env node
 const fs = require('node:fs');
 const e = process.env, a = process.argv.slice(2);
