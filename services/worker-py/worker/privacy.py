@@ -643,6 +643,12 @@ class PrivacyActivities:
             ),
             ("two_factor", "select * from two_factor where user_id = $1", [uid]),
             ("passkey", "select * from passkey where user_id = $1", [uid]),
+            # Lite Telegram support: which Telegram user and topic (deleted with the user).
+            (
+                "telegram_support_users",
+                "select * from telegram_support_users where user_id = $1",
+                [uid],
+            ),
             (
                 "privacy_requests",
                 "select * from privacy_requests where subject_type = 'user' and subject_id = $1",
@@ -937,7 +943,8 @@ class PrivacyActivities:
                 email,
                 uid,
             )
-        # Cascades: sessions, accounts, memberships, 2FA, passkeys, invitations they sent.
+        # Cascades: sessions, accounts, memberships, 2FA, passkeys, invitations they sent, the
+        # Telegram support mapping.
         deleted: str = await self.pool.execute('delete from "user" where id = $1', uid)
         return outcome(
             "done",

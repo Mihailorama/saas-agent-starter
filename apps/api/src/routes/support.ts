@@ -1,10 +1,22 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { telegramSupportLinks } from '@app/db';
 import { fromNodeHeaders } from 'better-auth/node';
+import { lt } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
+import { db } from '../db.ts';
 import { env } from '../env.ts';
-import { startCrmSync, startSupportIssueClosed, startSupportTriage } from '../temporal.ts';
+import { isEnabled } from '../flags.ts';
+import { putJson } from '../s3.ts';
+import {
+  queueTelegramUpdate,
+  startCrmSync,
+  startSupportIssueClosed,
+  startSupportTriage,
+  type TelegramUpdate,
+} from '../temporal.ts';
+import { RedactionUnavailable, redact } from './hooks.ts';
 
 /**
  * Service desk glue (docs/support.md, ADR 0013). Tickets live in Chatwoot, backlog items in the
@@ -93,9 +105,64 @@ const PlaneEvent = z.object({
     .nullish(),
   previous_attributes: z.record(z.string(), z.unknown()).default({}),
 });
-const Result = z.object({ action: z.enum(['ignored', 'started', 'duplicate']) });
+/**
+ * Lite Telegram support (docs/support.md "Lite: Telegram only"). Both keys come from the bot
+ * token, so there is one secret to set; the worker derives the same ones (worker/telegram.py).
+ */
+export const telegramKey = (botToken: string, purpose: 'webhook' | 'link') =>
+  hmacHex(botToken, `telegram-support-${purpose}`);
+const LINK_SECONDS = 600;
+const linkSig = (botToken: string, exp: string, userId: string) =>
+  createHmac('sha256', telegramKey(botToken, 'link'))
+    .update(`${exp}.${userId}`)
+    .digest('base64url')
+    .slice(0, 16);
+/** `/start` payload of the Help menu's deep link: `<expiry base36>_<signature>_<user id>`. */
+export function telegramStartToken(botToken: string, userId: string, now = Date.now()) {
+  const exp = Math.floor(now / 1000 + LINK_SECONDS).toString(36);
+  return `${exp}_${linkSig(botToken, exp, userId)}_${userId}`; // at most 64 characters
+}
+/** The app user of a valid payload, once: its signature is then stored as used. */
+export async function telegramStartUser(botToken: string, payload: string, now = Date.now()) {
+  const [, exp = '', sig = '', userId = ''] =
+    payload.match(/^([0-9a-z]{1,12})_([\w-]{16})_([\w-]{1,40})$/) ?? [];
+  if (!userId || Number.parseInt(exp, 36) * 1000 < now) return undefined;
+  if (!sameString(sig, linkSig(botToken, exp, userId))) return undefined;
+  const spent = new Date(now - 2 * LINK_SECONDS * 1000); // expired anyway: no longer needed
+  await db.delete(telegramSupportLinks).where(lt(telegramSupportLinks.usedAt, spent));
+  const used = await db
+    .insert(telegramSupportLinks)
+    .values({ signature: sig })
+    .onConflictDoNothing()
+    .returning();
+  return used.length ? userId : undefined;
+}
+const TelegramMessage = z.looseObject({
+  message_id: z.number().int(),
+  message_thread_id: z.number().int().optional(),
+  is_topic_message: z.boolean().optional(),
+  chat: z.object({ id: z.number().int(), type: z.string() }),
+  from: z
+    .object({ id: z.number().int(), is_bot: z.boolean(), language_code: z.string().optional() })
+    .optional(),
+  text: z.string().optional(),
+});
+const TelegramBody = z.object({ update_id: z.number().int(), message: TelegramMessage.optional() });
+// Service messages in a topic (the team closing it, say) cannot be copied to the user.
+const SERVICE = [
+  'forum_topic_closed',
+  'forum_topic_reopened',
+  'forum_topic_edited',
+  'pinned_message',
+];
+const COMMAND = /^\/([a-z]+)(?:@\w+)?(?:\s+([\s\S]*))?$/i;
+
+const Result = z.object({
+  action: z.enum(['ignored', 'started', 'duplicate', 'queued', 'limited']),
+});
 const ErrorBody = z.object({ error: z.string() });
 export const hookResponses = { 200: Result, 401: ErrorBody };
+const telegramResponses = { ...hookResponses, 404: ErrorBody, 503: ErrorBody };
 
 /** Label the worker puts on every tracker item it creates or +1s (docs/support.md). */
 export const SUPPORT_LABEL = 'support';
@@ -123,6 +190,79 @@ export function keepRawJson(app: Parameters<FastifyPluginAsyncZod>[0]) {
 export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
   const raw = keepRawJson(app);
   const limits = { rateLimit: { max: 120, timeWindow: '1 minute' } };
+  // Per Telegram user, answered with 200: an error status makes Telegram redeliver the update.
+  const perTelegramUser = app.createRateLimit({
+    max: 5,
+    timeWindow: '1 minute',
+    keyGenerator: (req) => `tg:${(req.body as z.infer<typeof TelegramBody>).message?.from?.id}`,
+  });
+
+  app.post(
+    '/telegram',
+    {
+      // All updates come from Telegram's few addresses; the per-user limit below does the work.
+      config: { rateLimit: { max: 1200, timeWindow: '1 minute' } },
+      schema: { hide: true, body: TelegramBody, response: telegramResponses },
+    },
+    async (req, reply) => {
+      const token = env.TELEGRAM_SUPPORT_BOT_TOKEN;
+      const group = env.TELEGRAM_SUPPORT_CHAT_ID;
+      // One switch for the bot: the worker registers the webhook only while the flag is on.
+      if (!token || !group || !(await isEnabled('telegram-support', { userId: 'telegram' }))) {
+        return reply.code(404).send({ error: 'telegram support is off' });
+      }
+      const secret = header(req.headers['x-telegram-bot-api-secret-token']);
+      if (!sameString(secret, telegramKey(token, 'webhook'))) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      const m = req.body.message; // edited messages, reactions etc. are not subscribed to
+      if (!m?.from || m.from.is_bot) return { action: 'ignored' as const };
+      const [, cmd = '', rest = ''] = m.text?.match(COMMAND) ?? [];
+      const u: TelegramUpdate = {
+        chatId: m.chat.id,
+        messageId: m.message_id,
+        fromId: m.from.id,
+        lang: m.from.language_code?.slice(0, 8) ?? '',
+      };
+      if (String(m.chat.id) === group) {
+        // The team, inside a user's topic: a reply to relay, or a command.
+        if (!m.is_topic_message || !m.message_thread_id || SERVICE.some((k) => k in m)) {
+          return { action: 'ignored' as const };
+        }
+        u.threadId = m.message_thread_id;
+        const command = cmd.toLowerCase();
+        if (command === 'bug' || command === 'feature') {
+          u.command = command;
+          let title: string | undefined;
+          try {
+            [title] = await redact([rest.trim().slice(0, 120)]);
+          } catch (err) {
+            if (!(err instanceof RedactionUnavailable)) throw err;
+            return reply.code(503).send({ error: 'pii redaction unavailable' });
+          }
+          // Text goes to S3, its key to the workflow (the tracker inbox prefix: purged daily).
+          u.s3Key = `tracker-inbox/telegram-${m.chat.id}-${m.message_id}.json`;
+          await putJson(u.s3Key, { title });
+        } else if (command) u.command = 'other';
+      } else if (m.chat.type === 'private') {
+        const limit = await perTelegramUser(req);
+        if (!limit.isAllowed && limit.isExceeded) return { action: 'limited' as const };
+        if (cmd.toLowerCase() === 'start') {
+          u.command = 'start';
+          // Checked here, so only the resulting id reaches Temporal, never the payload.
+          if (rest) {
+            u.userId = await telegramStartUser(token, rest.trim());
+            u.linkFailed = !u.userId;
+          }
+        }
+      } else {
+        return { action: 'ignored' as const };
+      }
+      await queueTelegramUpdate(u);
+      req.log.info({ chatId: u.chatId, messageId: u.messageId }, 'telegram hook');
+      return { action: 'queued' as const };
+    },
+  );
 
   app.post(
     '/chatwoot',
@@ -255,6 +395,34 @@ export const supportRoutes: FastifyPluginAsyncZod = async (app) => {
         email: user.email,
         orgId: session.session.activeOrganizationId ?? null,
       };
+    },
+  );
+
+  /** GET /api/support/telegram: the signed `/start` payload for the Help menu's Telegram link. */
+  app.get(
+    '/telegram',
+    {
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      schema: {
+        response: {
+          200: z.object({ start: z.string() }),
+          401: ErrorBody,
+          403: ErrorBody,
+          404: ErrorBody,
+        },
+      },
+    },
+    async (req, reply) => {
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      if (!session) return reply.code(401).send({ error: 'unauthorized' });
+      if (session.session.impersonatedBy) return reply.code(403).send({ error: 'forbidden' });
+      const token = env.TELEGRAM_SUPPORT_BOT_TOKEN;
+      const on = await isEnabled('telegram-support', { userId: 'telegram' });
+      // Ids longer than 40 characters do not fit the 64-character start parameter.
+      if (!token || !env.TELEGRAM_SUPPORT_CHAT_ID || !on || session.user.id.length > 40) {
+        return reply.code(404).send({ error: 'telegram support is off' });
+      }
+      return { start: telegramStartToken(token, session.user.id) };
     },
   );
 };

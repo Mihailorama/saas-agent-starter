@@ -105,6 +105,9 @@ services:
       - GITHUB_WEBHOOK_SECRET
       - PLANE_WEBHOOK_SECRET
       - PLANE_PROJECT_ID
+      # lite Telegram support (docs/support.md)
+      - TELEGRAM_SUPPORT_BOT_TOKEN
+      - TELEGRAM_SUPPORT_CHAT_ID
       # booking webhook -> CRM (docs/crm.md)
       - BOOKING_WEBHOOK_SECRET
       # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
@@ -202,6 +205,9 @@ services:
       - AI_SUPPORT_TRIAGE_MODEL
       - SUPPORT_AI_ORG_ID
       - SUPPORT_NOTIFY_ON_CLOSE
+      - TELEGRAM_SUPPORT_BOT_TOKEN
+      - TELEGRAM_SUPPORT_CHAT_ID
+      - TELEGRAM_SUPPORT_WEBHOOK_URL
       # CRM sync (docs/crm.md); Twenty runs elsewhere (docs/deploy.md), empty = dry run
       - TWENTY_API_URL
       - TWENTY_API_KEY

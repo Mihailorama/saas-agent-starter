@@ -78,6 +78,13 @@
       "when": 1794157678760,
       "tag": "0010_billing_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794160189545,
+      "tag": "0011_telegram_support",
+      "breakpoints": true
     }
   ]
 }
