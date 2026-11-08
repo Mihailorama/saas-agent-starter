@@ -102,10 +102,13 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts (posthog SDK)
   worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
+  worker/selfcheck.py post-deploy checks for `pnpm run infra -- verify` (s3, smtp, llm)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
   worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
                       GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
-config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
+config/             components.json (infra components: install/connect/skip, env templates,
+                    profiles, verify; `pnpm run infra`, docs/setup.md, ADR 0032),
+                    ai-models.json (providers, allowed models per contour/purpose, price overrides),
                     plans.json (plans, limits, priced components per currency, billing
                     contours),
                     ai-transparency.json (public /ai-transparency page),
@@ -123,7 +126,9 @@ infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Promethe
                     ClickHouse tuning for Langfuse (infra/langfuse)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
 compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy (docs/deploy.md)
-deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
+deploy/             Caddyfile, sites/<profile>.caddy (on-box profiles' sites), env/<env>.enc.env
+                    (SOPS + age), rehearsal.sh (local prod rehearsal), setup/ (bootstrap.sh,
+                    <env>.answers.json, e2e.sh: the `pnpm run infra` wizard's server side)
 compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
 infra/backup/       Postgres image (+ pgvector) and backup image (+ pgBackRest/rclone), scripts (ADR 0015)
 infra/chatwoot/     Chatwoot initializer: attachments served through Chatwoot (docs/support.md)
@@ -133,6 +138,8 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     crm.mjs (`pnpm crm:sync`: Twenty fields, PostHog signal destinations),
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
                     deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract),
+                    infra.mjs (`pnpm run infra`: questions, bootstrap, env, deploy, verify),
+                    check-components.mjs,
                     check-flags.mjs, flags.mjs (flags:sync),
                     eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs,
                     vault.mjs (secrets vault for humans and agents over the `bw` CLI)
@@ -458,6 +465,17 @@ Details: docs/product-analytics.md, ADR 0012.
   (`.mcp.json.example`). After changing journeys, `pnpm journeys:sync --dry-run` shows what
   would change in the tools. Issues labelled `cjm-regression` or `from-users` come from real
   users: link them in the PR that fixes them.
+
+## Infrastructure setup rules
+
+Details: docs/setup.md, ADR 0032.
+
+- New component, compose.prod.yaml profile or deploy/env/example.env key -> a catalog entry in
+  `config/components.json` (modes, connect fields with `secret`, install env templates with
+  `{hex:N}` for generated secrets, `ramMiB`, `verify`); `pnpm check:components` enforces it.
+  A public on-box service gets `deploy/sites/<profile>.caddy`.
+- Secrets never go into `deploy/setup/*.answers.json`, argv, logs or the plan output: only into
+  the sops-encrypted env, through stdin. Bootstrap steps stay check-then-act (re-runnable).
 
 ## Backup rules
 

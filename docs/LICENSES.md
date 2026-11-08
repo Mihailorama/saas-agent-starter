@@ -47,6 +47,8 @@ on an image that is not. Their primary software licenses:
 | `ollama/ollama`                                    | self-hosted models, dev (`local-llm` profile)                  | MIT                         |
 | `saas-agent-starter-pgbackup`                      | Postgres + backup tools (`compose.backup.yaml`)                | PostgreSQL + MIT            |
 | `prom/pushgateway`                                 | backup metrics for Prometheus (backup overlay)                 | Apache-2.0                  |
+| `ubuntu`                                           | fresh-server stand-in of the infra e2e (deploy/setup/e2e/)     | various (Debian/Ubuntu OS)  |
+| `registry`                                         | release image registry of the infra e2e (test only)            | Apache-2.0                  |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
