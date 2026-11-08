@@ -9,7 +9,7 @@ import { requireEntitlement } from '../billing/entitlements.ts';
 import { env } from '../env.ts';
 import { isEnabled } from '../flags.ts';
 import { httpError, requireRole, withTenant } from '../tenant.ts';
-import { encryptSecret } from '../webhook-secret.ts';
+import { requireSecretAgain, sealSecret } from '../webhook-secret.ts';
 
 /**
  * AI providers an organization brings itself (docs/llm-providers.md "BYO"): its own API key for a
@@ -98,10 +98,10 @@ function checkShape(provider: string, baseUrl: string | null | undefined, hasKey
   if (kind !== 'custom' && !hasKey) throw httpError(400, 'apiKey is required for this provider');
 }
 
-const keyFields = (apiKey: string, orgId: string, id: string) => ({
-  apiKey: encryptSecret(apiKey, `${orgId}/${id}`),
-  apiKeyHint: apiKey.slice(-4),
-});
+const keyFields = (apiKey: string, orgId: string, id: string) => {
+  const { cipher, hint } = sealSecret(apiKey, orgId, id);
+  return { apiKey: cipher, apiKeyHint: hint };
+};
 
 export const aiProviderRoutes: FastifyPluginAsyncZod = async (app) => {
   const flag: preHandlerAsyncHookHandler = async (req) => {
@@ -179,6 +179,7 @@ export const aiProviderRoutes: FastifyPluginAsyncZod = async (app) => {
         const { apiKey, baseUrl, ...rest } = req.body;
         const nextBase = baseUrl === undefined ? current.baseUrl : baseUrl;
         checkShape(current.provider, nextBase, Boolean(apiKey ?? current.apiKey));
+        requireSecretAgain(nextBase !== current.baseUrl, Boolean(current.apiKey), Boolean(apiKey));
         const [updated] = await tx
           .update(aiProviders)
           .set({

@@ -405,22 +405,24 @@ class WebhookActivities:
                         r["id"],
                     )
                     moved += 1
-                # AI provider keys: bound to org and row id (apps/api/src/routes/ai-providers.ts).
-                for r in await conn.fetch(
-                    "select id::text as id, api_key from ai_providers"
-                    " where api_key not like $1 for update",
-                    f"{prefix}%",
-                ):
-                    aad = f"{org_id}/{r['id']}"
-                    try:
-                        plain = decrypt_secret(r["api_key"], aad, self.keys)
-                    except Exception:  # unreadable: its calls already fail visibly
-                        activity.logger.warning("cannot re-encrypt ai provider %s", r["id"])
-                        continue
-                    await conn.execute(
-                        "update ai_providers set api_key = $1 where id = $2",
-                        encrypt_secret(plain, aad, active_id, active_key),
-                        r["id"],
-                    )
-                    moved += 1
+                # AI provider keys and MCP auth headers: bound to org and row id
+                # (apps/api/src/routes/ai-providers.ts, mcp-servers.ts).
+                for table, column in (("ai_providers", "api_key"), ("mcp_servers", "auth_secret")):
+                    for r in await conn.fetch(
+                        f"select id::text as id, {column} as s from {table}"  # noqa: S608
+                        f" where {column} not like $1 for update",
+                        f"{prefix}%",
+                    ):
+                        aad = f"{org_id}/{r['id']}"
+                        try:
+                            plain = decrypt_secret(r["s"], aad, self.keys)
+                        except Exception:  # unreadable: its calls already fail visibly
+                            activity.logger.warning("cannot re-encrypt %s %s", table, r["id"])
+                            continue
+                        await conn.execute(
+                            f"update {table} set {column} = $1 where id = $2",  # noqa: S608
+                            encrypt_secret(plain, aad, active_id, active_key),
+                            r["id"],
+                        )
+                        moved += 1
         return moved

@@ -32,11 +32,15 @@ PROMPT = "Summarize: the secret launch plan for Apollo"
 spans = InMemorySpanExporter()
 
 
-async def fake(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def fake(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     return Completion("A short summary.", f"{model}-20261101", 1200, 80, "fake-response-1")
 
 
-async def broken(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def broken(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     raise TimeoutError
 
 

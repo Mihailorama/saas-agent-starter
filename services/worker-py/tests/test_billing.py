@@ -49,7 +49,9 @@ metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
 provider_calls: list[str] = []
 
 
-async def fake(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def fake(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     provider_calls.append(model)
     return Completion("ok", model, 1000, 100, "fake-1")
 
@@ -360,7 +362,9 @@ async def test_unmetered_models_are_limited_by_calls_and_tokens(
     await call(gateway, paid, "self-hosted")
 
 
-async def rate_limited(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def rate_limited(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     raise RateLimitError("429 from the subscription", llm_provider="openai", model=model)
 
 
