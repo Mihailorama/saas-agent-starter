@@ -1,10 +1,12 @@
-import { randomBytes } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import { member, organization, subscriptions, user, withOrg } from '@app/db';
 import * as Sentry from '@sentry/node-core';
+import { WorkflowNotFoundError } from '@temporalio/client';
 import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '../db.ts';
 import { env } from '../env.ts';
 import { isEnabled } from '../flags.ts';
+import { rewardWorkflowId, temporal } from '../temporal.ts';
 import { dub } from './dub.ts';
 import type { BillingEvent } from './provider.ts';
 import { providerFor } from './registry.ts';
@@ -56,6 +58,11 @@ export async function attachReferral(orgId: string, userId: string) {
   }
 }
 
+/** Stripe promotion codes take letters and digits only; uppercase, without look-alikes. */
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const newCode = () =>
+  Array.from({ length: 10 }, () => ALPHABET[randomInt(ALPHABET.length)]).join('');
+
 /**
  * The org's referral link. Created once and kept in the organization row: the native code and its
  * provider promotion code, or Dub's partner link. Never throws for a provider or Dub error: the
@@ -81,7 +88,7 @@ export async function referralLink(org: { id: string; name: string }, adminEmail
   if (!code) {
     const [set] = await db
       .update(organization)
-      .set({ referralCode: randomBytes(6).toString('base64url') })
+      .set({ referralCode: newCode() })
       .where(and(eq(organization.id, org.id), isNull(organization.referralCode)))
       .returning({ code: organization.referralCode });
     if (!set?.code) return referralLink(org, adminEmail); // a concurrent request set it
@@ -144,6 +151,17 @@ export async function onReferralEvent(e: BillingEvent) {
         subject: e.orgId,
         userId: ctx.userId,
       });
+    }
+    if (e.type === 'referral.voided' && e.referrerOrgId) {
+      // The reward waits holdDays in its workflow: ending it grants nothing (terminate, not
+      // cancel: it takes effect even while no worker runs). One granted already stays.
+      const id = rewardWorkflowId({ orgId: e.referrerOrgId, ruleId: 'referral', subject: e.orgId });
+      await (await temporal()).workflow
+        .getHandle(id)
+        .terminate('referral voided: refund or dispute')
+        .catch((err) => {
+          if (!(err instanceof WorkflowNotFoundError)) throw err;
+        });
     }
     const d = dub();
     if (d && e.type === 'payment.succeeded' && e.amount && e.currency) {

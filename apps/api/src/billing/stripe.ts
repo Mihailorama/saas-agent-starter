@@ -252,9 +252,11 @@ export function stripeProvider(opts: {
             ...(invoice.id && { invoiceId: invoice.id }),
             ...(typeof invoice.customer === 'string' && { customerId: invoice.customer }),
           };
-          // A referral converts once: on the subscription's first paid (non-zero) invoice.
+          // A referral converts on the second paid period: the first renewal invoice with an
+          // amount (a $0 trial or 100%-off first invoice converts then too). Later renewals emit
+          // it again; the reward counts each referred org once.
           const referrerOrgId = meta?.referrerOrgId;
-          const first = invoice.billing_reason === 'subscription_create';
+          const first = invoice.billing_reason === 'subscription_cycle';
           return [
             { ...paid, type: 'payment.succeeded' },
             ...(referrerOrgId && first && invoice.amount_paid > 0
@@ -268,6 +270,34 @@ export function stripeProvider(opts: {
                 ]
               : []),
           ];
+        }
+        // A refund or dispute of a referred org's payment voids its pending referral reward.
+        case 'charge.refunded':
+        case 'charge.dispute.created': {
+          const charge =
+            e.type === 'charge.refunded'
+              ? e.data.object
+              : await stripe.charges.retrieve(
+                  typeof e.data.object.charge === 'string'
+                    ? e.data.object.charge
+                    : e.data.object.charge.id,
+                );
+          const customer =
+            typeof charge.customer === 'string' ? charge.customer : charge.customer?.id;
+          if (!customer) return [];
+          const subs = await stripe.subscriptions.list({ customer, status: 'all', limit: 10 });
+          return subs.data.flatMap((s) =>
+            s.metadata?.orgId && s.metadata.referrerOrgId
+              ? [
+                  {
+                    ...base(e, s.metadata.orgId),
+                    eventId: `${e.id}:${s.id}`,
+                    type: 'referral.voided' as const,
+                    referrerOrgId: s.metadata.referrerOrgId,
+                  },
+                ]
+              : [],
+          );
         }
         default:
           return [];

@@ -24,6 +24,8 @@ export const user = pgTable('user', {
   banned: boolean('banned').default(false),
   banReason: text('ban_reason'),
   banExpires: timestamp('ban_expires'),
+  /** Organization whose invitation reward this account counted for, once ever (docs/growth.md). */
+  inviteRewardOrgId: text('invite_reward_org_id'),
   /** Referral the user signed up with (docs/growth.md): an org's referral code, or Dub's click id
    * with DUB_API_KEY. Read once when they create an organization. */
   referralCode: text('referral_code'),

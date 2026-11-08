@@ -1,6 +1,6 @@
 {
-  "id": "9e0c4c71-ff69-4273-8eb9-3935b7ba819d",
-  "prevId": "9d220662-929f-40cd-ad71-511b5dd465ef",
+  "id": "ca9c86bd-2f7a-41fd-a790-3bd8409253d5",
+  "prevId": "beaca6be-2199-477c-8c57-ef3b36af52d4",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1152,7 +1152,7 @@
         },
         "reward_grants_status": {
           "name": "reward_grants_status",
-          "value": "\"reward_grants\".\"status\" in ('reserved', 'applied', 'pending_manual')"
+          "value": "\"reward_grants\".\"status\" in ('reserved', 'applied', 'pending_manual', 'released')"
         }
       },
       "isRLSEnabled": false
@@ -2963,6 +2963,12 @@
         "ban_expires": {
           "name": "ban_expires",
           "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "invite_reward_org_id": {
+          "name": "invite_reward_org_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

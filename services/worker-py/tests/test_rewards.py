@@ -141,7 +141,7 @@ async def test_invite_reward_guards(pool: asyncpg.Pool) -> None:
     assert await run(pool, r, api) == "balance_credit"
     # Temporal forgot the id (retention): a new run for the same subject still gets nothing.
     assert await run(pool, r, api, suffix="-again") == "not eligible"
-    # The same account invited by another org (farming): its second accepted invitation.
+    # The same account invited by another org (farming): it counted for the first one, ever.
     other = await new_org(pool)
     await pool.execute(
         "insert into member (id, organization_id, user_id, role, created_at)"
@@ -159,6 +159,40 @@ async def test_invite_reward_guards(pool: asyncpg.Pool) -> None:
     assert json.loads(sent.content)["key"] == f"reward-{org_id}-team-invite-{member}"
     [g] = await grants(pool, org_id)
     assert (g["status"], g["via"], g["provider_ref"]) == ("applied", "balance_credit", "cb_1")
+
+
+async def test_reruns_settle_without_crediting_twice(pool: asyncpg.Pool) -> None:
+    """A reservation found again: applied before = settle with the stored ref, no API call;
+    older than a day without it = operators (the provider key may have expired)."""
+    org_id = await new_org(pool)
+    applied, stale = await invitee(pool, org_id), await invitee(pool, org_id)
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+        for subject, via, ref, age in (
+            (applied, "balance_credit", "cbtxn_1", timedelta(0)),
+            (stale, None, None, timedelta(days=2)),
+        ):
+            await conn.execute(
+                "insert into reward_grants (org_id, rule_id, subject, status, via, reward,"
+                " idempotency_key, provider_ref, created_at) values ($1, 'team-invite', $2,"
+                " 'reserved', $3, $4::jsonb, $5, $6, now() - $7::interval)",
+                org_id,
+                subject,
+                via,
+                json.dumps(RULES["team-invite"]["reward"]),
+                f"reward-{org_id}-team-invite-{subject}",
+                ref,
+                age,
+            )
+    api = Api(body={"via": "balance_credit", "reward": {}, "ref": "cbtxn_2"})
+    assert await run(pool, RewardRequest(org_id, "team-invite", applied, applied), api) == (
+        "balance_credit"
+    )
+    assert await run(pool, RewardRequest(org_id, "team-invite", stale, stale), api) == "manual"
+    assert api.requests == []  # the provider was not called again
+    rows = {g["subject"]: g for g in await grants(pool, org_id)}
+    assert (rows[applied]["status"], rows[applied]["provider_ref"]) == ("applied", "cbtxn_1")
+    assert rows[stale]["status"] == "pending_manual"
 
 
 async def test_cap_holds_under_concurrent_grants(pool: asyncpg.Pool) -> None:
@@ -216,7 +250,7 @@ async def test_llm_spend_bonus_counts_until_it_expires(pool: asyncpg.Pool) -> No
 
 
 async def test_referral_guards(pool: asyncpg.Pool) -> None:
-    async def org(domain: str, status: str | None = "active") -> str:
+    async def org(domain: str, status: str | None = "active", ending: bool = False) -> str:
         org_id = await new_org(pool)
         await new_user(pool, org_id, email=f"{uuid.uuid4()}@{domain}")
         if status:
@@ -224,9 +258,11 @@ async def test_referral_guards(pool: asyncpg.Pool) -> None:
                 await conn.execute("select set_config('app.org_id', $1, true)", org_id)
                 await conn.execute(
                     "insert into subscriptions (org_id, plan_id, status, contour, provider,"
-                    " currency, customer_id) values ($1, 'pro', $2, 'en', 'stripe', 'USD', $1)",
+                    " currency, customer_id, cancel_at_period_end)"
+                    " values ($1, 'pro', $2, 'en', 'stripe', 'USD', $1, $3)",
                     org_id,
                     status,
+                    ending,
                 )
         return org_id
 
@@ -253,6 +289,8 @@ async def test_referral_guards(pool: asyncpg.Pool) -> None:
     a = await org("a.example.com", status=None)  # a free referrer
     assert await referral(a, a) == "not eligible"  # self-referral
     assert await referral(a, await org("b.example.com", "canceled")) == "not eligible"  # refunded
+    ending = await org("b.example.com", ending=True)  # paid once, then cancel at period end
+    assert await referral(a, ending) == "not eligible"
     assert await referral(a, await org("a.example.com"), block=True) == "not eligible"
     assert await referral(a, await org("a.example.com")) == "manual"  # guard off; no API link
     assert await referral(a, await org("c.example.com")) == "manual"

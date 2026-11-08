@@ -98,7 +98,9 @@ export type BillingEvent = {
     /** A paid credit pack: the worker grants the plan's pack value once per eventId. */
     | 'credits.purchased'
     /** A paid invoice of an org that checked out with a referral (docs/growth.md). */
-    | 'referral.converted';
+    | 'referral.converted'
+    /** A refund or dispute of a referred org's payment: its pending referral reward is void. */
+    | 'referral.voided';
   orgId: string;
   /** ISO time the provider produced the event; older events never overwrite newer state. */
   occurredAt: string;

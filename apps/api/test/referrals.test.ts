@@ -112,7 +112,7 @@ describe('native referrals (Stripe promotion codes)', () => {
       port: url.port,
       protocol: 'http',
     });
-    const invoice = (amount: number, reason = 'subscription_create', customer = 'cus_b') => ({
+    const invoice = (amount: number, reason = 'subscription_cycle', customer = 'cus_b') => ({
       id: `evt_${randomUUID()}`,
       object: 'event',
       type: 'invoice.paid',
@@ -141,16 +141,29 @@ describe('native referrals (Stripe promotion codes)', () => {
         ip: '',
       });
     };
-    expect((await events(invoice(0))).map((e) => e.type)).toEqual(['payment.succeeded']); // free
-    // Only the first invoice converts; renewals are plain payments.
-    const renewal = await events(invoice(2900, 'subscription_cycle'));
-    expect(renewal.map((e) => e.type)).toEqual(['payment.succeeded']);
+    // The first invoice never converts (paid once, refund-and-leave); the second paid period
+    // does, with an amount (a $0 trial first invoice is no obstacle).
+    const created = await events(invoice(2900, 'subscription_create'));
+    expect(created.map((e) => e.type)).toEqual(['payment.succeeded']);
+    expect((await events(invoice(0))).map((e) => e.type)).toEqual(['payment.succeeded']);
     const paid = await events(invoice(2900));
     expect(paid.map((e) => e.type)).toEqual(['payment.succeeded', 'referral.converted']);
     for (const e of paid) await onReferralEvent(e);
-    expect(
-      await workflowExists(rewardWorkflowId({ orgId: a, ruleId: 'referral', subject: b })),
-    ).toBe(true);
+    const rewardId = rewardWorkflowId({ orgId: a, ruleId: 'referral', subject: b });
+    expect(await workflowExists(rewardId)).toBe(true);
+
+    // A refund or dispute cancels the reward while it waits out its hold.
+    const refund = {
+      id: `evt_${randomUUID()}`,
+      object: 'event',
+      type: 'charge.refunded',
+      created: Math.floor(Date.now() / 1000),
+      data: { object: { id: 'ch_1', object: 'charge', customer: 'cus_b' } },
+    };
+    expect(Array.isArray(await events(refund))).toBe(true); // maps through the subscriptions
+    await onReferralEvent({ ...paid[1]!, eventId: 'evt_refund', type: 'referral.voided' });
+    const run = await (await temporal()).workflow.getHandle(rewardId).describe();
+    expect(run.status.name).toBe('TERMINATED');
 
     // Same payer: a paying referrer whose saved card is the referred customer's (stripe-mock
     // returns the same card for every customer) gets nothing.

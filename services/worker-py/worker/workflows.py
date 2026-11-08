@@ -301,28 +301,30 @@ class RewardWorkflow:
         if r.holdDays:
             await workflow.sleep(timedelta(days=r.holdDays))
         quick = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
-        reward = await workflow.execute_activity_method(
+        res = await workflow.execute_activity_method(
             RewardActivities.reserve,
             r,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=quick,
         )
-        if reward is None:
+        if res is None:
             return "not eligible"
-        try:
-            applied = await workflow.execute_activity_method(
-                RewardActivities.apply,
-                r,
-                start_to_close_timeout=timedelta(minutes=1),
-                retry_policy=RetryPolicy(
-                    initial_interval=timedelta(seconds=10),
-                    maximum_interval=timedelta(minutes=10),
-                    maximum_attempts=8,
-                ),
-            )
-        except ActivityError:
-            # API or provider down for good: never drop the reward, operators apply it.
-            applied = Applied("manual", reward)
+        applied = res.applied
+        if applied is None:
+            try:
+                applied = await workflow.execute_activity_method(
+                    RewardActivities.apply,
+                    r,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(
+                        initial_interval=timedelta(seconds=10),
+                        maximum_interval=timedelta(minutes=10),
+                        maximum_attempts=8,
+                    ),
+                )
+            except ActivityError:
+                # API or provider down for good: never drop the reward, operators apply it.
+                applied = Applied("manual", res.reward)
         # The DB may be down for a while; the provider may already have applied it: keep trying.
         await workflow.execute_activity_method(
             RewardActivities.record,

@@ -13,6 +13,7 @@ export function dub() {
       method: 'POST',
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(3000), // a hung Dub must not hold the billing webhook
     });
     if (!res.ok) throw new Error(`Dub ${path} answered ${res.status}`);
     return res.json() as Promise<Record<string, unknown>>;
