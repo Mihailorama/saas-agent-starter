@@ -68,8 +68,12 @@ function findLayoutProblems([textSel, interactiveSel]: [string, string]): string
     }
   }
 
+  // Toasts (sonner) stack on top of each other by design; they are transient, not layout.
   const controls = [...document.querySelectorAll<HTMLElement>(interactiveSel)].filter(
-    (el) => shown(el) && getComputedStyle(el).pointerEvents !== 'none',
+    (el) =>
+      shown(el) &&
+      getComputedStyle(el).pointerEvents !== 'none' &&
+      !el.closest('[data-sonner-toaster]'),
   );
   const rects = controls.map((el) => el.getBoundingClientRect());
   for (let i = 0; i < controls.length; i++) {
