@@ -22,6 +22,7 @@ import {
   supportTriageWorkflowId,
   temporal,
 } from '../src/temporal.ts';
+import { historyText } from './history.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
@@ -685,7 +686,9 @@ describe('service desk (Chatwoot)', () => {
     const run = await handle.describe();
     expect(run.type).toBe('SupportTriageWorkflow');
     // Ids only in Temporal's history: the worker reads the text from Chatwoot.
-    expect(JSON.stringify(await handle.fetchHistory())).not.toContain('customer text');
+    const history = await historyText(handle);
+    expect(history).toContain(String(c.conversationId)); // decoded: the check can fail
+    expect(history).not.toContain('customer text');
     await handle.terminate('test cleanup');
   });
 

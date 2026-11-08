@@ -95,7 +95,8 @@ Chatwoot services), and they are not in the backup until copied to the bucket an
    **website token** to `VITE_CHATWOOT_WEBSITE_TOKEN`. Under Configuration, turn on **Enforce
    user identity validation** and copy the **HMAC token** to `CHATWOOT_HMAC_TOKEN` (API).
 3. **Webhook** (Settings -> Integrations -> Webhooks): URL `http://api:3000/api/hooks/chatwoot`
-   (or the public API URL), event **Message created**. Copy its secret (shown in the webhook's
+   (or the public API URL), event **Message created** (plus **Conversation created** if the CRM
+   sync is on: each new conversation becomes a note on the person, docs/crm.md). Copy its secret (shown in the webhook's
    edit form, or `GET /api/v1/accounts/{id}/webhooks`) to `CHATWOOT_WEBHOOK_SECRET` (API).
 4. **Bot user**: invite an agent such as `triage-bot@example.com`, add it to every inbox, sign
    in as it and copy Profile settings -> Access token to `CHATWOOT_API_TOKEN` (worker). Notes it

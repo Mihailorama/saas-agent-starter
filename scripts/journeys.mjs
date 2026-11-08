@@ -142,7 +142,7 @@ const umamiBase = () => `${e.UMAMI_URL}/api/websites/${e.UMAMI_WEBSITE_ID || '<w
 const umamiReady = () => Boolean(e.UMAMI_URL && e.UMAMI_API_KEY && e.UMAMI_WEBSITE_ID);
 
 /** Finds an object by exact name in a list endpoint, then PATCHes/POSTs or creates it. */
-async function upsert(
+export async function upsert(
   api,
   {
     list,

@@ -28,6 +28,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 - **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and
   Telegram; AI triage writes private notes and files or "+1"s GitHub / Plane Intake items, and
   closed items are reported back to the conversation.
+- **CRM and booking**: Twenty (`crm` profile) gets people, companies, subscription deals, product
+  signals and support/booking notes from Temporal workflows; "Book a demo" / "Talk to us" on a
+  self-hosted Cal.diy (`booking` profile) or one you connect ([docs/crm.md](docs/crm.md)).
 - **Ops**: Docker Compose locally; production from versioned images (GHCR, by digest) with
   Caddy auto-TLS, SOPS-encrypted env files and one-command deploy/rollback over SSH, Coolify or
   Kubernetes as options ([docs/deploy.md](docs/deploy.md)), OpenTelemetry everywhere,
@@ -163,6 +166,17 @@ image) on the stack's Postgres (own database) and S3 (own bucket), so backups co
 website inbox token and HMAC token for the Help menu, the webhook secret for triage, and a model
 for `support.triage`; tickets stay in Chatwoot, backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
 Details: [docs/support.md](docs/support.md).
+
+## CRM and booking
+
+Off until you set env. `docker compose --profile crm up -d` runs Twenty (AGPL, unmodified) on the
+stack's Postgres and Redis, or connect a Twenty you already run or Twenty Cloud; with
+`TWENTY_API_URL`/`TWENTY_API_KEY` and `pnpm crm:sync`, verified sign-ups,
+organizations, billing changes, PostHog product signals, Chatwoot conversations and bookings land
+there, one idempotent workflow per source event. No CRM tables of our own. Booking runs on Cal.diy
+(MIT, the open-source successor of Cal.com): `docker compose --profile booking up -d` with the image
+CI builds from a pinned commit, or connect an existing Cal.diy or Cal.com Cloud by env. Details:
+[docs/crm.md](docs/crm.md).
 
 ## LLM-ops
 

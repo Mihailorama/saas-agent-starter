@@ -143,6 +143,8 @@ ${up}${log('rollback')}`);
 }
 
 const images = { api: digest('api'), worker: digest('worker'), web: digest('web') };
+// Profile booking (Cal.diy, compose.prod.yaml): its image comes from the same release.
+if (cfg('COMPOSE_PROFILES', '').split(',').includes('booking')) images.caldiy = digest('caldiy');
 const release = `${Object.entries(images)
   .map(([k, v]) => `IMAGE_${k.toUpperCase()}=${v}`)
   .join('\n')}\nRELEASE_VERSION=${version ?? 'pinned'}\n`;

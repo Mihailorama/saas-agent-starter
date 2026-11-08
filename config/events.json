@@ -176,6 +176,16 @@
         "analytics": "boolean"
       }
     },
+    "booking_opened": {
+      "description": "A booking link (site \"Book a demo\", app \"Talk to us\") was clicked; docs/crm.md. `source` is site or app. Opens the Cal.com embed or, without booking consent, the Cal.com page.",
+      "pii": false,
+      "props": { "source": "string" }
+    },
+    "booking_completed": {
+      "description": "The Cal.com embed reported a booking (bookingSuccessfulV2). Bookings made on the Cal.com page itself are not seen here; the CRM gets every booking from the webhook (docs/crm.md).",
+      "pii": false,
+      "props": { "source": "string" }
+    },
     "support_opened": {
       "description": "The Help menu opened the support widget (docs/support.md). `kind` is what the user picked: question, bug or feature_request.",
       "pii": false,

@@ -112,6 +112,14 @@ SUPPORT_AI_ORG_ID = os.environ.get("SUPPORT_AI_ORG_ID", "")
 # "Released in vX.Y.Z" comment (docs/releases.md); anything else = private notes only.
 _notify = os.environ.get("SUPPORT_NOTIFY_ON_CLOSE", "false").lower()
 SUPPORT_NOTIFY = {"true": "close", "release": "release"}.get(_notify, "")
+# CRM sync (docs/crm.md): Twenty's REST API; URL or key empty = dry run (logs only).
+TWENTY_API_URL = os.environ.get("TWENTY_API_URL", "")  # with --profile crm: http://twenty:3000
+TWENTY_API_KEY = os.environ.get("TWENTY_API_KEY", "")
+CRM_FILE = Path(os.environ.get("CRM_FILE", _ROOT / "config" / "crm.json"))
+# Links to bookings in CRM notes: your self-hosted Cal.diy (or https://app.cal.com); empty = none.
+BOOKING_PUBLIC_URL = os.environ.get("BOOKING_PUBLIC_URL", "")
+# Booking payloads left in S3 (a sync that failed for good) are deleted after this many days.
+BOOKING_PAYLOAD_DAYS = int(os.environ.get("BOOKING_PAYLOAD_DAYS", "7"))
 # Traces only (e.g. Langfuse's OTLP endpoint, which takes no metrics); overrides the base URL.
 OTEL_TRACES_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
 # LLM observability in PostHog (docs/adr/0009-llm-ops.md): each call as an $ai_generation event.

@@ -209,6 +209,8 @@ services:
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       PLANE_WEBHOOK_SECRET: ${PLANE_WEBHOOK_SECRET:-}
       PLANE_PROJECT_ID: ${PLANE_PROJECT_ID:-}
+      # Booking webhook -> CRM (docs/crm.md); empty = endpoint off.
+      BOOKING_WEBHOOK_SECRET: ${BOOKING_WEBHOOK_SECRET:-}
       # Operator console (docs/admin.md); empty = no operators.
       OPERATOR_EMAILS: ${OPERATOR_EMAILS:-}
       # With --profile observability: http://otel-collector:4318
@@ -287,6 +289,10 @@ services:
       AI_SUPPORT_TRIAGE_MODEL: ${AI_SUPPORT_TRIAGE_MODEL:-}
       SUPPORT_AI_ORG_ID: ${SUPPORT_AI_ORG_ID:-}
       SUPPORT_NOTIFY_ON_CLOSE: ${SUPPORT_NOTIFY_ON_CLOSE:-false}
+      # CRM sync (docs/crm.md). Empty = dry run. With --profile crm: http://twenty:3000
+      TWENTY_API_URL: ${TWENTY_API_URL:-}
+      TWENTY_API_KEY: ${TWENTY_API_KEY:-}
+      BOOKING_PUBLIC_URL: ${BOOKING_PUBLIC_URL:-}
       # Data-subject rights (docs/privacy.md): per-person export/deletion in the tools; empty = skip.
       POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
@@ -437,6 +443,9 @@ services:
         # in-app help widget (Chatwoot); empty = no Help entry (docs/support.md)
         VITE_CHATWOOT_BASE_URL: ${VITE_CHATWOOT_BASE_URL:-}
         VITE_CHATWOOT_WEBSITE_TOKEN: ${VITE_CHATWOOT_WEBSITE_TOKEN:-}
+        # "Talk to us" booking (Cal.diy / Cal.com, flag `booking`); empty = no entry (docs/crm.md)
+        VITE_BOOKING_ORIGIN: ${VITE_BOOKING_ORIGIN:-}
+        VITE_BOOKING_LINK: ${VITE_BOOKING_LINK:-}
     environment:
       S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}"
       SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
@@ -448,6 +457,8 @@ services:
       CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
       # Chatwoot widget origin for the CSP, e.g. "http://localhost:3300"
       SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
+      # Booking embed origin for the CSP, e.g. "http://localhost:3500" (Cal.diy, profile booking)
+      BOOKING_ORIGINS: ${BOOKING_ORIGINS:-}
     depends_on: [api]
     ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
 
@@ -610,11 +621,16 @@ services:
         VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}
         VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
         VITE_GA4_ID: ${VITE_GA4_ID:-}
+        VITE_BOOKING_ORIGIN: ${VITE_BOOKING_ORIGIN:-}
+        VITE_BOOKING_LINK: ${VITE_BOOKING_LINK:-}
+        VITE_FLAGS_ON: ${VITE_FLAGS_ON:-} # the site decides flags at build time
+        VITE_FLAGS_OFF: ${VITE_FLAGS_OFF:-}
     environment:
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
       CONSENT_MODE: ${CONSENT_MODE:-opt-in}
       CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
       CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
+      BOOKING_ORIGINS: ${BOOKING_ORIGINS:-}
     ports: ["127.0.0.1:${SITE_PORT:-8090}:8080"]
 
   # One-shots: role + database `postiz` on our Postgres server, namespace `postiz` in our
@@ -791,6 +807,115 @@ services:
     mem_limit: 1g
     depends_on: { chatwoot-prepare: { condition: service_completed_successfully } }
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+  # --- crm profile: Twenty CRM (AGPL-3.0, unmodified container) for customer records, synced
+  # by the worker (docs/crm.md, ADR 0026). docker compose --profile crm up -d
+  # Reuses our Postgres (role + database `twenty`) and Redis (db 4; noeviction, as BullMQ needs).
+  # Booking: the `booking` profile below (Cal.diy), or connect an existing one (docs/crm.md).
+  twenty-db:
+    logging: *logging
+    profiles: [crm]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'twenty'" | grep -q 1 ||
+         psql -c "create role twenty login password 'twenty'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'twenty'" | grep -q 1 ||
+         psql -c "create database twenty owner twenty")
+
+  twenty:
+    profiles: [crm]
+    <<: &twenty
+      image: twentycrm/twenty:v2.56.1
+      logging: *logging
+      environment: &twenty-env
+        PG_DATABASE_URL: postgres://twenty:twenty@postgres:5432/twenty
+        SERVER_URL: ${TWENTY_PUBLIC_URL:-http://localhost:${TWENTY_PORT:-3400}}
+        REDIS_URL: redis://redis:6379/4 # db 1 GlitchTip/Langfuse, 2 Chatwoot, 3 Postiz
+        ENCRYPTION_KEY: ${TWENTY_ENCRYPTION_KEY:-local-dev-twenty-encryption-key-change-me}
+        APP_SECRET: ${TWENTY_ENCRYPTION_KEY:-local-dev-twenty-encryption-key-change-me}
+        STORAGE_TYPE: local # attachments in the twenty-data volume (docs/backups.md)
+        TELEMETRY_ENABLED: "false" # no usage pings to twenty.com
+        # The worker calls Twenty on the compose network (http://twenty:3000), not the internet.
+      volumes: [twenty-data:/app/packages/twenty-server/.local-storage]
+      depends_on:
+        twenty-db: { condition: service_completed_successfully }
+        redis: { condition: service_healthy }
+    mem_limit: 1536m # measured in docs/STACK.md
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz >/dev/null"]
+      interval: 5s
+      start_period: 10m # first start runs ~580 migration steps (11 min on a loaded 8-core host)
+    ports: ["127.0.0.1:${TWENTY_PORT:-3400}:3000"]
+
+  twenty-worker:
+    profiles: [crm]
+    <<: *twenty
+    mem_limit: 1g
+    command: ["yarn", "worker:prod"]
+    environment:
+      <<: *twenty-env
+      NODE_OPTIONS: --max-old-space-size=768 # Node's default heap for a 1 GiB cgroup OOMs here
+      DISABLE_DB_MIGRATIONS: "true" # the server runs them
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+    depends_on: { twenty: { condition: service_healthy } }
+
+  # --- booking profile: Cal.diy (MIT, the open-source successor of Cal.com) for "Book a demo" /
+  # "Talk to us" (docs/crm.md, ADR 0026). Upstream publishes no image: build it from the pinned
+  # commit first (infra/caldiy/build.sh caldiy:local, ~6 GB RAM) or set CALDIY_IMAGE to a release
+  # image (ghcr.io/<owner>/<repo>/caldiy@sha256:...). docker compose --profile booking up -d
+  # Reuses our Postgres (role + database `caldiy`, so pgBackRest covers it) and sends mail through
+  # Mailpit. An existing Cal.diy or Cal.com Cloud needs no container: only the booking env.
+  caldiy-db:
+    logging: *logging
+    profiles: [booking]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'caldiy'" | grep -q 1 ||
+         psql -c "create role caldiy login password 'caldiy'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'caldiy'" | grep -q 1 ||
+         psql -c "create database caldiy owner caldiy")
+
+  caldiy:
+    logging: *logging
+    profiles: [booking]
+    image: ${CALDIY_IMAGE:-caldiy:local}
+    mem_limit: 1g
+    environment:
+      # Runtime variables of upstream's README ("Important Run-time variables") and .env.example.
+      DATABASE_URL: postgresql://caldiy:caldiy@postgres:5432/caldiy
+      DATABASE_DIRECT_URL: postgresql://caldiy:caldiy@postgres:5432/caldiy
+      DATABASE_HOST: postgres:5432 # scripts/start.sh waits for it, then runs the migrations
+      NEXT_PUBLIC_WEBAPP_URL: ${CALDIY_PUBLIC_URL:-http://localhost:${CALDIY_PORT:-3500}}
+      NEXT_PUBLIC_WEBSITE_URL: ${CALDIY_PUBLIC_URL:-http://localhost:${CALDIY_PORT:-3500}}
+      NEXTAUTH_URL: ${CALDIY_PUBLIC_URL:-http://localhost:${CALDIY_PORT:-3500}}/api/auth
+      NEXTAUTH_SECRET: ${CALDIY_NEXTAUTH_SECRET:-local-dev-caldiy-nextauth-secret}
+      # 32 bytes for AES-256 (openssl rand -base64 24)
+      CALENDSO_ENCRYPTION_KEY: ${CALDIY_ENCRYPTION_KEY:-local-dev-caldiy-aes256-key-0000}
+      CRON_API_KEY: ${CALDIY_CRON_API_KEY:-local-dev-caldiy-cron-key}
+      CALCOM_TELEMETRY_DISABLED: "1"
+      EMAIL_FROM: ${CALDIY_EMAIL_FROM:-booking@example.com}
+      EMAIL_FROM_NAME: ${CALDIY_EMAIL_FROM_NAME:-Booking}
+      EMAIL_SERVER_HOST: ${CALDIY_SMTP_HOST:-mailpit}
+      EMAIL_SERVER_PORT: ${CALDIY_SMTP_PORT:-1025}
+      EMAIL_SERVER_USER: ${CALDIY_SMTP_USER:-}
+      EMAIL_SERVER_PASSWORD: ${CALDIY_SMTP_PASSWORD:-}
+    depends_on:
+      caldiy-db: { condition: service_completed_successfully }
+      mailpit: { condition: service_healthy }
+    healthcheck: # the image's own check, with time for the first start's migrations
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 10s
+      start_period: 5m
+    ports: ["127.0.0.1:${CALDIY_PORT:-3500}:3000"]
+
   # Full LLM-ops profile: Langfuse v4 (MIT core) on our Postgres server (own database), our
   # Redis (own db index) and our S3 (own bucket), plus ClickHouse. Langfuse's optional AI
   # gateway container is left out. Memory limits are the measured working set plus headroom
@@ -912,4 +1037,5 @@ volumes:
   postiz-config:
   postiz-uploads:
   serpbear-data:
+  twenty-data:
   clickhousedata:

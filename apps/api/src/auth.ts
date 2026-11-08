@@ -11,7 +11,7 @@ import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
 import { mfaGuard } from './mfa.ts';
 import { operatorGuard } from './operator-guard.ts';
-import { startSendEmail } from './temporal.ts';
+import { type CrmEvent, startCrmSync, startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
 async function sendEmail(
@@ -30,6 +30,13 @@ async function sendEmail(
     throw err;
   }
 }
+
+/** Person / company in the CRM (docs/crm.md). A Temporal outage never blocks a sign-up. */
+const crmSync = async (e: CrmEvent) => {
+  await startCrmSync(e).catch((err) => Sentry.captureException(err));
+};
+const personSync = (userId: string) =>
+  crmSync({ kind: 'user.created', eventId: `user:${userId}`, userId });
 
 // Optional SSO: set OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET to enable "Sign in with SSO".
 // Callback (register it at the IdP): ${BETTER_AUTH_URL}/api/auth/callback/oidc. PKCE is on.
@@ -58,6 +65,17 @@ export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: allowedOrigins,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
+  // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
+  // vouches for): an unverified sign-up must not claim a CRM person who has that email.
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (user) => {
+          if (user.emailVerified) await personSync(user.id);
+        },
+      },
+    },
+  },
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 12,
@@ -70,6 +88,7 @@ export const auth = betterAuth({
     sendOnSignUp: true,
     sendOnSignIn: true, // an unverified sign-in attempt mails a fresh link
     autoSignInAfterVerification: true,
+    afterEmailVerification: (user) => personSync(user.id),
     sendVerificationEmail: ({ user, url, token }, request) =>
       sendEmail('verify-email', user.email, url, token, request, { name: user.name }),
   },
@@ -78,6 +97,15 @@ export const auth = betterAuth({
       // Seats come from the plan (config/plans.json); checked on add-member and invite accept.
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
+      organizationHooks: {
+        afterCreateOrganization: ({ organization, user }) =>
+          crmSync({
+            kind: 'org.created',
+            eventId: `org:${organization.id}`,
+            orgId: organization.id,
+            userId: user.id,
+          }),
+      },
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>
         sendEmail(

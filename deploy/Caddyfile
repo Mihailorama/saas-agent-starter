@@ -30,3 +30,10 @@
 # 	tls {$CADDY_TLS}
 # 	reverse_proxy s3:8333
 # }
+
+# Profile booking (Cal.diy on this host, docs/crm.md): its own domain. Uncomment, set
+# CALDIY_PUBLIC_URL=https://cal.example.com, BOOKING_PUBLIC_URL and VITE_BOOKING_ORIGIN to it.
+# cal.example.com {
+# 	tls {$CADDY_TLS}
+# 	reverse_proxy caldiy:3000
+# }
