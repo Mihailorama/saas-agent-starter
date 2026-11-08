@@ -60,7 +60,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md),
                       mcp-servers.ts = the org's external MCP servers (docs/mcp.md),
-                      mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md)
+                      mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md),
+                      onboarding.ts = checklist item ids + conditions, GET /api/onboarding (docs/onboarding.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md)
@@ -76,6 +77,8 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   src/components/ui/  shadcn/ui components (copied source; edit freely)
   src/components/patterns/  app shell, page header, data table, states, confirm dialog,
                       settings section, command palette (docs/ui.md)
+  src/components/onboarding-checklist.tsx, src/lib/onboarding.ts  setup checklist card and
+                      product tour (driver.js, tours as data on `data-tour`), docs/onboarding.md
   src/dev/            UI gallery + reference screens at /dev/ui (dev builds only)
   e2e/                Playwright smoke, axe a11y on every page; visual.spec.ts (own config)
 apps/site           Astro static marketing site + blog (docs/marketing.md): reuses web's index.css
@@ -135,6 +138,7 @@ docs/support.md     service desk: Chatwoot setup, channels, triage, tracker retu
 docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync flows, mapping
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
+docs/onboarding.md  setup checklist (item ids for rewards rules) and product tour: add a step or item
 docs/mcp.md         external MCP tools: connect a server, the reference server, the tool loop
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 docs/security.md    sign-up protection (disposable email), bot-check follow-up
@@ -259,6 +263,14 @@ Details: docs/mcp.md, ADR 0027. A tool is a REST route that already accepts API 
 2. Test in `apps/api/test/mcp.test.ts`: listed only with the scope, a call that works, and a
    cross-org id that comes back "Not Found".
 3. Add the tool to the table in docs/mcp.md.
+
+## Recipe: add an onboarding checklist item or tour step
+
+Details: docs/onboarding.md. Item: add the id and its minimum role to `ONBOARDING_ITEMS` and its
+condition (existing data only, no new table) in `apps/api/src/routes/onboarding.ts`, its copy and
+action in `ITEMS` of `apps/web/src/components/onboarding-checklist.tsx`, a case in
+`apps/api/test/onboarding.test.ts` and a row in docs/onboarding.md; never rename an id. Tour step:
+put `data-tour="<id>"` on the element and add the step to `TOUR` in `apps/web/src/lib/onboarding.ts`.
 
 ## Recipe: add a background workflow
 
