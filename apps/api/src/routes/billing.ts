@@ -5,11 +5,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  type Entitlements,
   entitlements,
   llmSpend,
   requireEntitlement,
   type Subscription,
 } from '../billing/entitlements.ts';
+import { fromMinor } from '../billing/money.ts';
 import { contour, type Price, plans, subscribable } from '../billing/plans.ts';
 import { ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
 import { contourOfProvider, providerFor, providerOf } from '../billing/registry.ts';
@@ -50,6 +52,13 @@ const Billing = z.object({
   selfService: z.object({ portal: z.boolean(), cancel: z.boolean() }),
   /** LLM usage is billed (pay as you go): the limit warns, the org's own cap stops calls. */
   payg: z.boolean(),
+  /** Prepaid credits (flag billing-credits): balance in major units, the pack on sale. */
+  credits: z
+    .object({
+      balance: z.number().nullable(),
+      pack: z.object({ credits: z.number(), amount: z.string() }),
+    })
+    .nullable(),
   usage: z.object({ seats: Usage, projects: Usage }),
   llmSpend: z.array(
     z.object({
@@ -90,9 +99,13 @@ const basePrice = (price: Price | undefined) =>
 /** Whether the contour's provider sells these components through its checkout. */
 function sellable(contourId: string, price: Price | undefined) {
   // Free, packs only or a contract: not a self-serve subscription.
-  if (!price?.length || subscribable(price).length !== price.length) return false;
+  if (!price?.length || !subscribable(price).length) return false;
+  const rest = price.filter((c) => !subscribable([c]).length);
   try {
-    return providerFor(contourId).checkout !== undefined;
+    const provider = providerFor(contourId);
+    // Credit packs are bought on top (topUp); anything else (a contract) goes through sales.
+    const packs = rest.every((c) => c.model === 'credits') && (!rest.length || !!provider.topUp);
+    return provider.checkout !== undefined && packs;
   } catch {
     return false; // provider not configured here
   }
@@ -105,6 +118,33 @@ function selfService(sub: Subscription | null) {
   } catch {
     return { portal: false, cancel: false };
   }
+}
+
+/** The credit pack on sale for the org's plan, if any (flag billing-credits). */
+async function packOf(e: Entitlements) {
+  const sub = e.subscription;
+  const pack = sub && e.plan.prices[sub.currency]?.find((c) => c.model === 'credits');
+  if (!sub || !pack || pack.model !== 'credits' || !e.models.includes('credits')) return null;
+  if (!(await isEnabled('billing-credits', { userId: sub.orgId, orgId: sub.orgId }))) return null;
+  return { sub, pack };
+}
+
+/** Credit left: the provider's balance less this period's not yet invoiced spend (Stripe applies
+ * credit only when it finalizes the invoice), as the worker's gateway counts it. */
+async function creditsOf(log: FastifyBaseLogger, e: Entitlements, spent: Record<string, number>) {
+  const found = await packOf(e);
+  if (!found) return null;
+  const { currency } = found.sub;
+  let balance: number | null = null;
+  try {
+    const minor = await providerOf(found.sub).creditBalance?.(found.sub);
+    if (minor !== undefined) {
+      balance = Math.max(0, fromMinor(minor, currency) - (spent[currency] ?? 0));
+    }
+  } catch (err) {
+    log.warn({ err }, 'credit balance unavailable'); // the page still renders
+  }
+  return { balance, pack: { credits: found.pack.pack.credits, amount: found.pack.pack.amount } };
 }
 
 /** Maps provider failures to clear errors without leaking provider responses. */
@@ -156,6 +196,7 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
           canManage: rank >= 2,
           selfService: selfService(sub),
           payg,
+          credits: await creditsOf(req.log, e, spent),
           usage: {
             seats: { used: seatCount?.n ?? 0, limit: e.limits.seats },
             projects: { used: projectCount?.n ?? 0, limit: e.limits.projects },
@@ -244,6 +285,34 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
         req,
         async () => result,
         () => req.body.planId,
+      );
+    },
+  );
+
+  // A prepaid credit pack (docs/billing.md "Prepaid credits"); the worker grants it after payment.
+  app.post(
+    '/credits/checkout',
+    { ...admin, schema: { tags, response: { 200: Url, 409: ErrorBody } } },
+    async (req) => {
+      const e = await entitlements(req.tenant.orgId);
+      const found = await packOf(e);
+      const provider = found && providerOf(found.sub);
+      if (!found?.sub.customerId || !provider?.topUp) {
+        throw httpError(409, 'this plan has no credit packs');
+      }
+      const result = await viaProvider(req.log, () =>
+        provider.topUp!({
+          orgId: req.tenant.orgId,
+          planId: e.planId,
+          customerId: found.sub.customerId!,
+          pack: found.pack,
+          returnUrl,
+        }),
+      );
+      return withTenant(
+        req,
+        async () => result,
+        () => e.planId,
       );
     },
   );

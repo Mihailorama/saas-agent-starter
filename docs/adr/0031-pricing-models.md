@@ -17,7 +17,7 @@ engine (tiers, proration, invoices). Usage: [docs/billing.md](../billing.md) "Pr
   `contract`. `config/plans.json` mirrors the provider's catalog: each component names the
   provider's price object; the provider rates and invoices, so tiers live only there. A price
   object without `model` is `flat` (expand/contract: older files keep working); a hybrid is
-  `flat` + `metered`. Amounts carry the currency's minor-unit decimals. One Zod schema in the
+  `flat` + `metered`, prepaid is `metered` + `credits`. Amounts carry the currency's minor-unit decimals. One Zod schema in the
   API and the matching dataclasses in the worker.
 - **Provider capabilities are optional methods**: an adapter has `checkout`, `portal`,
   `cancel` (and what later features add) or not, plus one `invoicing: 'provider' | 'external'`
@@ -42,6 +42,10 @@ engine (tiers, proration, invoices). Usage: [docs/billing.md](../billing.md) "Pr
   subscription cannot bill are refused. On pay-as-you-go plans the plan's LLM limit becomes a warning and
   the org's own cap (else `llmSpendMax`) the hard stop. The worker holds the meter adapter
   (Stripe REST via the installed `httpx2`), because usage and the gateway live there.
+- **Prepaid credits are provider credit grants.** A paid pack (one-time checkout) becomes one
+  grant of the plan's pack value in the provider (audit check plus an idempotency key per
+  payment; failures raise and are recorded). The gateway compares the provider's balance with
+  the period's not yet invoiced spend before a priced call. No local credit ledger.
 - **Entitlements per model**: per seat, the purchased quantity is the seat limit (from the
   provider's webhook); limits otherwise come from the plan and operator overrides.
 

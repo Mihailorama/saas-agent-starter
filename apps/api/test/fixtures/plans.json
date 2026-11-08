@@ -146,6 +146,45 @@
         ]
       }
     },
+    "prepaid": {
+      "name": "Prepaid (credit packs)",
+      "limits": {
+        "seats": 10,
+        "projects": 50,
+        "llmSpendMonthly": {
+          "USD": 100,
+          "EUR": 100
+        }
+      },
+      "llmSpendMax": {
+        "USD": 1000,
+        "EUR": 1000
+      },
+      "features": {
+        "llmLimitRaise": true,
+        "byoLlm": false
+      },
+      "prices": {
+        "USD": [
+          {
+            "model": "metered",
+            "meter": "llm_cost_micros",
+            "interval": "month",
+            "providerPriceId": "price_example_prepaid_llm_usd"
+          },
+          {
+            "model": "credits",
+            "meter": "llm_cost_micros",
+            "pack": {
+              "credits": 1000,
+              "amount": "10.00"
+            },
+            "expiresDays": 365,
+            "providerPriceId": "price_example_prepaid_pack_usd"
+          }
+        ]
+      }
+    },
     "enterprise": {
       "name": "Enterprise (contract, invoiced by you)",
       "limits": {

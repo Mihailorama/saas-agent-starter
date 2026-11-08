@@ -32,6 +32,7 @@ from worker.billing import (
     check_llm_usage,
     ensure_org_active,
 )
+from worker.credits import Credits, check_credit_balance
 from worker.flags import is_enabled
 from worker.mcp import McpConfig, Toolbox, ToolResult, toolbox
 from worker.posthog import PostHogAi
@@ -171,9 +172,11 @@ class Gateway:
         plans: Plans | None = None,
         byo: Byo | None = None,
         mcp: McpConfig | None = None,
+        credits: Mapping[str, Credits] | None = None,
     ) -> None:
         self.pool, self.s3, self.contour = pool, s3, contour
         self.posthog, self.plans, self.byo, self.mcp = posthog, plans, byo, mcp
+        self.credits: dict[str, Credits] = dict(credits or {})  # provider id -> adapter
         self.registry, self.providers = registry, providers
         self.configs = provider_configs or {}
         self.retention = timedelta(days=retention_days)
@@ -279,6 +282,8 @@ class Gateway:
             if self.plans is not None:
                 if route.price is not None:
                     await check_llm_budget(self.pool, self.plans, org_id, route.price.currency)
+                    if self.credits:
+                        await check_credit_balance(self.pool, self.plans, self.credits, org_id)
                 else:
                     await check_llm_usage(self.pool, self.plans, org_id, self.unmetered)
             try:

@@ -24,6 +24,7 @@ from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import Byo, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
+from worker.credits import CreditActivities, Credits, StripeCredits
 from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
@@ -166,12 +167,17 @@ async def main() -> None:
     await ensure_retention_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     await ensure_usage_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
+    stripe = (settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)
+    credits: dict[str, Credits] = (
+        {"stripe": StripeCredits(http, *stripe)} if settings.STRIPE_SECRET_KEY else {}
+    )
+    credit_grants = CreditActivities(pool, plans, credits)
+    if ai:
+        ai.credits = credits  # built before the HTTP client
     usage = UsageActivities(
         pool,
         plans,
-        {"stripe": StripeMeters(http, settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)}
-        if settings.STRIPE_SECRET_KEY
-        else {},
+        {"stripe": StripeMeters(http, *stripe)} if settings.STRIPE_SECRET_KEY else {},
     )
     files = S3(
         endpoint=settings.S3_ENDPOINT,
@@ -254,6 +260,8 @@ async def main() -> None:
             billing.end_contract_period,
             usage.usage_orgs,
             usage.report_org_usage,
+            credit_grants.grant_credits,
+            credit_grants.record_grant_failure,
             crm.sync,
             support.triage,
             support.issue_closed,

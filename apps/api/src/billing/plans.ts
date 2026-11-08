@@ -28,6 +28,14 @@ const Component = z.union([
     interval: Interval,
     providerPriceId: ProviderPriceId,
   }),
+  /** Prepaid pack (a one-time price), drawn down by the plan's metered price on the same meter. */
+  z.object({
+    model: z.literal('credits'),
+    meter: z.enum(METERS),
+    pack: z.object({ credits: z.number().int().positive(), amount: Amount }),
+    expiresDays: z.number().int().positive().optional(),
+    providerPriceId: ProviderPriceId,
+  }),
   /** Negotiated contract. `manual`: invoiced outside any PSP, set in the operator console;
    * `stripe`: a send_invoice subscription created in the Stripe dashboard (docs/billing.md). */
   z.object({
@@ -52,12 +60,18 @@ const Price = z
     if (cs.some((c) => c.model === 'contract') && cs.length > 1) {
       issue('a contract price stands alone');
     }
+    for (const c of cs) {
+      // Credit grants apply to metered prices only.
+      if (c.model === 'credits' && !cs.some((m) => m.model === 'metered' && m.meter === c.meter)) {
+        issue(`credits for ${c.meter} need a metered component on the same meter`);
+      }
+    }
   });
 /** Amounts have exactly the currency's minor-unit decimals ("29.00", JPY "3000", KWD "9.500"). */
 const Prices = z.record(z.string(), Price).superRefine((prices, ctx) => {
   for (const [currency, cs] of Object.entries(prices)) {
     for (const c of cs) {
-      const amount = 'amount' in c ? c.amount : undefined;
+      const amount = 'amount' in c ? c.amount : c.model === 'credits' ? c.pack.amount : undefined;
       if (amount !== undefined && (amount.split('.')[1]?.length ?? 0) !== minorUnits(currency)) {
         ctx.addIssue({
           code: 'custom',
