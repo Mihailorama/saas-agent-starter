@@ -4,10 +4,14 @@
 // event. Fails CI otherwise, so a feature cannot ship events nobody can find in the catalog.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { checkSurveys } from './journeys.mjs';
 
 const root = new URL('..', import.meta.url).pathname;
 const { events } = JSON.parse(readFileSync(join(root, 'config/events.json'), 'utf8'));
-const { journeys } = JSON.parse(readFileSync(join(root, 'config/journeys.json'), 'utf8'));
+const { journeys, surveys = [] } = JSON.parse(
+  readFileSync(join(root, 'config/journeys.json'), 'utf8'),
+);
+const { flags } = JSON.parse(readFileSync(join(root, 'config/flags.json'), 'utf8'));
 const TYPES = new Set(['string', 'number', 'boolean']);
 const errors = [];
 const used = new Set();
@@ -28,6 +32,7 @@ for (const j of journeys) {
       errors.push(`journeys: ${j.name} step "${s.event}" is not in config/events.json`);
   }
 }
+errors.push(...checkSurveys(surveys, events, flags));
 
 /** Top-level keys of an object literal starting at text[i] === '{' (shorthand and `key:`). */
 function objectKeys(text, i) {
@@ -122,5 +127,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  `check:events: ${used.size} events tracked, ${Object.keys(events).length} catalogued, ${journeys.length} journeys, ${published.size} webhook events`,
+  `check:events: ${used.size} events tracked, ${Object.keys(events).length} catalogued, ${journeys.length} journeys, ${surveys.length} surveys, ${published.size} webhook events`,
 );
