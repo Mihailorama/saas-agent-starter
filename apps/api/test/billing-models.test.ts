@@ -233,6 +233,16 @@ describe('contracts (operator console)', () => {
     expect((await put(org, { ...contract, planId: 'starter' })).statusCode).toBe(400);
     expect((await put(org, { ...contract, periodEnd: undefined })).statusCode).toBe(400);
     expect((await put(org, { ...contract, periodEnd: start.toISOString() })).statusCode).toBe(400);
+    const past = {
+      periodStart: new Date(Date.now() - 2 * 86_400_000),
+      periodEnd: new Date(Date.now() - 60_000),
+    };
+    const backDated = await put(org, {
+      ...contract,
+      periodStart: past.periodStart.toISOString(),
+      periodEnd: past.periodEnd.toISOString(),
+    });
+    expect(backDated.statusCode).toBe(400); // its timer could never fire
     const asOwner = { ...contract, reason: 'not an operator' };
     expect((await call(owner, 'PUT', `/api/admin/orgs/${org}/contract`, asOwner)).statusCode).toBe(
       403,
