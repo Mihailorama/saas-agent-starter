@@ -331,9 +331,10 @@ export function Shell() {
   const userId = session?.user.id;
   // An operator viewing as the user: their browsing must not join the user's analytics person.
   const viewedBy = session?.session.impersonatedBy;
+  const orgId = session?.session.activeOrganizationId ?? undefined;
   useEffect(() => {
-    if (userId && !viewedBy) identify(userId);
-  }, [userId, viewedBy]);
+    if (userId && !viewedBy) identify(userId, orgId);
+  }, [userId, orgId, viewedBy]);
   const onSecurity = useLocation({ select: (l) => l.pathname === '/settings/security' });
   // Breadcrumbs are declared per route (`staticData.crumbs` in main.tsx).
   const crumbs = useMatches().at(-1)?.staticData.crumbs ?? [];

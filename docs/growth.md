@@ -1,6 +1,6 @@
 # Rewards and growth loops
 
-Design and alternatives: [ADR 0029](adr/0029-rewards.md). This page is the how-to.
+Design and alternatives: [ADR 0030](adr/0030-rewards.md). This page is the how-to.
 
 Rewards are code: rules in `config/rewards.json`, one dispatcher, one workflow. There is no rules
 engine beyond that file. Everything is behind the `rewards` feature flag (default off).
