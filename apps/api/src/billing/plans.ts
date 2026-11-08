@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { minorUnits } from './money.ts';
 
 /** config/plans.json (docs/billing.md). Also read by the worker; change both readers together. */
 const Money = z.record(z.string().regex(/^[A-Z]{3}$/), z.number().nonnegative());
@@ -7,20 +8,6 @@ const Amount = z.string().regex(/^\d+(\.\d+)?$/);
 const Interval = z.enum(['month', 'year']);
 /** Usage the worker reports to the provider's meters (docs/billing.md "Usage-based"). */
 export const METERS = ['llm_cost_micros', 'llm_tokens', 'api_calls'] as const;
-/** Decimal places of a currency's minor unit (ISO 4217); 2 unless listed. Twin in billing.py. */
-const MINOR_UNITS: Record<string, number> = {
-  JPY: 0,
-  KRW: 0,
-  VND: 0,
-  CLP: 0,
-  ISK: 0,
-  KWD: 3,
-  BHD: 3,
-  JOD: 3,
-  OMR: 3,
-  TND: 3,
-};
-export const minorUnits = (currency: string) => MINOR_UNITS[currency] ?? 2;
 const ProviderPriceId = z.string().nullable();
 /**
  * One priced component, mirroring the provider's catalog; rating (tiers, proration, invoices)

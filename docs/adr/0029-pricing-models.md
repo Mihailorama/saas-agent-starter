@@ -20,9 +20,10 @@ engine (tiers, proration, invoices). Usage: [docs/billing.md](../billing.md) "Pr
   object without `model` is `flat` (expand/contract: older files keep working); a hybrid is
   `flat` + `metered`. Amounts carry the currency's minor-unit decimals. One Zod schema in the
   API and the matching dataclasses in the worker.
-- **Provider capabilities**: `BillingProvider.capabilities()` returns `{checkout, portal,
-  cancel, priceModels}`. Routes and the billing page ask it instead of assuming Stripe's feature
-  set. Fields are added with their first consumer, not ahead of it.
+- **Provider capabilities are optional methods**: an adapter has `checkout`, `portal`,
+  `cancel` (and what later features add) or not, plus one `invoicing: 'provider' | 'external'`
+  field. Routes and the billing page check for the method instead of assuming Stripe's
+  feature set; no separate capabilities object to keep in step.
 - **`manual` provider** for contracts invoiced outside any PSP, selected by the plan's
   `contract` price (`"provider": "manual"`), not by a flag. The operator console writes plan,
   currency, period and contract reference (audited) and starts a Temporal timer

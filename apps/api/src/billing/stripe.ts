@@ -77,12 +77,7 @@ export function stripeProvider(opts: {
   return {
     id: 'stripe',
 
-    capabilities: () => ({
-      checkout: true,
-      portal: true,
-      cancel: true,
-      priceModels: ['flat', 'per_seat', 'metered', 'contract'],
-    }),
+    invoicing: 'provider',
 
     async checkout(input) {
       const metadata = { orgId: input.orgId, planId: input.planId };

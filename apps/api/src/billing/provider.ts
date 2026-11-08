@@ -1,33 +1,26 @@
 import type { Subscription } from './entitlements.ts';
-import type { PriceComponent, PriceModel } from './plans.ts';
+import type { PriceComponent } from './plans.ts';
 
 /**
  * A payment provider, normalized (docs/billing.md "Adding a provider"). Nothing here is
- * provider-specific: an adapter maps its own objects to these shapes.
+ * provider-specific: an adapter maps its own objects to these shapes. What a provider can do is
+ * which optional methods it has; routes and the billing page check for them.
  */
 export interface BillingProvider {
   readonly id: string;
-  /** What this provider does; the routes and the billing page ask instead of assuming. */
-  capabilities(): Capabilities;
+  /** Who sends invoices: the provider, or someone outside it (`manual` contracts). */
+  readonly invoicing: 'provider' | 'external';
   /** Hosted payment page for the first period of `planId`; returns where to send the browser. */
-  checkout(input: CheckoutInput): Promise<{ url: string }>;
-  /** Hosted self-service page (invoices, payment method), or null if the provider has none. */
-  portal(sub: Subscription, returnUrl: string): Promise<string | null>;
+  checkout?(input: CheckoutInput): Promise<{ url: string }>;
+  /** Hosted self-service page (invoices, payment method), or null for this subscription. */
+  portal?(sub: Subscription, returnUrl: string): Promise<string | null>;
   /** Stop renewing at the end of the paid period. */
-  cancel(sub: Subscription): Promise<void>;
+  cancel?(sub: Subscription): Promise<void>;
   /** Verifies a webhook and maps it to events; throws WebhookRejected if it is not authentic. */
   webhook(req: WebhookRequest): Promise<BillingEvent[]>;
   /** The subscription in the provider's own dashboard, for operators (docs/admin.md). */
   dashboardUrl(sub: Subscription): string | null;
 }
-
-export type Capabilities = {
-  checkout: boolean;
-  portal: boolean;
-  cancel: boolean;
-  /** Price models (config/plans.json `model`) this provider can sell. */
-  priceModels: PriceModel[];
-};
 
 export type CheckoutInput = {
   orgId: string;
@@ -81,5 +74,3 @@ export type BillingEvent = {
 
 export class WebhookRejected extends Error {}
 export class ProviderNotConfigured extends Error {}
-/** The provider cannot do this (see capabilities()); the route answers 409. */
-export class NotSupported extends Error {}

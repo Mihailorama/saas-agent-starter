@@ -39,8 +39,10 @@ from worker.billing import (
     Price,
     SpendLimitExceeded,
     UsageLimitExceeded,
+    from_minor,
     llm_budget,
     load_plans,
+    to_minor,
 )
 from worker.providers import ProviderConfig, load_providers
 from worker.s3 import S3
@@ -503,3 +505,12 @@ async def test_contract_period_end_marks_past_due_once(pool: asyncpg.Pool) -> No
 
 
 DAYS = timedelta(days=30)
+
+
+def test_minor_units_per_currency() -> None:  # twin of apps/api/src/billing/money.ts
+    assert [to_minor("29.00", "USD"), to_minor("3000", "JPY"), to_minor("9.500", "KWD")] == [
+        2900,
+        3000,
+        9500,
+    ]
+    assert from_minor(9500, "KWD") == Decimal("9.5")
