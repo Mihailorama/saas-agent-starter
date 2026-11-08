@@ -1,15 +1,19 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { telegramSupportLinks } from '@app/db';
 import { fromNodeHeaders } from 'better-auth/node';
+import { lt } from 'drizzle-orm';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
+import { db } from '../db.ts';
 import { env } from '../env.ts';
 import { isEnabled } from '../flags.ts';
+import { putJson } from '../s3.ts';
 import {
+  queueTelegramUpdate,
   startCrmSync,
   startSupportIssueClosed,
   startSupportTriage,
-  startTelegramUpdate,
   type TelegramUpdate,
 } from '../temporal.ts';
 import { RedactionUnavailable, redact } from './hooks.ts';
@@ -107,14 +111,31 @@ const PlaneEvent = z.object({
  */
 export const telegramKey = (botToken: string, purpose: 'webhook' | 'link') =>
   hmacHex(botToken, `telegram-support-${purpose}`);
-/** `/start` payload of the Help menu's deep link: `<expiry base36>_<signature>_<user id>`. */
-export function telegramStartToken(botToken: string, userId: string, now = Date.now()) {
-  const exp = Math.floor(now / 1000 + 86_400).toString(36);
-  const sig = createHmac('sha256', telegramKey(botToken, 'link'))
+const LINK_SECONDS = 600;
+const linkSig = (botToken: string, exp: string, userId: string) =>
+  createHmac('sha256', telegramKey(botToken, 'link'))
     .update(`${exp}.${userId}`)
     .digest('base64url')
     .slice(0, 16);
-  return `${exp}_${sig}_${userId}`; // at most 64 characters (Telegram's limit)
+/** `/start` payload of the Help menu's deep link: `<expiry base36>_<signature>_<user id>`. */
+export function telegramStartToken(botToken: string, userId: string, now = Date.now()) {
+  const exp = Math.floor(now / 1000 + LINK_SECONDS).toString(36);
+  return `${exp}_${linkSig(botToken, exp, userId)}_${userId}`; // at most 64 characters
+}
+/** The app user of a valid payload, once: its signature is then stored as used. */
+export async function telegramStartUser(botToken: string, payload: string, now = Date.now()) {
+  const [, exp = '', sig = '', userId = ''] =
+    payload.match(/^([0-9a-z]{1,12})_([\w-]{16})_([\w-]{1,40})$/) ?? [];
+  if (!userId || Number.parseInt(exp, 36) * 1000 < now) return undefined;
+  if (!sameString(sig, linkSig(botToken, exp, userId))) return undefined;
+  const spent = new Date(now - 2 * LINK_SECONDS * 1000); // expired anyway: no longer needed
+  await db.delete(telegramSupportLinks).where(lt(telegramSupportLinks.usedAt, spent));
+  const used = await db
+    .insert(telegramSupportLinks)
+    .values({ signature: sig })
+    .onConflictDoNothing()
+    .returning();
+  return used.length ? userId : undefined;
 }
 const TelegramMessage = z.looseObject({
   message_id: z.number().int(),
@@ -125,7 +146,6 @@ const TelegramMessage = z.looseObject({
     .object({ id: z.number().int(), is_bot: z.boolean(), language_code: z.string().optional() })
     .optional(),
   text: z.string().optional(),
-  sender_chat: z.object({ id: z.number().int() }).optional(), // anonymous group admins
 });
 const TelegramBody = z.object({ update_id: z.number().int(), message: TelegramMessage.optional() });
 // Service messages in a topic (the team closing it, say) cannot be copied to the user.
@@ -137,7 +157,9 @@ const SERVICE = [
 ];
 const COMMAND = /^\/([a-z]+)(?:@\w+)?(?:\s+([\s\S]*))?$/i;
 
-const Result = z.object({ action: z.enum(['ignored', 'started', 'duplicate', 'limited']) });
+const Result = z.object({
+  action: z.enum(['ignored', 'started', 'duplicate', 'queued', 'limited']),
+});
 const ErrorBody = z.object({ error: z.string() });
 export const hookResponses = { 200: Result, 401: ErrorBody };
 const telegramResponses = { ...hookResponses, 404: ErrorBody, 503: ErrorBody };
@@ -170,7 +192,7 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
   const limits = { rateLimit: { max: 120, timeWindow: '1 minute' } };
   // Per Telegram user, answered with 200: an error status makes Telegram redeliver the update.
   const perTelegramUser = app.createRateLimit({
-    max: 20,
+    max: 5,
     timeWindow: '1 minute',
     keyGenerator: (req) => `tg:${(req.body as z.infer<typeof TelegramBody>).message?.from?.id}`,
   });
@@ -194,9 +216,7 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
         return reply.code(401).send({ error: 'unauthorized' });
       }
       const m = req.body.message; // edited messages, reactions etc. are not subscribed to
-      // Bots are skipped, except the stand-in for the group's anonymous admins (sender_chat).
-      const anonymousAdmin = m?.sender_chat?.id === m?.chat.id;
-      if (!m?.from || (m.from.is_bot && !anonymousAdmin)) return { action: 'ignored' as const };
+      if (!m?.from || m.from.is_bot) return { action: 'ignored' as const };
       const [, cmd = '', rest = ''] = m.text?.match(COMMAND) ?? [];
       const u: TelegramUpdate = {
         chatId: m.chat.id,
@@ -213,24 +233,34 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
         const command = cmd.toLowerCase();
         if (command === 'bug' || command === 'feature') {
           u.command = command;
+          let title: string | undefined;
           try {
-            [u.arg] = await redact([rest.trim().slice(0, 200)]);
+            [title] = await redact([rest.trim().slice(0, 120)]);
           } catch (err) {
             if (!(err instanceof RedactionUnavailable)) throw err;
             return reply.code(503).send({ error: 'pii redaction unavailable' });
           }
+          // Text goes to S3, its key to the workflow (the tracker inbox prefix: purged daily).
+          u.s3Key = `tracker-inbox/telegram-${m.chat.id}-${m.message_id}.json`;
+          await putJson(u.s3Key, { title });
         } else if (command) u.command = 'other';
       } else if (m.chat.type === 'private') {
         const limit = await perTelegramUser(req);
         if (!limit.isAllowed && limit.isExceeded) return { action: 'limited' as const };
-        if (cmd.toLowerCase() === 'start')
-          Object.assign(u, { command: 'start', arg: rest.slice(0, 64) });
+        if (cmd.toLowerCase() === 'start') {
+          u.command = 'start';
+          // Checked here, so only the resulting id reaches Temporal, never the payload.
+          if (rest) {
+            u.userId = await telegramStartUser(token, rest.trim());
+            u.linkFailed = !u.userId;
+          }
+        }
       } else {
         return { action: 'ignored' as const };
       }
-      const started = await startTelegramUpdate(u);
-      req.log.info({ chatId: u.chatId, messageId: u.messageId, started }, 'telegram hook');
-      return { action: started ? ('started' as const) : ('duplicate' as const) };
+      await queueTelegramUpdate(u);
+      req.log.info({ chatId: u.chatId, messageId: u.messageId }, 'telegram hook');
+      return { action: 'queued' as const };
     },
   );
 

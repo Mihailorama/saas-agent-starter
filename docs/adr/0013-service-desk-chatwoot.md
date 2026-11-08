@@ -109,12 +109,16 @@ Telegram inbox works but brings Rails, Sidekiq and ~1 GiB for what is a relay.
   or file through our tracker without being modified. aiogram (MIT) would add a framework and its
   dispatcher for five calls; python-telegram-bot is LGPL-3.0 (banned by ADR 0005).
 - **Same shape as the Chatwoot path**: a webhook on the API (`POST /api/hooks/telegram`, Telegram's
-  `X-Telegram-Bot-Api-Secret-Token` compared in constant time) starts a Temporal workflow per
-  message; the worker does the Bot API calls. Ids only in workflow arguments. `/bug` and
+  `X-Telegram-Bot-Api-Secret-Token` compared in constant time) signals one Temporal workflow
+  per chat or topic (signal-with-start), which relays its messages in order, one activity per step;
+  the worker does the Bot API calls. Ids only in workflow arguments: the API verifies `/start`
+  links (10 minutes, single use) and puts `/bug` titles in S3. `/bug` and
   `/feature` in a topic use the triage's producers and tracker client; the return path notes the
   outcome in linked topics as it does in conversations (the topic link in the item is the link).
-- **One small table** `telegram_support_users` (Telegram user, group, topic, linked app user):
-  Telegram has no "find topic by user" call. Not tenant data; deleted with the app user.
+- **Two small tables**: `telegram_support_users` (Telegram user, group, topic, linked app user;
+  Telegram has no "find topic by user" call; deleted with the app user) and
+  `telegram_support_links` (used link signatures). Not tenant data.
+- **The support group is the trust boundary**: private, no invite links, no anonymous admins.
 - **Keys derived from the bot token** (HMAC with a purpose label) for the webhook secret and the
   deep-link signature: one secret to manage, rotated with the token.
 - **"Connect" for teams that outgrow it** is the Chatwoot Telegram inbox above: same bot, unset

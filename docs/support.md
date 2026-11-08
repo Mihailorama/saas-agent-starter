@@ -314,44 +314,61 @@ Chatwoot Telegram inbox ("Channels" above, `TELEGRAM_SUPPORT_*` unset); the trac
 path stay the same.
 
 ```
-user ──> bot (private chat) ──webhook──> POST /api/hooks/telegram ──> TelegramSupportWorkflow
-          (X-Telegram-Bot-Api-Secret-Token, constant time)            (id telegram-support-<chat>-<message>)
+user ──> bot (private chat) ──webhook──> POST /api/hooks/telegram ──signal──> TelegramChatWorkflow
+          (X-Telegram-Bot-Api-Secret-Token, constant time)                    (id telegram-chat-<chat>-<thread>)
 worker: one forum topic per Telegram user in the team's supergroup, created on first contact;
   user's message copied into it (copyMessage: text, photos, files, voice), 👍 reaction on it,
-  an acknowledgement on first contact (ACK in worker/telegram.py, by the user's language)
+  an acknowledgement on first contact (TEXTS in worker/telegram.py, by the user's language)
 team reply in the topic ──> same webhook ──> copied to the user's private chat
 /bug <title> or /feature <title> in a topic ──> tracker item (support-bug / support-feature-request)
 ```
 
-- **Storage**: only `telegram_support_users` (Telegram user id, group id, topic id, linked app user
-  id). Messages are not stored by us: they stay in Telegram, and the workflow arguments carry
-  message ids (plus the `/start` payload or the team's redacted command title).
-- **Account link**: Help -> Telegram in the app opens `t.me/<bot>?start=<payload>`. The payload is
-  `<expiry>_<signature>_<user id>`, signed by `GET /api/support/telegram` with a key derived from
-  the bot token, valid for a day. The worker checks it, stores the user id on the mapping and posts
-  "Linked to app user ... (organizations: ...)" in the topic. Without it the user is anonymous to
-  the team (their Telegram name and id are in the topic title).
+- **Order and retries**: one workflow per private chat and one per topic, started or signalled
+  per message (signal-with-start); it relays its messages one at a time, in order, drops message
+  ids it has already seen (Telegram redelivers when an answer is slow), ends after an idle hour and
+  continues as new every 100 messages. The webhook is registered with `max_connections: 1`, so
+  Telegram sends updates one after another. Each step of a message (copy, reaction,
+  acknowledgement, note) is its own activity: a retry repeats only the failed step. A 429 waits
+  Telegram's `retry_after`; steps keep retrying for up to an hour, other 4xx are not retried.
+- **Storage**: `telegram_support_users` (Telegram user id, group id, topic id, linked app user id)
+  and `telegram_support_links` (signatures of used deep links). Messages are not stored by us: they
+  stay in Telegram. Workflow arguments carry ids only: message ids, the app user id of a verified
+  link, and for `/bug` the S3 key of the title (`tracker-inbox/`, deleted after filing, leftovers
+  purged daily).
+- **Account link**: Help -> Telegram in the app fetches a fresh payload from
+  `GET /api/support/telegram` on each click and opens `t.me/<bot>?start=<payload>`. The payload is
+  `<expiry>_<signature>_<user id>`, signed with a key derived from the bot token, valid for **10
+  minutes and once**: the API verifies it when `/start` arrives and stores its signature, so a
+  replayed or forwarded link is refused. The user gets "Done: this chat is now linked to your
+  account j\*\*\*@example.com" (masked email: they see at once if it is not theirs), or "expired or
+  already used"; the team gets "Linked to app user ... (organizations: ...)" in the topic. Without
+  a link the user is anonymous to the team (their Telegram name and id are in the topic title).
 - **Team commands** in a topic: `/bug <title>` and `/feature <title>` file a tracker item with the
   Chatwoot triage's producers (`config/tracker.json`), or add "+1" to the open item with that exact
-  title. The title is redacted twice (the API's `redact()`, then Presidio in the worker,
+  title (not when that item already links this topic: no "+1" on its own item). The title is
+  redacted once, in the API (`redact()`: Presidio with the `pii` sidecar, else emails only;
   "Personal data" below); the item carries the topic link, never the user's messages. The bot
   answers in the topic with the link (or "dry run" without tracker credentials). Other commands
   are not relayed: the team can talk in the topic with `/note ...` and similar.
 - **Return path**: `SupportIssueClosedWorkflow` also finds topic links (`https://t.me/c/<group>/<topic>`)
   in the item and notes the outcome in each topic; with `SUPPORT_NOTIFY_ON_CLOSE` the user gets
   `RESOLVED_MESSAGE` in Telegram too.
-- **Rate limit**: 20 messages per minute per Telegram user (the API's Redis rate-limit store).
+- **Rate limit**: 5 messages per minute per Telegram user (the API's Redis rate-limit store).
   Over it, messages are dropped with a 200 answer, so Telegram does not redeliver them.
-- Replies of anonymous group admins are relayed too (they come from Telegram's stand-in bot).
-- A deleted topic is recreated on the user's next message; a reply the user cannot receive (they
-  blocked the bot) gets a "Not delivered" note in the topic.
+- A deleted topic is recreated on the user's next message, a closed one is reopened; a reply the
+  user cannot receive (they blocked the bot) gets a "Not delivered" note in the topic.
 
 ### Set up
 
 1. [@BotFather](https://t.me/BotFather): `/newbot`, keep the token. `/setprivacy` -> Disable is
    not needed (the bot is an admin, admins get every message).
 2. Create a group, Settings -> **Topics** on (it becomes a forum supergroup). Add the team.
-3. Add the bot as **administrator** with _Manage topics_ (needed for `createForumTopic`).
+   **The group is the trust boundary**: everyone in it reads every user's messages and can answer
+   as the bot. Keep it private (Group type: Private), revoke every invite link (Invite links ->
+   revoke, add people by hand), and leave _Remain anonymous_ off for every admin: replies from
+   anonymous admins come from Telegram's stand-in bot and are not relayed.
+3. Add the bot as **administrator** with _Manage topics_ (needed for `createForumTopic` and to
+   reopen closed topics).
 4. Chat id: send a message in the group, then
    `curl -s https://api.telegram.org/bot<token>/getUpdates` (before the webhook is set) and take
    `message.chat.id` (`-100...`).
@@ -366,7 +383,7 @@ pnpm flags:sync   # then turn `telegram-support` on in PostHog (or FLAGS_ON / VI
 ```
 
 The worker registers the webhook at start (`setWebhook` with `secret_token` = HMAC of the token,
-`allowed_updates: ["message"]`) while the flag is on; the API checks that header and answers 404
+`allowed_updates: ["message"]`, `max_connections: 1`) while the flag is on; the API checks that header and answers 404
 while the flag is off. The flag is one switch for the bot (no per-user rollout: Telegram would
 redeliver what a user outside the rollout sends). The webhook URL must be public HTTPS (ports 443,
 80, 88 or 8443). To test locally, point a tunnel at the API and set the URL to it.
@@ -375,10 +392,10 @@ redeliver what a user outside the rollout sends). The webhook URL must be public
 
 - Telegram lets a bot send at most 20 messages per minute into one group (Bot FAQ). Every user
   message is one copy into the support group, plus notes: beyond roughly 20 incoming messages a
-  minute the copies get 429s, which the workflow retries (5 attempts) and then drops. That is the
-  point to move to Chatwoot.
-- One workflow per message: two messages sent within the same second can arrive in the topic in
-  the other order.
+  minute the copies get 429s and wait (`retry_after`, up to an hour per step, then the step is
+  dropped). Sustained traffic like that is the point to move to Chatwoot.
+- A copy that succeeds just before its activity times out is retried and arrives twice (rare;
+  at-least-once delivery).
 - Edited messages and reactions are not relayed (the webhook subscribes to `message` only).
   Messages Telegram cannot copy (polls with hidden answers, paid media, service messages) are not
   relayed.

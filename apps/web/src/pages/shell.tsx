@@ -237,13 +237,19 @@ function HelpMenu({ telegram }: { telegram: boolean }) {
   const { data: active } = authClient.useActiveOrganization();
   const open = (kind: Parameters<typeof openSupport>[0]) => () =>
     openSupport(kind, active?.id).catch(() => toast.error('Help is unavailable right now'));
-  // Fetched ahead (valid for a day), so the click is a plain link no popup blocker stops.
-  const link = useQuery({
-    queryKey: ['telegram-link'],
-    queryFn: telegramLink,
-    enabled: telegram,
-    staleTime: 60 * 60_000,
-  });
+  // A fresh single-use link per click. The tab opens first (inside the click, so no popup
+  // blocker stops it) and navigates once the API has signed the link.
+  const openTelegram = () => {
+    track('support_opened', { kind: 'telegram' });
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    telegramLink()
+      .then((url) => (tab ? tab.location.assign(url) : window.location.assign(url)))
+      .catch(() => {
+        tab?.close();
+        toast.error('Help is unavailable right now');
+      });
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -265,16 +271,9 @@ function HelpMenu({ telegram }: { telegram: boolean }) {
             </DropdownMenuItem>
           </>
         )}
-        {telegram && link.data && (
-          <DropdownMenuItem asChild>
-            <a
-              href={link.data}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => track('support_opened', { kind: 'telegram' })}
-            >
-              <Send className="size-4" /> Telegram
-            </a>
+        {telegram && (
+          <DropdownMenuItem onSelect={openTelegram}>
+            <Send className="size-4" /> Telegram
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>

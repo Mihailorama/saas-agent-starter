@@ -1,3 +1,8 @@
+CREATE TABLE "telegram_support_links" (
+	"signature" text PRIMARY KEY NOT NULL,
+	"used_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "telegram_support_users" (
 	"telegram_user_id" bigint PRIMARY KEY NOT NULL,
 	"chat_id" bigint NOT NULL,

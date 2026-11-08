@@ -49,7 +49,7 @@ from worker.workflows import (
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
-    TelegramSupportWorkflow,
+    TelegramChatWorkflow,
     TrackerItemWorkflow,
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
@@ -202,6 +202,7 @@ async def main() -> None:
             chat_id=s.TELEGRAM_SUPPORT_CHAT_ID,
             pool=pool,
             tracker=tracker,
+            files=files,
         )
         if s.TELEGRAM_SUPPORT_BOT_TOKEN and s.TELEGRAM_SUPPORT_CHAT_ID
         else None
@@ -232,8 +233,8 @@ async def main() -> None:
         files=files,
         booking_url=settings.BOOKING_PUBLIC_URL,
     )
-    if (chatwoot and triage_model and ai) or telegram:
-        await asyncio.to_thread(pii.warm_up)  # triage output and /bug titles: Presidio
+    if chatwoot and triage_model and ai:
+        await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -247,7 +248,7 @@ async def main() -> None:
             CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
-            TelegramSupportWorkflow,
+            TelegramChatWorkflow,
             TrackerItemWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,

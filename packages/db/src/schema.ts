@@ -409,3 +409,12 @@ export const telegramSupportUsers = pgTable(
   },
   (t) => [uniqueIndex().on(t.chatId, t.topicId), index().on(t.userId)],
 );
+
+/**
+ * Deep-link signatures already used (docs/support.md "Account link"): a payload links one
+ * Telegram account once. Written by the API; rows past the payload's 10 minutes are pruned there.
+ */
+export const telegramSupportLinks = pgTable('telegram_support_links', {
+  signature: text('signature').primaryKey(),
+  usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+});

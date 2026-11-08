@@ -76,8 +76,8 @@ export const startSupportIssueClosed = (e: SupportIssueClosed, closeId: string) 
   startOnce('SupportIssueClosedWorkflow', supportClosedWorkflowId(e, closeId), e);
 /**
  * Lite Telegram support (docs/support.md). Contract with services/worker-py (worker/telegram.py):
- * ids only; the worker copies messages by id, so their content stays in Telegram. `arg` is the
- * `/start` token or a team command's title, already redacted.
+ * ids only; the worker copies messages by id, so their content stays in Telegram. `userId` is the
+ * app user of a verified `/start` link, `s3Key` the redacted title of a `/bug` or `/feature`.
  */
 export type TelegramUpdate = {
   chatId: number;
@@ -85,12 +85,23 @@ export type TelegramUpdate = {
   fromId: number;
   threadId?: number;
   command?: 'start' | 'bug' | 'feature' | 'other';
-  arg?: string;
+  userId?: string;
+  linkFailed?: boolean;
+  s3Key?: string;
   lang?: string;
 };
-/** Message ids are unique per chat (update ids are not: they restart after a quiet week). */
-export const startTelegramUpdate = (u: TelegramUpdate) =>
-  startOnce('TelegramSupportWorkflow', `telegram-support-${u.chatId}-${u.messageId}`, u);
+export const telegramChatWorkflowId = (u: TelegramUpdate) =>
+  `telegram-chat-${u.chatId}-${u.threadId ?? 0}`;
+/** One workflow per chat or topic relays its messages in order; each message is a signal. */
+export async function queueTelegramUpdate(u: TelegramUpdate) {
+  await (await temporal()).workflow.signalWithStart('TelegramChatWorkflow', {
+    taskQueue: env.TEMPORAL_TASK_QUEUE,
+    workflowId: telegramChatWorkflowId(u),
+    args: [{ pending: [], seen: [] }],
+    signal: 'message',
+    signalArgs: [u],
+  });
+}
 /** CRM sync (docs/crm.md). Contract with services/worker-py (worker/crm.py, CrmEvent). Ids only. */
 export type CrmEvent = {
   kind: 'user.created' | 'org.created' | 'signal' | 'support.conversation' | 'booking';

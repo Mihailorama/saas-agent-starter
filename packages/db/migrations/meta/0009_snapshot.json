@@ -1,5 +1,5 @@
 {
-  "id": "1dd861ed-e6cd-4ebc-9664-651676877887",
+  "id": "30268eaf-f1ec-4ea9-b763-86d1de8b925b",
   "prevId": "c419bc40-233e-4f6f-a4ac-34eabe4152ec",
   "version": "7",
   "dialect": "postgresql",
@@ -1159,6 +1159,32 @@
           "value": "\"subscriptions\".\"status\" in ('incomplete', 'active', 'past_due', 'canceled')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.telegram_support_links": {
+      "name": "telegram_support_links",
+      "schema": "",
+      "columns": {
+        "signature": {
+          "name": "signature",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "used_at": {
+          "name": "used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.telegram_support_users": {

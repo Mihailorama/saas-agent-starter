@@ -96,7 +96,8 @@ export function resetSupport() {
 const telegramBot = import.meta.env.VITE_TELEGRAM_SUPPORT_BOT as string | undefined;
 export const telegramConfigured = Boolean(telegramBot);
 
-/** Deep link to the support bot; its signed payload tells the team which app user writes. */
+/** Deep link to the support bot: a signed payload, valid once for 10 minutes, that tells the
+ * team which app user writes. */
 export async function telegramLink(): Promise<string> {
   const { start } = await ok(client.GET('/api/support/telegram'));
   return `https://t.me/${telegramBot}?start=${start}`;

@@ -2,21 +2,24 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { pool } from '../src/db.ts';
 import { env } from '../src/env.ts';
-import { telegramKey } from '../src/routes/support.ts';
+import { telegramKey, telegramStartToken } from '../src/routes/support.ts';
+import { ensureBucket, getJson } from '../src/s3.ts';
 import { closeTemporal, temporal } from '../src/temporal.ts';
 import { historyText } from './history.ts';
 
-// Lite Telegram support (docs/support.md): the API checks the webhook secret and starts one
-// TelegramSupportWorkflow per message, ids only; the relay is services/worker-py/tests/test_telegram.py.
+// Lite Telegram support (docs/support.md): the API checks the webhook secret, verifies /start
+// links, stores /bug titles in S3 and signals one TelegramChatWorkflow per chat or topic, ids
+// only; the relay is services/worker-py/tests/test_telegram.py.
 const app = await buildApp();
 const TOKEN = '123456:local-dev-token';
 const GROUP = -1001234567890;
-beforeAll(() => {
+beforeAll(async () => {
   Object.assign(env, {
     TELEGRAM_SUPPORT_BOT_TOKEN: TOKEN,
     TELEGRAM_SUPPORT_CHAT_ID: String(GROUP),
   });
   env.FLAGS_ON.push('telegram-support');
+  await ensureBucket();
 });
 afterAll(async () => {
   Object.assign(env, {
@@ -58,9 +61,9 @@ const inTopic = (messageId: number, text: string, extra: object = {}) => ({
     ...extra,
   },
 });
-/** Decoded input and history of the message's workflow, then terminates it. */
-async function started(chatId: number, messageId: number) {
-  const handle = (await temporal()).workflow.getHandle(`telegram-support-${chatId}-${messageId}`);
+/** Type and decoded history of the chat's workflow, then terminates it. */
+async function chat(chatId: number, threadId = 0) {
+  const handle = (await temporal()).workflow.getHandle(`telegram-chat-${chatId}-${threadId}`);
   const run = await handle.describe();
   const history = await historyText(handle);
   await handle.terminate('test cleanup');
@@ -86,33 +89,47 @@ describe('POST /api/hooks/telegram', () => {
   it('checks the secret token header', async () => {
     expect((await post(fromUser(rnd(), 1), 'wrong')).statusCode).toBe(401);
     expect((await post(fromUser(rnd(), 1), '')).statusCode).toBe(401);
-    // The secret of another bot token does not pass either.
     expect((await post(fromUser(rnd(), 1), telegramKey('other', 'webhook'))).statusCode).toBe(401);
   });
 
-  it('starts one workflow per user message, without its content', async () => {
+  it('signals the chat workflow with ids only', async () => {
     const user = rnd();
-    expect((await post(fromUser(user, 3))).json()).toEqual({ action: 'started' });
-    expect((await post(fromUser(user, 3))).json()).toEqual({ action: 'duplicate' }); // redelivery
-    const { type, history } = await started(user, 3);
-    expect(type).toBe('TelegramSupportWorkflow');
+    expect((await post(fromUser(user, 3))).json()).toEqual({ action: 'queued' });
+    expect((await post(fromUser(user, 4))).json()).toEqual({ action: 'queued' }); // same workflow
+    const { type, history } = await chat(user);
+    expect(type).toBe('TelegramChatWorkflow');
     expect(history).toContain(String(user)); // decoded: the check below can fail
     expect(history).not.toContain('4111');
   });
 
-  it('passes the /start payload and a redacted /bug title, ignores the rest', async () => {
+  it('verifies /start links: only the user id reaches Temporal, each link works once', async () => {
+    const appUser = `u${rnd()}`;
+    const link = telegramStartToken(TOKEN, appUser);
     const user = rnd();
-    await post(fromUser(user, 1, '/start abc_DEF-123'));
-    expect((await started(user, 1)).history).toContain('abc_DEF-123');
+    await post(fromUser(user, 1, `/start ${link}`));
+    await post(fromUser(user, 2, `/start ${link}`)); // replayed
+    const expired = telegramStartToken(TOKEN, appUser, Date.now() - 11 * 60_000);
+    await post(fromUser(user, 3, `/start ${expired}`));
+    const forged = telegramStartToken('other:token', appUser);
+    await post(fromUser(user, 4, `/start ${forged}`));
+    const { history } = await chat(user);
+    expect(history).not.toContain(link);
+    expect(history.match(new RegExp(`"userId":"${appUser}"`, 'g'))).toHaveLength(1);
+    expect(history.match(/"linkFailed":true/g)).toHaveLength(3);
+  });
 
+  it('stores a redacted /bug title in S3 and passes the key', async () => {
     const id = rnd();
     const bug = inTopic(id, '/bug@SupportBot Export fails for jane.doe@example.com');
-    expect((await post(bug)).json()).toEqual({ action: 'started' });
-    const { history } = await started(GROUP, id);
-    expect(history).toContain('Export fails for [email]');
-    expect(history).not.toContain('jane.doe');
+    expect((await post(bug)).json()).toEqual({ action: 'queued' });
+    const { history } = await chat(GROUP, 7);
+    const key = `tracker-inbox/telegram-${GROUP}-${id}.json`;
+    expect(history).toContain(key);
+    expect(history).not.toContain('Export fails');
+    expect(await getJson(env.S3_BUCKET, key)).toEqual({ title: 'Export fails for [email]' });
+  });
 
-    // The General topic, service messages, bots and other chats are not relayed.
+  it('ignores the General topic, service messages, bots and other chats', async () => {
     const general = inTopic(rnd(), 'hi', {
       message_thread_id: undefined,
       is_topic_message: undefined,
@@ -122,11 +139,6 @@ describe('POST /api/hooks/telegram', () => {
     expect((await post(closed)).json()).toEqual({ action: 'ignored' });
     const bot = inTopic(rnd(), 'hi', { from: { id: 1, is_bot: true } });
     expect((await post(bot)).json()).toEqual({ action: 'ignored' });
-    // An anonymous admin's reply comes from Telegram's stand-in bot, on behalf of the group.
-    const anon = rnd();
-    const admin = { from: { id: 1087968824, is_bot: true }, sender_chat: { id: GROUP } };
-    expect((await post(inTopic(anon, 'answer', admin))).json()).toEqual({ action: 'started' });
-    await started(GROUP, anon);
     const elsewhere = {
       update_id: 1,
       message: { ...fromUser(5, 1).message, chat: { id: -5, type: 'group' } },
@@ -137,10 +149,9 @@ describe('POST /api/hooks/telegram', () => {
   it('rate-limits each Telegram user with 200 answers (no redelivery storm)', async () => {
     const user = rnd();
     const answers = [];
-    for (let i = 1; i <= 21; i++) answers.push((await post(fromUser(user, i, 'x'))).json().action);
-    expect(answers.filter((a) => a === 'started')).toHaveLength(20);
-    expect(answers.at(-1)).toBe('limited');
-    for (let i = 1; i <= 20; i++) await started(user, i);
+    for (let i = 1; i <= 6; i++) answers.push((await post(fromUser(user, i, 'x'))).json().action);
+    expect(answers).toEqual(['queued', 'queued', 'queued', 'queued', 'queued', 'limited']);
+    await chat(user);
   });
 });
 
