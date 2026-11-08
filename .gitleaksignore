@@ -1,0 +1,3 @@
+# False positives only, one exact fingerprint each (commit:file:rule:line), with the reason.
+# vault.test.mjs fixture value in the first vault commit (replaced by local-dev-fake-value).
+d70ad334280fc591e8d43f25dd4566cf6fab64f3:scripts/vault.test.mjs:generic-api-key:9

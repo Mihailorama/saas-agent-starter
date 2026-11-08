@@ -131,5 +131,7 @@ the same.
 - Call the wrapper with a literal name; never call PostHog's flag API directly and never keep
   flag state in our database.
 - A flag is temporary: it has an owner and an expiry date and is removed after full rollout.
+  Exception: a flag linked to a survey (config/journeys.json `surveys`) is that survey's on/off
+  switch; `check:flags` does not warn when it expires (docs/product-analytics.md#surveys).
   Long-lived configuration belongs in env or the database, not in flags.
 - Do not put personal data in flag context: ids and the plan only.

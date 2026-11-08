@@ -1,4 +1,4 @@
-# 0029. Rewards as code, applied through the billing provider
+# 0030. Rewards as code, applied through the billing provider
 
 Status: accepted (owner decision, 2026-11-08: rewards and referrals; any pricing model, including
 contracts invoiced outside a payment provider)
