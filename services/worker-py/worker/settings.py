@@ -62,6 +62,14 @@ AI_CLI_TIMEOUT_SECONDS = float(os.environ.get("AI_CLI_TIMEOUT_SECONDS", "330"))
 AI_BYO_ALLOWED_CIDRS = [
     c.strip() for c in os.environ.get("AI_BYO_ALLOWED_CIDRS", "").split(",") if c.strip()
 ]
+# External MCP tools (worker/mcp.py, docs/mcp.md): server URLs in non-global ranges are refused
+# like BYO base URLs; list CIDRs to allow some anyway (the `mcp` compose profile, on-prem servers).
+MCP_ALLOWED_CIDRS = [
+    c.strip() for c in os.environ.get("MCP_ALLOWED_CIDRS", "").split(",") if c.strip()
+]
+# Model turns that may ask for tools in one call, and the timeout per session start / tool call.
+MCP_TOOL_MAX_ITERATIONS = int(os.environ.get("MCP_TOOL_MAX_ITERATIONS", "5"))
+MCP_TOOL_TIMEOUT_SECONDS = float(os.environ.get("MCP_TOOL_TIMEOUT_SECONDS", "30"))
 
 # Outbound webhooks (worker/webhooks.py). Non-global addresses (private, loopback, link-local...)
 # are refused; list CIDRs here to allow some anyway (e.g. an on-prem receiver). Dev/tests only

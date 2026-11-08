@@ -129,6 +129,34 @@ export const aiProviders = pgTable(
   (t) => [index().on(t.orgId), tenantIsolation()],
 );
 
+/**
+ * Remote MCP servers an organization connects (docs/mcp.md "Calling external tools"): AI calls
+ * of the listed `purposes` that opt in may use its `allowed_tools`, nothing else. The auth
+ * header value is stored encrypted like BYO keys (`v1:<key id>:<iv>:<data>`, AES-256-GCM,
+ * WEBHOOK_ENCRYPTION_KEYS, bound to `<org id>/<id>`); only the worker's gateway decrypts it.
+ */
+export const mcpServers = pgTable(
+  'mcp_servers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    name: text('name').notNull(),
+    url: text('url').notNull(),
+    /** AI purposes that may use this server (config/ai-models.json); others never see it. */
+    purposes: text('purposes').array().notNull(),
+    allowedTools: text('allowed_tools').array().notNull(),
+    /** Header name sent with the secret, e.g. Authorization. */
+    authHeader: text('auth_header'),
+    authSecret: text('auth_secret'),
+    /** Last 4 characters of the secret, to recognise it in settings. */
+    authSecretHint: text('auth_secret_hint'),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.orgId), tenantIsolation()],
+);
+
 /** Files in S3. The object key is derived from ids; access is checked via this row (RLS). */
 export const attachments = pgTable(
   'attachments',

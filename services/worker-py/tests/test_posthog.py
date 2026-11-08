@@ -19,11 +19,15 @@ from worker.s3 import S3
 PROMPT = "the confidential launch plan"
 
 
-async def fake(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def fake(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     return Completion("A summary.", f"{model}-20261101", 100, 10, "r1")
 
 
-async def broken(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def broken(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     raise TimeoutError
 
 

@@ -13,6 +13,12 @@
       "default": false,
       "expires": "2027-03-31"
     },
+    "mcp-tools": {
+      "description": "Settings page where organization admins connect external MCP servers whose allowed tools AI features may call.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "rewards": {
       "description": "Rewards from config/rewards.json: inviting teammates and completing the organization profile (docs/growth.md). Off: no reward workflow starts; rewards already granted stay.",
       "owner": "@mihailorama",
