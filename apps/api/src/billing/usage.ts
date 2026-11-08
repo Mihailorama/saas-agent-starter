@@ -11,9 +11,10 @@ import { isEnabled } from '../flags.ts';
  * ponytail: one upsert per request, contended for a very busy org; move the counter to Redis if
  * that shows up.
  */
-export async function countApiCall(orgId: string, keyId: string, log: FastifyBaseLogger) {
+export async function countApiCall(orgId: string, log: FastifyBaseLogger) {
   try {
-    if (!(await isEnabled('billing-usage', { userId: `apikey:${keyId}`, orgId }))) return;
+    // Evaluated per org (the org is the flag's subject), as the worker does when reporting.
+    if (!(await isEnabled('billing-usage', { userId: orgId, orgId }))) return;
     await withOrg(db, orgId, (tx) =>
       tx
         .insert(usageCounters)

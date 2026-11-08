@@ -14,30 +14,32 @@ engine (tiers, proration, invoices). Usage: [docs/billing.md](../billing.md) "Pr
 
 ## Decision
 
-- **A price is a list of components with a `model`**: `flat`, `per_seat`, `metered`, `credits`,
+- **A price is a list of components with a `model`**: `flat`, `per_seat`, `metered`,
   `contract`. `config/plans.json` mirrors the provider's catalog: each component names the
-  provider's price object; the provider rates and invoices. `tiers` and packs are for display.
-  A price object without `model` is `flat` (expand/contract: older files keep working); a hybrid
-  is `flat` + `metered`. One Zod schema in the API and the matching dataclasses in the worker.
+  provider's price object; the provider rates and invoices, so tiers live only there. A price
+  object without `model` is `flat` (expand/contract: older files keep working); a hybrid is
+  `flat` + `metered`. Amounts carry the currency's minor-unit decimals. One Zod schema in the
+  API and the matching dataclasses in the worker.
 - **Provider capabilities**: `BillingProvider.capabilities()` returns `{checkout, portal,
-  cancel, priceModels, usageReporting, creditBalance, merchantOfRecord, invoicing}`. Routes and
-  the billing page ask it instead of assuming Stripe's feature set; optional methods (`invoice`
-  now) exist only where a provider has them.
+  cancel, priceModels}`. Routes and the billing page ask it instead of assuming Stripe's feature
+  set. Fields are added with their first consumer, not ahead of it.
 - **`manual` provider** for contracts invoiced outside any PSP, selected by the plan's
   `contract` price (`"provider": "manual"`), not by a flag. The operator console writes plan,
-  currency, period and contract reference (audited), and a Temporal timer
-  (`ContractPeriodWorkflow`) marks the subscription `past_due` at the period end unless it was
-  extended. Contracts that the provider invoices (Stripe `collection_method: send_invoice` with
-  `days_until_due`) are created by the same console action through the provider's API.
+  currency, period and contract reference (audited) and starts a Temporal timer
+  (`ContractPeriodWorkflow`) in the same transaction; at the period end it marks the subscription
+  `past_due` unless it was extended. The console refuses a contract while another provider's
+  subscription is active, so nobody is billed twice. Contracts the provider invoices (Stripe
+  `send_invoice`) are created in the provider's dashboard with `metadata.orgId` and arrive
+  through the webhook: one path that writes provider state, no second API client for it.
 - **A subscription keeps the provider it was made with** (`subscriptions.provider`), so a manual
   contract can sit in a Stripe contour.
-- **Usage goes to the provider's meters, rating stays there.** A scheduled worker activity
-  sends one event per `ai_calls` row (`llm_cost_micros`, `llm_tokens`) and per closed hour of
-  API-key requests (`api_calls`), with deterministic identifiers so the provider deduplicates
-  retries; the run window is carried in the workflow result, not in a table. On pay-as-you-go
-  plans the plan's LLM limit becomes a warning and the org's own cap the hard stop. The worker
-  holds the meter adapter (Stripe REST via the installed `httpx2`, no new SDK), because usage and
-  the gateway live there.
+- **Usage goes to the provider's meters, rating stays there.** One worker activity per org and
+  run sends one event per meter and closed hour (`<meter>:<org>:<hour>`, so the provider
+  deduplicates retries), moving a per-org mark (`subscriptions.usage_reported_until`) after each
+  hour; a failing org never stalls the others, and hours past the provider's 35-day window are
+  skipped, not retried forever. On pay-as-you-go plans the plan's LLM limit becomes a warning and
+  the org's own cap (else `llmSpendMax`) the hard stop. The worker holds the meter adapter
+  (Stripe REST via the installed `httpx2`), because usage and the gateway live there.
 - **Entitlements per model**: per seat, the purchased quantity is the seat limit (from the
   provider's webhook); limits otherwise come from the plan and operator overrides.
 

@@ -9,8 +9,8 @@ Design and alternatives: [ADR 0019](adr/0019-billing.md), pricing models
   `llmSpendMax`; feature flags), prices per currency (one or more components with a pricing
   `model`, see [Pricing models](#pricing-models)) with the provider's price id, and the
   billing **contours** (a contour names one provider and its currencies; the template ships
-  `en` = Stripe in USD/EUR). `PLANS_FILE` (API and worker) points at another file;
-  `config/plans.examples.json` has one plan per pricing model. Versioned with the
+  `en` = Stripe in USD/EUR). `PLANS_FILE` (API and worker) points at another file. Versioned
+  with the
   code; the API and the worker both read it. The web never hard-codes a price: the billing page
   gets plans and prices from `GET /api/billing`.
 - `subscriptions` table: the organization's current plan, status (`incomplete`, `active`,
@@ -31,19 +31,19 @@ The template assumes no pricing model and no payment rail. A plan's price in a c
 component or an array of components, each with a `model`; `config/plans.json` mirrors the
 provider's catalog (the price objects you create there) and the provider does the rating:
 tiers, proration, taxes and invoices. There is no rating engine here. A price object without
-`model` (the format before) is read as `flat`, so older files keep working.
+`model` (the format before) is read as `flat`, so older files keep working. Every model below is
+in the test fixture `apps/api/test/fixtures/plans.json`.
 
-| `model`    | Fields                                                                           | Sold by                                |
-| ---------- | -------------------------------------------------------------------------------- | -------------------------------------- |
-| `flat`     | `amount`, `interval`, `providerPriceId`                                          | checkout                               |
-| `per_seat` | `amount` per seat, `interval`, `providerPriceId`                                 | checkout, quantity = members           |
-| `metered`  | `meter`, `interval`, `tiers` (display only), `providerPriceId`                   | checkout, no quantity                  |
-| `credits`  | `meter`, `pack: {credits, amount}`, `expiresDays`, `providerPriceId` (one-time)  | top-up checkout (credit packs)         |
-| `contract` | `provider`, `invoicing: provider \| external`, `providerPriceId`, `daysUntilDue` | the operator console, never self-serve |
+| `model`    | Fields                                               | Sold by                                      |
+| ---------- | ---------------------------------------------------- | -------------------------------------------- |
+| `flat`     | `amount`, `interval`, `providerPriceId`              | checkout                                     |
+| `per_seat` | `amount` per seat, `interval`, `providerPriceId`     | checkout, quantity = members                 |
+| `metered`  | `meter`, `interval`, `providerPriceId`               | checkout, no quantity                        |
+| `contract` | `provider` (`manual` or `stripe`), `providerPriceId` | the operator console or the Stripe dashboard |
 
 Rules (checked when the file is read): at most one `flat` or `per_seat` component; a `contract`
-stands alone; `credits` need a `metered` component on the same meter (credit grants apply to
-metered prices only). Meters: `llm_cost_micros` (AI cost in millionths of the cost currency),
+stands alone; amounts have exactly the currency's minor-unit decimals (`"29.00"`, JPY `"3000"`,
+KWD `"9.500"`). Meters: `llm_cost_micros` (AI cost in millionths of the cost currency),
 `llm_tokens`, `api_calls` (requests with an organization API key).
 
 `entitlements()` reads the model of the plan in force (`models`): per seat, the purchased
@@ -54,91 +54,83 @@ price, "per seat", "+ usage", "Pay as you go" or "Contact us" from the same data
 
 ### Flat
 
-One recurring price, the shipped default (`pro`). Limits are the plan's.
+One recurring price, the shipped default (`pro`):
+`{"model": "flat", "amount": "29.00", "interval": "month", "providerPriceId": "price_..."}`.
 
 ### Per seat
 
-`per_seat` with the price per seat. Checkout subscribes with quantity = current members; the
-seat limit is the purchased quantity (`subscriptions.seats`, from the provider's webhook). To add
-seats the customer changes the quantity in the provider's portal (Stripe: enable quantity
-updates in the portal settings). An operator override (`limit_overrides`) still wins.
+`{"model": "per_seat", "amount": "12.00", "interval": "month", "providerPriceId": "price_..."}`,
+the price per seat. Checkout subscribes with quantity = current members; the seat limit is the
+purchased quantity (`subscriptions.seats`, from the provider's webhook). To add seats the
+customer changes the quantity in the provider's portal (Stripe: enable quantity updates in the
+portal settings). An operator override (`limit_overrides`) still wins.
 
 ### Usage-based (pay as you go)
 
-`metered` on one meter, with the provider's metered price (Stripe: a price on a
+`{"model": "metered", "meter": "llm_cost_micros", "interval": "month", "providerPriceId": ...}`
+with the provider's metered price (Stripe: a price on a
 [Meter](https://docs.stripe.com/billing/subscriptions/usage-based) whose event name is the
 `meter`, customer mapping `stripe_customer_id`, value key `value`, aggregation sum). Checkout
-adds it without quantity. Behind the flag `billing-usage` (default off):
+adds it without quantity. Behind the flag `billing-usage` (default off), evaluated per
+organization in the API and the worker alike:
 
 - **Reporting** (`worker/usage.py`): `UsageReportWorkflow` runs every 15 minutes (Temporal
-  Schedule `billing-usage-report`); its activity `report_usage` visits every org whose plan in
-  force has a `metered` price and whose provider has a meter adapter, and sends, in sequence per
-  org (Stripe accepts one concurrent event per customer and meter):
-  - `llm_cost_micros`: one event per successful `ai_calls` row, value = cost in millionths of the
-    model's cost currency (price the metered price accordingly), identifier
-    `llm_cost_micros:<ai_calls id>`;
-  - `llm_tokens`: the same per row with `total_tokens`;
-  - `api_calls`: one event per org and closed hour of API-key requests (`usage_counters`, counted
-    by `requireScope`; sessions do not count), identifier `api_calls:<org>:<hour>`.
+  Schedule `billing-usage-report`) and starts one `report_org_usage` activity per organization,
+  each with its own retries, so a failing org never holds up the others. An org's progress is
+  `subscriptions.usage_reported_until`. Each closed hour after it (closed 5 minutes ago) is
+  aggregated and sent as one event per meter, identifier `<meter>:<org>:<hour>`, and the mark
+  moves after every hour; a retry or re-run resends the same identifiers, which Stripe drops for
+  24 hours (`duplicate_meter_event`). Meters of the plan in effect during that hour:
+  - `llm_cost_micros`: the hour's successful `ai_calls` cost in the subscription's currency, in
+    millionths, rounded once. Cost in another currency is not put on the meter (a warning in the
+    log): price your models in the currency you bill, or bill each currency on its own plan;
+  - `llm_tokens`: the hour's `total_tokens` (calls through an org's own provider excluded);
+  - `api_calls`: the hour's API-key requests (`usage_counters`, counted by `requireScope`;
+    sessions do not count).
 
-  Rows younger than one minute wait for the next run. The window's end is the workflow result and
-  the next run's start (no watermark in the database); a failed run is covered by the next one and
-  Stripe drops the overlap by identifier (`duplicate_meter_event`, kept for 24 hours). Stripe's
-  timestamps must be within 35 days: a schedule paused longer loses the older usage. Worker env:
+  Stripe takes events up to 35 days old: older hours are skipped with a warning instead of
+  blocking the org, and one run catches up at most 72 hours per org. Worker env:
   `STRIPE_SECRET_KEY` (empty: no reporting), `STRIPE_API_URL` for stripe-mock.
 - **Spend limit**: on a plan with a metered LLM price (`llm_cost_micros` or `llm_tokens`) the
   plan's `llmSpendMonthly` only warns (worker log, "warning" on the billing page) because the
-  usage is billed; calls stop only at the organization's own cap (the raised limit an admin or
-  operator set, up to `llmSpendMax`). Without such a cap nothing stops them. Flat and other plans:
-  as before.
+  usage is billed. Calls stop at the organization's own cap (the raised limit an admin or
+  operator set) or, without one, at the plan's `llmSpendMax`. Flat and other plans: as before.
 
 ### Hybrid (base + overage)
 
 An array: `flat` (or `per_seat`) plus `metered`. Included usage is a free first tier of the
-metered price in the provider (`tiers` shows it on the page). Example: `growth` in
-`config/plans.examples.json`.
-
-### Prepaid credits
-
-`metered` plus `credits` on the same meter: the customer buys packs, usage draws them down in the
-provider. Example: `prepaid`. Selling packs is the follow-up in docs/TODO.md; until then such a
-plan is not offered at checkout.
+metered price, set up in the provider.
 
 ### Contract
 
-Negotiated terms for one customer, on a plan with a `contract` price; the operator sets it on the
-organization page in the console (`PUT /api/admin/orgs/:id/contract`, reason required, audit row
-`operator.contract.set` or `.invoiced`). Seats and projects beyond the plan: "Adjust limits"
-(`limit_overrides`, up to the plan's `limitsMax`). Customers see "Contact us" instead of a
-checkout.
+Negotiated terms for one customer, on a plan with a `contract` price. Customers see "Contact us"
+instead of a checkout. Seats and projects beyond the plan: "Adjust limits" in the console
+(`limit_overrides`, up to the plan's `limitsMax`).
 
-- `"provider": "manual", "invoicing": "external"`: invoiced outside any payment provider (your
-  accounting, bank transfer). The console writes plan, currency, period and contract reference to
-  `subscriptions` (provider `manual`) and starts `ContractPeriodWorkflow`
-  (`billing-contract-<org>-<period end>`), a durable Temporal timer: at the period end the
-  subscription becomes `past_due` (the plan holds for `pastDueGraceDays`), or `canceled` if it
-  was set to end (organization deletion). Setting the contract again with a later period end is
-  the renewal; the old timer then does nothing. No checkout, portal or cancel button.
-- `"provider": "stripe", "invoicing": "provider"`: Stripe sends the invoices. The console
-  creates the customer and a subscription with `collection_method: send_invoice` and
-  `days_until_due`, on the contract's `providerPriceId` (idempotency key per org and contract
-  reference); the customer pays by bank transfer, and state arrives through the webhook like a
-  checkout's. Example: `enterprise-invoiced`.
+- `{"model": "contract", "provider": "manual"}`: invoiced outside any payment provider (your
+  accounting, bank transfer). The operator sets it on the organization page in the console
+  (`PUT /api/admin/orgs/:id/contract`: plan, currency, contract reference, period; reason
+  required; audit row `operator.contract.set`). It is refused (409) while the organization has an
+  active or past-due subscription with another provider, so nobody is billed twice. In the same
+  transaction the console starts `ContractPeriodWorkflow` (`billing-contract-<org>-<period end>`),
+  a durable Temporal timer; if Temporal is down nothing is saved. At the period end the
+  subscription becomes `past_due` (the plan holds for `pastDueGraceDays`), or `canceled` if it was
+  set to end (organization deletion). Setting the contract again with a later period end is the
+  renewal; the old timer then does nothing. No checkout, portal or cancel button.
+- `{"model": "contract", "provider": "stripe", "providerPriceId": "price_..."}`: Stripe sends
+  the invoices, the customer pays by bank transfer. Create the subscription in the Stripe
+  dashboard on that price with "Email invoice to the customer" (`collection_method:
+  send_invoice`, `days_until_due` as agreed) and the metadata `orgId` (the organization id from
+  the console) and optionally `contractRef`. Its state arrives through the webhook like a
+  checkout's.
 
 ## Provider capabilities
 
 `BillingProvider.capabilities()` says what a provider does, so routes and pages ask instead of
-assuming:
-
-```ts
-{ checkout, portal, cancel, priceModels, usageReporting, creditBalance, merchantOfRecord,
-  invoicing: 'provider' | 'external' }
-```
-
-Stripe: checkout, portal, cancel, `flat`/`per_seat`/`metered`/`contract`, usage reporting
-(the worker's `StripeMeters`), invoicing by the provider. `manual`: `contract` only, nothing self-serve, invoicing external. A subscription is
-served by the provider it was made with (`subscriptions.provider`), so a `manual` contract can
-sit in a Stripe contour.
+assuming: `{ checkout, portal, cancel, priceModels }`. Stripe: all three,
+`flat`/`per_seat`/`metered`/`contract`. `manual`: `contract` only, nothing self-serve. A
+subscription is served by the provider it was made with (`subscriptions.provider`), so a
+`manual` contract can sit in a Stripe contour. New fields come with their first consumer.
 
 ## Connect vs install
 
@@ -150,7 +142,7 @@ that stops being enough:
 - **Orb** or **Metronome**: hosted usage billing for complex contracts and rating (connect;
   follow-up).
 - **Polar**: a merchant of record (sales tax, invoices in its name) with checkout and usage
-  billing (connect; `merchantOfRecord: true`; follow-up).
+  billing (connect; follow-up).
 
 Each is another provider adapter behind the same interface, plus a meter adapter in the worker
 (`Meters` in `worker/usage.py`: `report(customer, meter, value, identifier, at)`).
@@ -273,7 +265,7 @@ Nothing in the interface is Stripe-shaped.
 
 1. **Adapter**: `capabilities()` (above), `checkout` (hosted payment page for the first period
    with the plan's components as line items; put `orgId` and `planId` into metadata the provider
-   echoes back), optional `invoice` (a subscription billed by invoice, for contracts), `portal` (a hosted self-service page, or `null`),
+   echoes back), `portal` (a hosted self-service page, or `null`),
    `cancel` (stop renewing at period end), `webhook` (verify, then map to `BillingEvent`s with a
    stable `eventId` so redeliveries are deduplicated). Verify webhooks with the provider's
    documented mechanism: a signature if it signs, otherwise what it documents instead (for
@@ -282,7 +274,7 @@ Nothing in the interface is Stripe-shaped.
    subscription (or customer) in the provider's own dashboard for operators (docs/admin.md), or
    `null`.
 2. **Wiring**: env vars in `apps/api/src/env.ts` (no real values in `.env.example`), a branch
-   in `registry.ts`, a contour in `config/plans.json` with its currencies, prices per currency
+   in `registry.ts`, its id in the contract `provider` enum (`plans.ts`) if it takes contracts, a contour in `config/plans.json` with its currencies, prices per currency
    (`providerPriceId: null` if the provider takes the amount with each payment).
 3. **Recurring billing**: if the provider renews subscriptions itself (as Stripe does), its
    renewal and failure webhooks map to `subscription.renewed` / `subscription.past_due` and you

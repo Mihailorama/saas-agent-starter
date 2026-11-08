@@ -235,6 +235,8 @@ export const subscriptions = pgTable(
     seats: integer('seats'),
     /** Contract reference (order form, PO) of an invoiced contract, set by an operator. */
     contractRef: text('contract_ref'),
+    /** Usage is reported to the provider's meters up to this hour (worker/usage.py). */
+    usageReportedUntil: timestamp('usage_reported_until', { withTimezone: true }),
     /** Admin-raised LLM spend limits per currency, capped by the plan's llmSpendMax. */
     llmSpendLimits: jsonb('llm_spend_limits').$type<Record<string, number>>(),
     /** Time of the newest provider event applied; older (replayed) events are ignored. */

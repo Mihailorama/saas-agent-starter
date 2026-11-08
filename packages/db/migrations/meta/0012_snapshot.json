@@ -1,5 +1,5 @@
 {
-  "id": "338fc191-5d3c-4526-8e1e-cdfa1d7fa565",
+  "id": "c2d82044-f90e-4ae0-9ba1-3673115546fb",
   "prevId": "0af6e23c-b48b-4de6-823b-561cd683abc6",
   "version": "7",
   "dialect": "postgresql",
@@ -1112,6 +1112,12 @@
         "contract_ref": {
           "name": "contract_ref",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "usage_reported_until": {
+          "name": "usage_reported_until",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },

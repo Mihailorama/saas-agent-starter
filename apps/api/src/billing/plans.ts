@@ -3,61 +3,50 @@ import { z } from 'zod';
 
 /** config/plans.json (docs/billing.md). Also read by the worker; change both readers together. */
 const Money = z.record(z.string().regex(/^[A-Z]{3}$/), z.number().nonnegative());
-const Amount = z.string().regex(/^\d+\.\d{2}$/);
+const Amount = z.string().regex(/^\d+(\.\d+)?$/);
 const Interval = z.enum(['month', 'year']);
 /** Usage the worker reports to the provider's meters (docs/billing.md "Usage-based"). */
 export const METERS = ['llm_cost_micros', 'llm_tokens', 'api_calls'] as const;
-const Meter = z.enum(METERS);
+/** Decimal places of a currency's minor unit (ISO 4217); 2 unless listed. Twin in billing.py. */
+const MINOR_UNITS: Record<string, number> = {
+  JPY: 0,
+  KRW: 0,
+  VND: 0,
+  CLP: 0,
+  ISK: 0,
+  KWD: 3,
+  BHD: 3,
+  JOD: 3,
+  OMR: 3,
+  TND: 3,
+};
+export const minorUnits = (currency: string) => MINOR_UNITS[currency] ?? 2;
 const ProviderPriceId = z.string().nullable();
 /**
  * One priced component, mirroring the provider's catalog; rating (tiers, proration, invoices)
  * stays in the provider. A currency has one component or an array: a hybrid is flat + metered.
  */
-const Component = z.discriminatedUnion('model', [
+const Component = z.union([
+  /** `per_seat`: `amount` per seat; the purchased quantity is the seat limit. */
   z.object({
-    model: z.literal('flat'),
+    model: z.enum(['flat', 'per_seat']),
     amount: Amount,
     interval: Interval,
     providerPriceId: ProviderPriceId,
   }),
-  /** `amount` per seat; the purchased quantity is the seat limit. */
-  z.object({
-    model: z.literal('per_seat'),
-    amount: Amount,
-    interval: Interval,
-    providerPriceId: ProviderPriceId,
-  }),
-  /** Pay as you go. `tiers` are for display only: the provider's price rates the usage. */
+  /** Pay as you go: the provider's metered price rates what the worker reports. */
   z.object({
     model: z.literal('metered'),
-    meter: Meter,
+    meter: z.enum(METERS),
     interval: Interval,
-    tiers: z
-      .array(
-        z.object({
-          upTo: z.number().positive().nullable(),
-          unitAmount: z.string().regex(/^\d+(\.\d+)?$/),
-        }),
-      )
-      .min(1),
     providerPriceId: ProviderPriceId,
   }),
-  /** Prepaid pack (a one-time price), drawn down by the plan's metered component. */
-  z.object({
-    model: z.literal('credits'),
-    meter: Meter,
-    pack: z.object({ credits: z.number().int().positive(), amount: Amount }),
-    expiresDays: z.number().int().positive().optional(),
-    providerPriceId: ProviderPriceId,
-  }),
-  /** Negotiated contract: `external` invoicing = no PSP (provider `manual`), `provider` = the
-   * provider sends invoices (Stripe `send_invoice`), paid by bank transfer. */
+  /** Negotiated contract. `manual`: invoiced outside any PSP, set in the operator console;
+   * `stripe`: a send_invoice subscription created in the Stripe dashboard (docs/billing.md). */
   z.object({
     model: z.literal('contract'),
-    provider: z.string(),
-    invoicing: z.enum(['provider', 'external']),
+    provider: z.enum(['manual', 'stripe']),
     providerPriceId: ProviderPriceId.default(null),
-    daysUntilDue: z.number().int().positive().default(30),
   }),
 ]);
 /** A pre-`model` price object is a flat price (expand/contract: old files keep working). */
@@ -69,18 +58,28 @@ const Price = z
   .union([Legacy, z.array(Legacy).min(1)])
   .transform((v) => (Array.isArray(v) ? v : [v]))
   .superRefine((cs, ctx) => {
-    const has = (m: PriceModel) => cs.some((c) => c.model === m);
     const issue = (message: string) => ctx.addIssue({ code: 'custom', message });
     if (cs.filter((c) => c.model === 'flat' || c.model === 'per_seat').length > 1) {
       issue('at most one flat or per_seat component');
     }
-    if (has('contract') && cs.length > 1) issue('a contract price stands alone');
-    for (const c of cs) {
-      if (c.model === 'credits' && !cs.some((m) => m.model === 'metered' && m.meter === c.meter)) {
-        issue(`credits for ${c.meter} need a metered component on the same meter`);
-      }
+    if (cs.some((c) => c.model === 'contract') && cs.length > 1) {
+      issue('a contract price stands alone');
     }
   });
+/** Amounts have exactly the currency's minor-unit decimals ("29.00", JPY "3000", KWD "9.500"). */
+const Prices = z.record(z.string(), Price).superRefine((prices, ctx) => {
+  for (const [currency, cs] of Object.entries(prices)) {
+    for (const c of cs) {
+      const amount = 'amount' in c ? c.amount : undefined;
+      if (amount !== undefined && (amount.split('.')[1]?.length ?? 0) !== minorUnits(currency)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${currency} amounts have ${minorUnits(currency)} decimals: ${amount}`,
+        });
+      }
+    }
+  }
+});
 const Plan = z.object({
   name: z.string(),
   limits: z.object({
@@ -101,7 +100,7 @@ const Plan = z.object({
     .partial()
     .optional(),
   features: z.record(z.string(), z.boolean()),
-  prices: z.record(z.string(), Price),
+  prices: Prices,
 });
 const Config = z
   .object({

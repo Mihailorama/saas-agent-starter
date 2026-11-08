@@ -94,6 +94,14 @@ class Plans:
         end: datetime | None = sub["current_period_end"]
         return sub["status"] == "active" or end is None or now < end + self.past_due_grace
 
+    def at(self, sub: Any, at: datetime) -> Plan:
+        """The plan that was in effect at `at` (usage reporting, hour by hour): as `effective`,
+        but a canceled subscription still counts until the end of its last period."""
+        end: datetime | None = sub["current_period_end"] if sub is not None else None
+        if sub is not None and sub["status"] == "canceled" and end is not None and at < end:
+            return self.plans.get(sub["plan_id"], self.plans[self.default])
+        return self.effective(sub, at)[1]
+
     def effective(self, sub: asyncpg.Record | None, now: datetime) -> tuple[str, Plan]:
         """Plan in force: the subscribed one while paid (or in grace), else the default."""
         plan_id = sub["plan_id"] if sub is not None and self.paid(sub, now) else None
@@ -150,9 +158,9 @@ class Budget:
     spent: Decimal
     limit: Decimal | None
     # Pay as you go (a metered LLM price, docs/billing.md "Usage-based"): the plan's limit is
-    # only a warning; `own` is the org's own raised cap, the one hard stop.
+    # only a warning; `cap` is the hard stop: the org's own raised cap, else llmSpendMax.
     payg: bool = False
-    own: Decimal | None = None
+    cap: Decimal | None = None
 
 
 LLM_METERS = frozenset({"llm_cost_micros", "llm_tokens"})
@@ -222,7 +230,8 @@ async def llm_budget(
         limit = own = min(Decimal(str(raised[currency])), plan.llm_spend_max[currency])
     prices = plan.prices.get(sub["currency"], []) if sub and plans.paid(sub, now) else []
     payg = any(p.model == "metered" and p.meter in LLM_METERS for p in prices)
-    return Budget(plan_id, spent, limit, payg, own)
+    cap = own if own is not None else plan.llm_spend_max.get(currency)
+    return Budget(plan_id, spent, limit, payg, cap)
 
 
 async def check_llm_budget(pool: asyncpg.Pool, plans: Plans, org_id: str, currency: str) -> None:
@@ -241,7 +250,7 @@ async def check_llm_budget(pool: asyncpg.Pool, plans: Plans, org_id: str, curren
     spend_ratio.record(float(ratio), labels)
     hard: Decimal | None = budget.limit
     if budget.payg and await is_enabled("billing-usage", user_id=org_id, org_id=org_id):
-        hard = budget.own  # usage is billed: stop only at the org's own cap
+        hard = budget.cap  # usage is billed: stop at the org's own cap, else llmSpendMax
         if budget.spent >= budget.limit and (hard is None or budget.spent < hard):
             log.warning("org %s: LLM spend over the plan's limit (pay as you go)", org_id)
             return

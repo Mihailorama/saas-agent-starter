@@ -133,7 +133,7 @@ export const requireScope = (scope: Scope) => {
       rank: RANK[SCOPES[scope]]!,
       twoFactor: false,
     };
-    await countApiCall(key.referenceId, key.id, req.log);
+    await countApiCall(key.referenceId, req.log);
   };
 };
 

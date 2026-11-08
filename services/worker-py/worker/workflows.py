@@ -196,22 +196,31 @@ async def ensure_usage_schedule(client: Client, task_queue: str) -> None:
 @workflow.defn(name="UsageReportWorkflow")
 class UsageReportWorkflow:
     """Every 15 minutes (Temporal Schedule `billing-usage-report`): usage to the provider's
-    meters (worker/usage.py). The previous run's `until` is this run's start; a failed run is
-    covered by the next one (the provider deduplicates the overlap by identifier)."""
+    meters (worker/usage.py), one activity per org with its own retries. A failed org is picked
+    up from its own mark by the next run; the others go on."""
 
     @workflow.run
-    async def run(self) -> dict[str, Any]:
-        last: dict[str, Any] = (
-            workflow.get_last_completion_result(dict[str, Any]) or {}
-            if workflow.has_last_completion_result()
-            else {}
-        )
-        return await workflow.execute_activity_method(
-            UsageActivities.report_usage,
-            last.get("until"),
-            start_to_close_timeout=timedelta(minutes=14),
+    async def run(self) -> dict[str, int]:
+        orgs = await workflow.execute_activity_method(
+            UsageActivities.usage_orgs,
+            start_to_close_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
+        results = await asyncio.gather(
+            *(
+                workflow.execute_activity_method(
+                    UsageActivities.report_org_usage,
+                    org,
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+                for org in orgs
+            ),
+            return_exceptions=True,
+        )
+        failed = sum(isinstance(r, BaseException) for r in results)
+        events = sum(r for r in results if isinstance(r, int))
+        return {"orgs": len(orgs), "events": events, "failed": failed}
 
 
 @workflow.defn(name="SendEmailWorkflow")
