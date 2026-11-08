@@ -12,7 +12,6 @@ import { entitlements, type Subscription } from '../src/billing/entitlements.ts'
 import type { BillingProvider } from '../src/billing/provider.ts';
 import { providerFor } from '../src/billing/registry.ts';
 import {
-  billingSetup,
   dispatch,
   RewardsConfig,
   type Rule,
@@ -103,7 +102,7 @@ const money: Rule = {
   id: 'm',
   trigger: 'invitation.accepted',
   reward: { kind: 'balance_credit', amount: '5.00', currency: 'USD' },
-  fallback: { kind: 'entitlement', key: 'llmSpendMonthly', delta: 2, months: 3 },
+  fallback: { kind: 'entitlement', key: 'llmSpendMonthly', delta: 2, months: 3, currency: 'USD' },
   capPerOrg: 1,
   holdDays: 0,
 };
@@ -119,6 +118,11 @@ describe('config/rewards.json', () => {
       bad({ ...money, reward: { kind: 'balance_credit', amount: '5', currency: 'USD' } }),
     ).toBe(false);
     expect(bad({ ...money, trigger: 'button_clicked' })).toBe(false); // client events never count
+    expect(
+      bad({ ...money, reward: { kind: 'balance_credit', amount: '500.00', currency: 'JPY' } }),
+    ).toBe(false); // not a two-decimal currency
+    const spend = { kind: 'entitlement', key: 'llmSpendMonthly', delta: 2, months: 1 };
+    expect(bad({ ...money, fallback: spend })).toBe(false); // spend rewards name their currency
     expect(bad({ ...money, trigger: 'org.profile_completed' })).toBe(false); // no requiredMetadata
     expect(RewardsConfig.safeParse({ version: 1, rules: [money, money] }).success).toBe(false);
   });
@@ -131,66 +135,33 @@ describe('config/rewards.json', () => {
 });
 
 describe('dispatch across billing setups', () => {
-  const stripe = (primitives: ('credit_grant' | 'balance_credit' | 'coupon')[]) => ({
-    kind: 'provider' as const,
-    currency: 'USD',
-    primitives,
-  });
-  it('Stripe metered: a credit grant; licensed: the balance; coupons where supported', () => {
-    expect(dispatch(money, stripe(['credit_grant', 'balance_credit', 'coupon'])).via).toBe(
-      'credit_grant',
-    );
-    expect(dispatch(money, stripe(['balance_credit', 'coupon'])).via).toBe('balance_credit');
-    const coupon: Rule = { ...money, reward: { kind: 'coupon', couponId: 'co_1' } };
-    expect(dispatch(coupon, stripe(['balance_credit', 'coupon'])).via).toBe('coupon');
-    expect(dispatch(coupon, stripe(['balance_credit']))).toEqual({
-      via: 'entitlement',
-      reward: money.fallback,
-    });
+  const stripe = providerFor('en');
+  const external = { invoicing: 'external' } as BillingProvider;
+  const coupon: Rule = { ...money, reward: { kind: 'coupon', couponId: 'co_1' } };
+  it('a provider customer: the balance (flat, per-seat and metered alike) or a coupon', () => {
+    expect(dispatch(money, sub(), stripe).via).toBe('balance_credit');
+    expect(dispatch(coupon, sub(), stripe).via).toBe('coupon');
+    // A coupon needs a live subscription; a credit, the customer's currency: else the fallback.
+    expect(dispatch(coupon, sub({ status: 'canceled' }), stripe).reward).toEqual(money.fallback);
+    expect(dispatch(money, sub({ currency: 'EUR' }), stripe).via).toBe('entitlement');
   });
   it('free / no customer: the fallback entitlement, or operators without one', () => {
-    expect(dispatch(money, { kind: 'no_customer' })).toEqual({
-      via: 'entitlement',
-      reward: money.fallback,
-    });
-    expect(dispatch({ ...money, fallback: undefined }, { kind: 'no_customer' }).via).toBe('manual');
-    // A credit in another currency than the customer's is not applied by the provider either.
-    expect(dispatch(money, { ...stripe(['balance_credit']), currency: 'EUR' }).via).toBe(
-      'entitlement',
-    );
+    expect(dispatch(money, null, null)).toEqual({ via: 'entitlement', reward: money.fallback });
+    expect(dispatch(money, sub({ customerId: null }), stripe).via).toBe('entitlement');
+    expect(dispatch({ ...money, fallback: undefined }, null, null).via).toBe('manual');
   });
-  it('manual contract (no PSP): pending for operators; entitlements apply everywhere', () => {
-    expect(dispatch(money, { kind: 'manual' })).toEqual({ via: 'manual', reward: money.reward });
+  it('manual contract or no adapter: operators; entitlements apply everywhere', () => {
+    expect(dispatch(money, sub(), external)).toEqual({ via: 'manual', reward: money.reward });
+    expect(dispatch(money, sub({ contour: 'contract' }), null).via).toBe('manual');
     const ent = rewards.rules.find((r) => r.reward.kind === 'entitlement')!;
-    expect(dispatch(ent, { kind: 'manual' }).via).toBe('entitlement');
+    expect(dispatch(ent, sub(), external).via).toBe('entitlement');
   });
-  it('billingSetup reads the provider capabilities and the customer', async () => {
-    expect(await billingSetup(null)).toEqual({ kind: 'no_customer' });
-    expect(await billingSetup(sub({ customerId: null }))).toEqual({ kind: 'no_customer' });
-    expect(await billingSetup(sub({ contour: 'contract' }))).toEqual({ kind: 'manual' });
-    // stripe-mock's subscription has licensed prices: no credit grant.
-    expect(await billingSetup(sub())).toEqual(stripe(['balance_credit', 'coupon']));
-    expect(await billingSetup(sub({ status: 'canceled' }))).toEqual(stripe(['balance_credit']));
-    const external = {
-      capabilities: () => ({ invoicing: 'external' }),
-    } as unknown as BillingProvider;
-    expect(await billingSetup(sub(), () => external)).toEqual({ kind: 'manual' });
-    const metered = { ...providerFor('en'), usageBased: async () => true };
-    expect(await billingSetup(sub(), () => metered)).toEqual(
-      stripe(['credit_grant', 'balance_credit', 'coupon']),
+  it('the Stripe methods return the provider object ids (stripe-mock)', async () => {
+    const credit = { amount: '5.00', currency: 'USD', description: 'Reward: test' };
+    expect(await stripe.applyCredit!(sub(), { ...credit, key: randomUUID() })).toMatch(/^cbtxn_/);
+    expect(await stripe.applyCoupon!(sub(), { couponId: 'co_123', key: randomUUID() })).toMatch(
+      /^sub_/,
     );
-  });
-  it('the Stripe primitives return the provider object ids (stripe-mock)', async () => {
-    const p = providerFor('en');
-    const credit = {
-      amount: '5.00',
-      currency: 'USD',
-      description: 'Reward: test',
-      key: randomUUID(),
-    };
-    expect(await p.applyCredit!(sub(), { ...credit, via: 'balance_credit' })).toMatch(/^cbtxn_/);
-    expect(await p.applyCredit!(sub(), { ...credit, via: 'credit_grant' })).toBeTruthy();
-    expect(await p.applyCoupon!(sub(), { couponId: 'co_123', key: randomUUID() })).toMatch(/^sub_/);
   });
 });
 
@@ -207,11 +178,13 @@ describe('entitlement rewards', () => {
           status: 'applied',
           reward,
           expiresAt,
+          idempotencyKey: subject,
         }),
       );
     const later = new Date(Date.now() + 86_400_000);
     await grant('a', { kind: 'entitlement', key: 'projects', delta: 2, months: 1 }, later);
-    await grant('b', { kind: 'entitlement', key: 'llmSpendMonthly', delta: 2, months: 1 }, later);
+    const spend = { kind: 'entitlement', key: 'llmSpendMonthly', delta: 2, months: 1 };
+    await grant('b', { ...spend, currency: 'USD' }, later);
     await grant(
       'c',
       { kind: 'entitlement', key: 'seats', delta: 9, months: 1 },
@@ -221,12 +194,14 @@ describe('entitlement rewards', () => {
     expect(e.limits.projects).toBe(3 + 2);
     expect(e.limits.seats).toBe(3); // expired
     expect(e.llmSpendLimit('USD')).toBe(1 + 2);
+    expect(e.llmSpendLimit('EUR')).toBe(1); // only in the reward's currency
   });
-  it('reward_grants is append-only for the app role', async () => {
+  it('reward_grants: no deletes, and updates only of the settlement columns', async () => {
     const { org } = await ownerWithOrg();
+    await withOrg(db, org, (tx) => tx.update(rewardGrants).set({ status: 'applied' })); // allowed
     for (const write of [
       withOrg(db, org, (tx) => tx.delete(rewardGrants)),
-      withOrg(db, org, (tx) => tx.update(rewardGrants).set({ status: 'applied' })),
+      withOrg(db, org, (tx) => tx.update(rewardGrants).set({ subject: 'x' })),
     ]) {
       await expect(write).rejects.toMatchObject({
         cause: { message: expect.stringMatching(/permission denied/) },
@@ -259,7 +234,7 @@ describe('POST /internal/rewards/apply (worker -> API)', () => {
     const free = await apply(org, 'test-internal-token');
     expect(free.json()).toMatchObject({
       via: 'entitlement',
-      reward: { key: 'llmSpendMonthly' },
+      reward: { key: 'projects' },
       ref: null,
     });
     await withOrg(db, org, (tx) => tx.insert(subscriptions).values({ ...sub(), orgId: org }));

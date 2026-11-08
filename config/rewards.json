@@ -1,12 +1,12 @@
 {
-  "$comment": "Rewards as code (docs/growth.md). Read by the API (triggers, provider dispatch) and the worker (conditions, caps, grants). A rule: `id` (stable, part of the workflow id and of reward_grants), `trigger` (a server-side event: org.profile_completed, invitation.accepted, referral.converted; never a client analytics event), `reward` ({kind: balance_credit, amount, currency} | {kind: coupon, couponId} | {kind: entitlement, key: seats|projects|llmSpendMonthly, delta, months}), optional `fallback` (an entitlement, used when the organization has no payment-provider customer to credit), `capPerOrg` (grants of this rule per organization, ever), `holdDays` (wait before granting; the conditions are checked after it) and, for org.profile_completed, `requiredMetadata` (organization metadata keys that must all be non-empty). Money and coupon rewards go through the billing provider (docs/billing.md); without a provider or with a manual contract they are recorded as pending_manual for operators.",
+  "$comment": "Rewards as code (docs/growth.md). Read by the API (triggers, provider dispatch) and the worker (conditions, caps, grants). A rule: `id` (stable, part of the workflow id and of reward_grants), `trigger` (a server-side event: org.profile_completed, invitation.accepted, referral.converted; never a client analytics event), `reward` ({kind: balance_credit, amount, currency} | {kind: coupon, couponId} | {kind: entitlement, key: seats|projects|llmSpendMonthly, delta, months, currency for llmSpendMonthly}), optional `fallback` (an entitlement, used when the provider cannot apply the reward, e.g. no provider customer; keep it non-monetary), `capPerOrg` (grants of this rule per organization, ever; each subject at most once), `holdDays` (wait before granting; the conditions are checked after it) and, for org.profile_completed, `requiredMetadata` (organization metadata keys that must all be non-empty). Money and coupon rewards go through the billing provider (docs/billing.md); without a provider or with a manual contract they are recorded as pending_manual for operators.",
   "version": 1,
   "rules": [
     {
       "id": "team-invite",
       "trigger": "invitation.accepted",
       "reward": { "kind": "balance_credit", "amount": "5.00", "currency": "USD" },
-      "fallback": { "kind": "entitlement", "key": "llmSpendMonthly", "delta": 2, "months": 3 },
+      "fallback": { "kind": "entitlement", "key": "projects", "delta": 1, "months": 3 },
       "capPerOrg": 5,
       "holdDays": 14
     },

@@ -438,7 +438,6 @@ describe('the RLS exception is limited to the operator console', () => {
     const callers = sources.filter(([, src]) => /withOperatorRead\(/.test(src)).map(([p]) => p);
     expect(callers.sort()).toEqual([
       'apps/api/src/routes/admin-orgs.ts',
-      'apps/api/src/routes/admin-rewards.ts',
       'apps/api/src/routes/admin-users.ts',
     ]);
   });
@@ -469,7 +468,7 @@ describe('the RLS exception is limited to the operator console', () => {
 });
 
 describe('rewards waiting for operators (docs/growth.md)', () => {
-  it('lists pending_manual grants until an operator marks them applied, with a reason', async () => {
+  it('shows pending_manual grants on the org page until an operator marks them applied', async () => {
     const [g] = await withOrg(db, org.id, (tx) =>
       tx
         .insert(rewardGrants)
@@ -477,23 +476,24 @@ describe('rewards waiting for operators (docs/growth.md)', () => {
           orgId: org.id,
           ruleId: 'team-invite',
           subject: randomUUID(),
-          via: 'manual',
           status: 'pending_manual',
+          via: 'manual',
           reward: { kind: 'balance_credit', amount: '5.00', currency: 'USD' },
+          idempotencyKey: 'reward-x',
         })
         .returning(),
     );
     const pending = async () =>
-      ((await get(op, '/api/admin/rewards/pending')).json() as { id: string }[]).map((r) => r.id);
-    expect(await pending()).toContain(g!.id);
-    expect((await get(owner, '/api/admin/rewards/pending')).statusCode).toBe(403);
+      ((await get(op, `/api/admin/orgs/${org.id}`)).json().pendingRewards as { key: string }[]).map(
+        (r) => r.key,
+      );
+    expect(await pending()).toContain('reward-x');
     const mark = () =>
-      post(op, `/api/admin/rewards/${g!.id}/applied`, {
-        orgId: org.id,
+      post(op, `/api/admin/orgs/${org.id}/rewards/${g!.id}/applied`, {
         reason: 'credit note CN-1',
       });
     expect((await mark()).statusCode).toBe(204);
-    expect(await pending()).not.toContain(g!.id);
+    expect(await pending()).not.toContain('reward-x');
     expect((await mark()).statusCode).toBe(404);
     expect((await operatorRows(org.id, 'operator.reward.applied'))[0]).toMatchObject({
       target: g!.id,

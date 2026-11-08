@@ -197,7 +197,9 @@ async def llm_budget(
     if limit is not None:  # entitlement rewards (docs/growth.md), as entitlements() in the API
         bonus: Decimal = await conn.fetchval(
             "select coalesce(sum((reward->>'delta')::numeric), 0) from reward_grants"
-            " where via = 'entitlement' and reward->>'key' = 'llmSpendMonthly' and expires_at > $1",
+            " where via = 'entitlement' and reward->>'key' = 'llmSpendMonthly'"
+            " and reward->>'currency' = $1 and expires_at > $2",
+            currency,
             now,
         )
         limit += bonus

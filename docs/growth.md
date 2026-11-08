@@ -10,16 +10,17 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
 - `config/rewards.json`: the rules. Read by the API (triggers, provider dispatch) and the worker
   (conditions, caps, grants). Validated by `apps/api/src/billing/rewards.ts` (`RewardsConfig`);
   `apps/api/test/rewards.test.ts` fails on a broken file.
-- `reward_grants`: one row per granted reward, tenant table with RLS, **append-only** (the app role
-  has no UPDATE or DELETE). Unique on `(org_id, rule_id, subject)`, so a rule rewards a subject once.
+- `reward_grants`: one row per reward, tenant table with RLS, unique on `(org_id, rule_id,
+  subject)`: a rule rewards a subject once, ever. Reserved first, then settled; the app role may
+  update only `status`, `via`, `reward`, `provider_ref` and `expires_at`, and never delete.
 - `apps/api/src/billing/rewards.ts`: config, `triggerRewards()` (starts the workflow), `dispatch()`
   (the one dispatcher) and `applyReward()`. `entitlements()` adds unexpired entitlement rewards to
   the limits; the worker's LLM spend check does the same (`worker/billing.py`).
 - `services/worker-py/worker/rewards.py` + `RewardWorkflow` (`worker/workflows.py`): hold timer,
-  conditions, cap, apply, record.
-- Web: `/settings/members` (list members, invite by email with the shared `InviteDialog` of the
-  onboarding checklist, revoke pending invitations; admins).
-  Operators: "Rewards to apply" on `/admin` (docs/admin.md).
+  reserve (conditions, cap), apply, settle.
+- Web: `/settings/members` (list members; admins invite by email with the onboarding checklist's
+  `InviteDialog` and revoke pending invitations). Operators: "Rewards to apply" on the
+  organization's page in `/admin` (docs/admin.md).
 
 ## A rule
 
@@ -28,7 +29,7 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
   "id": "team-invite",
   "trigger": "invitation.accepted",
   "reward": { "kind": "balance_credit", "amount": "5.00", "currency": "USD" },
-  "fallback": { "kind": "entitlement", "key": "llmSpendMonthly", "delta": 2, "months": 3 },
+  "fallback": { "kind": "entitlement", "key": "projects", "delta": 1, "months": 3 },
   "capPerOrg": 5,
   "holdDays": 14
 }
@@ -40,19 +41,19 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
   - `org.profile_completed`: Better Auth's `afterUpdateOrganization` hook, when the organization's
     metadata has every key of the rule's `requiredMetadata`, all non-empty. The shipped rule uses
     `size` and `website`, the keys the onboarding "company details" dialog writes and the API
-    validates (`OrgMetadata`, apps/api/src/auth.ts); a test keeps `requiredMetadata` within them. Code that writes
-    organization metadata elsewhere (an onboarding flow) calls `triggerRewards('org.profile_completed',
-    { orgId, subject: orgId, userId, metadata })` after its commit. Subject: the organization.
-  - `referral.converted`: reserved for referrals.
+    validates (`OrgMetadata`, apps/api/src/auth.ts); a test keeps `requiredMetadata` within them.
+    Subject: the organization.
 - `reward`, one of:
-  - `{ "kind": "balance_credit", "amount": "5.00", "currency": "USD" }`: money (two-decimal
-    currencies);
-  - `{ "kind": "coupon", "couponId": "..." }`: a provider coupon (percentage or fixed discount);
+  - `{ "kind": "balance_credit", "amount": "5.00", "currency": "USD" }`: money. Two-decimal
+    currencies only for now (the schema refuses JPY, KWD and the like);
+  - `{ "kind": "coupon", "couponId": "..." }`: a provider coupon, added to the subscription's
+    existing discounts;
   - `{ "kind": "entitlement", "key": "seats" | "projects" | "llmSpendMonthly", "delta": 2,
-    "months": 3 }`: more of a plan limit for a while, on our side. `llmSpendMonthly` adds `delta`
-    in every cost currency.
+    "months": 3 }`: more of a plan limit for a while, on our side. `llmSpendMonthly` also names its
+    `currency` and raises only that cost currency.
 - `fallback` (optional entitlement): used when the provider cannot apply the money or coupon reward
-  (no provider customer, other currency, no such primitive).
+  (no provider customer, other currency, no live subscription for a coupon). Keep it non-monetary
+  (seats, projects): free organizations are the cheapest to farm.
 - `capPerOrg`: grants of this rule per organization, ever. `holdDays`: the workflow waits this
   long, then checks the conditions.
 
@@ -61,41 +62,44 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
 1. The trigger fires after Better Auth committed the change. `triggerRewards()` checks the flag and
    starts `RewardWorkflow` with id `reward-<org>-<rule>-<subject>` and `REJECT_DUPLICATE`. A
    Temporal outage never fails the user's action (Sentry gets the error).
-2. The worker sleeps `holdDays` (a Temporal timer), then checks: organization not suspended, cap
-   not reached, and per trigger: the invited user is **still a member with a verified email**
-   (abuse guard against throw-away accounts), or the profile is still complete.
-3. Entitlements are recorded directly. Money and coupons go to the API, which owns the billing
+2. The worker sleeps `holdDays` (a Temporal timer), then **reserves** the grant in one transaction
+   under an advisory lock on (org, rule): no row yet for this subject (so the reward is never paid
+   twice, also after Temporal's retention forgot the workflow id), cap not reached, organization
+   not suspended, and per trigger: the invited user is still a member, has a verified email, and
+   this is the account's **first accepted invitation anywhere** (one account cannot be re-invited
+   by org after org); or the profile is still complete.
+3. Entitlements apply on our side. Money and coupons go to the API, which owns the billing
    provider: `POST /internal/rewards/apply` with `INTERNAL_API_TOKEN`, keyed by the workflow id,
-   which is also the provider's idempotency key, so a retry never credits twice.
-4. The grant row and an audit row (`reward.applied` or `reward.pending_manual`) are written once.
-   Metric `rewards.granted` (labels `rule`, `via`).
+   which is also the provider's idempotency key.
+4. The row is settled (`applied` or `pending_manual`) with an audit row (`reward.applied` or
+   `reward.pending_manual`). Metric `rewards.granted` (labels `rule`, `via`).
 
 ## Behaviour per pricing model
 
-The dispatcher picks the native primitive for the organization's billing setup, from the provider's
-`capabilities()` (`invoicing`, `balanceCredit`, `creditGrants`, `coupons`) and the org's
-`subscriptions` row (docs/billing.md):
+The provider declares `invoicing` (`provider`, or `external` for a manual contract) and implements
+`applyCredit` and `applyCoupon` if it can (docs/billing.md). The dispatcher uses the org's
+`subscriptions` row:
 
-| Organization's billing                                                  | Money reward                                   | Coupon reward              | Entitlement reward |
-| ----------------------------------------------------------------------- | ---------------------------------------------- | -------------------------- | ------------------ |
-| Usage-based / pay-as-you-go (metered prices)                            | provider credit grant (Stripe billing credits) | coupon on the subscription | ours               |
-| Prepaid credit bundles (metered usage)                                  | provider credit grant on the metered usage     | coupon                     | ours               |
-| Flat or per-seat subscription (licensed)                                | customer balance credit, on the next invoice   | coupon                     | ours               |
-| Customer without a live subscription                                    | customer balance credit                        | fallback                   | ours               |
-| Free (no provider customer)                                             | fallback entitlement                           | fallback                   | ours               |
-| Manual contract, invoiced outside any PSP                               | `pending_manual` for operators                 | `pending_manual`           | ours               |
-| Provider not configured, API link missing or the provider keeps failing | `pending_manual`                               | `pending_manual`           | ours               |
+| Organization's billing                                           | Money reward                                    | Coupon reward                    | Entitlement reward |
+| ---------------------------------------------------------------- | ----------------------------------------------- | -------------------------------- | ------------------ |
+| Flat, per-seat, usage-based or prepaid, invoiced by the provider | customer balance credit: pays the next invoices | coupon added to the subscription | ours               |
+| Provider customer without a live subscription                    | customer balance credit                         | fallback                         | ours               |
+| Free (no provider customer)                                      | fallback entitlement                            | fallback                         | ours               |
+| Manual contract (`invoicing: 'external'`) or no adapter          | `pending_manual` for operators                  | `pending_manual`                 | ours               |
+| API link missing, or the API/provider keeps failing              | `pending_manual`                                | `pending_manual`                 | ours               |
 
 A reward with no fallback that cannot be applied automatically is also `pending_manual`. Nothing is
-silently dropped: operators see each pending grant in the console, apply it as a credit note or
-invoice line, and mark it applied (an `operator.reward.applied` audit row with the reference).
-A provider that cannot tell metered customers apart (no `usageBased()`) never gets credit grants.
+silently dropped: operators see each pending grant on the organization's console page with its
+idempotency key and provider reference. **Check the provider for that key first** (look the request with
+that idempotency key up in the provider's request logs): when the API timed out after the provider
+succeeded, the credit exists already. Otherwise apply it as a credit note or invoice line, then mark
+it applied (an `operator.reward.applied` audit row with the reference).
 
 ## Add a rule
 
 1. Append it to `config/rewards.json`; `pnpm --filter api test rewards` validates it.
 2. For a coupon, create the coupon in the provider first and use its id.
-3. A new trigger: add it to `TRIGGERS` (rewards.ts), its condition to `eligible()` in
+3. A new trigger: add it to `TRIGGERS` (rewards.ts), its condition to `_conditions()` in
    `worker/rewards.py`, and call `triggerRewards()` after the commit of the change that fires it.
 
 ## Local and test setup

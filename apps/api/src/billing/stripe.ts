@@ -102,55 +102,32 @@ export function stripeProvider(opts: {
       return sub.customerId ? `${base}/customers/${sub.customerId}` : null;
     },
 
-    // Rewards (docs/growth.md). Credit grants reach only metered prices, the balance the next
-    // invoice, a coupon the subscription. Each call carries an idempotency key.
-    capabilities: () => ({
-      invoicing: 'provider',
-      balanceCredit: true,
-      creditGrants: true,
-      coupons: true,
-    }),
-
-    async usageBased(sub) {
-      if (!sub.providerSubscriptionId) return false;
-      const s = await stripe.subscriptions.retrieve(sub.providerSubscriptionId);
-      return s.items.data.some((i) => i.price.recurring?.usage_type === 'metered');
-    },
+    // Rewards (docs/growth.md). The balance pays the next invoices (flat, per-seat and metered
+    // alike); a coupon joins the subscription's discounts. Each call carries an idempotency key.
+    invoicing: 'provider',
 
     async applyCredit(sub, c) {
       if (!sub.customerId) throw new Error('no Stripe customer');
-      // ponytail: two-decimal currencies only; zero-decimal ones (JPY) need their own minor unit.
-      const value = Number(c.amount.replace('.', ''));
-      const currency = c.currency.toLowerCase();
-      const idempotent = { idempotencyKey: c.key };
-      if (c.via === 'credit_grant') {
-        const grant = await stripe.billing.creditGrants.create(
-          {
-            customer: sub.customerId,
-            amount: { type: 'monetary', monetary: { value, currency } },
-            applicability_config: { scope: { price_type: 'metered' } },
-            category: 'promotional',
-            name: c.description,
-          },
-          idempotent,
-        );
-        return grant.id;
-      }
-      // A negative balance transaction is a credit, used by the customer's next invoices.
+      // Two-decimal currencies only (rewards.ts refuses the others), so cents = digits.
       const txn = await stripe.customers.createBalanceTransaction(
         sub.customerId,
-        { amount: -value, currency, description: c.description },
-        idempotent,
+        {
+          amount: -Number(c.amount.replace('.', '')), // negative = a credit
+          currency: c.currency.toLowerCase(),
+          description: c.description,
+        },
+        { idempotencyKey: c.key },
       );
       return txn.id;
     },
 
     async applyCoupon(sub, c) {
       if (!sub.providerSubscriptionId) throw new Error('no Stripe subscription');
-      // ponytail: replaces the subscription's discounts; merge them if you stack promotions.
+      const current = await stripe.subscriptions.retrieve(sub.providerSubscriptionId);
+      const keep = current.discounts.map((d) => ({ discount: typeof d === 'string' ? d : d.id }));
       const s = await stripe.subscriptions.update(
         sub.providerSubscriptionId,
-        { discounts: [{ coupon: c.couponId }] },
+        { discounts: [...keep, { coupon: c.couponId }] },
         { idempotencyKey: c.key },
       );
       return s.id;

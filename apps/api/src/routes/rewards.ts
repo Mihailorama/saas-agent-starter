@@ -23,7 +23,7 @@ export const rewardRoutes: FastifyPluginAsyncZod = async (app) => {
         }),
         response: {
           200: z.object({
-            via: z.enum(['entitlement', 'credit_grant', 'balance_credit', 'coupon', 'manual']),
+            via: z.enum(['entitlement', 'balance_credit', 'coupon', 'manual']),
             reward: z.record(z.string(), z.unknown()),
             ref: z.string().nullable(),
           }),

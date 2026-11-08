@@ -1,5 +1,5 @@
 {
-  "id": "42c6f398-c335-4f16-a351-69220b8bbd29",
+  "id": "f0440530-2096-44ec-bd30-52c52ff57cb3",
   "prevId": "c419bc40-233e-4f6f-a4ac-34eabe4152ec",
   "version": "7",
   "dialect": "postgresql",
@@ -1061,21 +1061,27 @@
           "primaryKey": false,
           "notNull": true
         },
-        "via": {
-          "name": "via",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "status": {
           "name": "status",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
+        "via": {
+          "name": "via",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "reward": {
           "name": "reward",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -1142,11 +1148,11 @@
       "checkConstraints": {
         "reward_grants_via": {
           "name": "reward_grants_via",
-          "value": "\"reward_grants\".\"via\" in ('entitlement', 'credit_grant', 'balance_credit', 'coupon', 'manual')"
+          "value": "\"reward_grants\".\"via\" in ('entitlement', 'balance_credit', 'coupon', 'manual')"
         },
         "reward_grants_status": {
           "name": "reward_grants_status",
-          "value": "\"reward_grants\".\"status\" in ('applied', 'pending_manual')"
+          "value": "\"reward_grants\".\"status\" in ('reserved', 'applied', 'pending_manual')"
         }
       },
       "isRLSEnabled": false

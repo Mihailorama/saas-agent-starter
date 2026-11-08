@@ -204,7 +204,7 @@ class SendEmailWorkflow:
 class RewardWorkflow:
     """Started by the API (apps/api/src/billing/rewards.ts) with id `reward-<org>-<rule>-<subject>`
     and REJECT_DUPLICATE: a rule rewards a subject once. Waits `holdDays` (a Temporal timer), then
-    checks, applies and records (worker/rewards.py, docs/growth.md)."""
+    reserves, applies and settles the grant (worker/rewards.py, docs/growth.md)."""
 
     @workflow.run
     async def run(self, r: RewardRequest) -> str:
@@ -212,7 +212,7 @@ class RewardWorkflow:
             await workflow.sleep(timedelta(days=r.holdDays))
         quick = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
         reward = await workflow.execute_activity_method(
-            RewardActivities.eligible,
+            RewardActivities.reserve,
             r,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=quick,
