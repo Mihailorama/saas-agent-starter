@@ -971,6 +971,7 @@ export interface paths {
                                 portal: boolean;
                                 cancel: boolean;
                             };
+                            payg: boolean;
                             usage: {
                                 seats: {
                                     used: number;

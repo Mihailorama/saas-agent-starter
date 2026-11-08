@@ -66,9 +66,31 @@ updates in the portal settings). An operator override (`limit_overrides`) still 
 ### Usage-based (pay as you go)
 
 `metered` on one meter, with the provider's metered price (Stripe: a price on a
-[Meter](https://docs.stripe.com/billing/subscriptions/usage-based) with the same event name as
-`meter`). Checkout adds it without quantity. Reporting usage to the meter is the follow-up in
-docs/TODO.md; until then such a plan is billed for nothing beyond its base price.
+[Meter](https://docs.stripe.com/billing/subscriptions/usage-based) whose event name is the
+`meter`, customer mapping `stripe_customer_id`, value key `value`, aggregation sum). Checkout
+adds it without quantity. Behind the flag `billing-usage` (default off):
+
+- **Reporting** (`worker/usage.py`): `UsageReportWorkflow` runs every 15 minutes (Temporal
+  Schedule `billing-usage-report`); its activity `report_usage` visits every org whose plan in
+  force has a `metered` price and whose provider has a meter adapter, and sends, in sequence per
+  org (Stripe accepts one concurrent event per customer and meter):
+  - `llm_cost_micros`: one event per successful `ai_calls` row, value = cost in millionths of the
+    model's cost currency (price the metered price accordingly), identifier
+    `llm_cost_micros:<ai_calls id>`;
+  - `llm_tokens`: the same per row with `total_tokens`;
+  - `api_calls`: one event per org and closed hour of API-key requests (`usage_counters`, counted
+    by `requireScope`; sessions do not count), identifier `api_calls:<org>:<hour>`.
+
+  Rows younger than one minute wait for the next run. The window's end is the workflow result and
+  the next run's start (no watermark in the database); a failed run is covered by the next one and
+  Stripe drops the overlap by identifier (`duplicate_meter_event`, kept for 24 hours). Stripe's
+  timestamps must be within 35 days: a schedule paused longer loses the older usage. Worker env:
+  `STRIPE_SECRET_KEY` (empty: no reporting), `STRIPE_API_URL` for stripe-mock.
+- **Spend limit**: on a plan with a metered LLM price (`llm_cost_micros` or `llm_tokens`) the
+  plan's `llmSpendMonthly` only warns (worker log, "warning" on the billing page) because the
+  usage is billed; calls stop only at the organization's own cap (the raised limit an admin or
+  operator set, up to `llmSpendMax`). Without such a cap nothing stops them. Flat and other plans:
+  as before.
 
 ### Hybrid (base + overage)
 
@@ -113,8 +135,8 @@ assuming:
   invoicing: 'provider' | 'external' }
 ```
 
-Stripe: checkout, portal, cancel, `flat`/`per_seat`/`metered`/`contract`, invoicing by the
-provider. `manual`: `contract` only, nothing self-serve, invoicing external. A subscription is
+Stripe: checkout, portal, cancel, `flat`/`per_seat`/`metered`/`contract`, usage reporting
+(the worker's `StripeMeters`), invoicing by the provider. `manual`: `contract` only, nothing self-serve, invoicing external. A subscription is
 served by the provider it was made with (`subscriptions.provider`), so a `manual` contract can
 sit in a Stripe contour.
 
@@ -130,7 +152,8 @@ that stops being enough:
 - **Polar**: a merchant of record (sales tax, invoices in its name) with checkout and usage
   billing (connect; `merchantOfRecord: true`; follow-up).
 
-Each is another provider adapter behind the same interface, plus a meter adapter in the worker.
+Each is another provider adapter behind the same interface, plus a meter adapter in the worker
+(`Meters` in `worker/usage.py`: `report(customer, meter, value, identifier, at)`).
 
 ## Entitlements
 

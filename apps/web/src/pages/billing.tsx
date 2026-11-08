@@ -236,7 +236,9 @@ export function BillingPage() {
               />
               {s.level === 'warning' && (
                 <p className="text-sm text-amber-700 dark:text-amber-400">
-                  Over 80% of the limit: AI features stop when it is reached.
+                  {b.payg
+                    ? 'Near or over the monthly estimate: usage is billed; set your own limit to cap it.'
+                    : 'Over 80% of the limit: AI features stop when it is reached.'}
                 </p>
               )}
               {b.canManage && b.features.llmLimitRaise && (

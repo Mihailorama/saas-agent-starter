@@ -82,7 +82,7 @@ export function stripeProvider(opts: {
       portal: true,
       cancel: true,
       priceModels: ['flat', 'per_seat', 'metered', 'contract'],
-      usageReporting: false,
+      usageReporting: true, // the worker's Stripe Meters adapter (worker/usage.py)
       creditBalance: false,
       merchantOfRecord: false,
       invoicing: 'provider',

@@ -8,6 +8,7 @@ import {
   numeric,
   pgPolicy,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -219,6 +220,22 @@ export const subscriptions = pgTable(
     ),
     tenantIsolation(),
   ],
+);
+
+/**
+ * API-key requests per org and hour, the source of the `api_calls` meter (docs/billing.md
+ * "Usage-based"). The worker reports each closed hour once to the provider; not a usage ledger
+ * (the provider rates and invoices). Written only while the `billing-usage` flag is on.
+ */
+export const usageCounters = pgTable(
+  'usage_counters',
+  {
+    orgId: orgId(),
+    meter: text('meter').notNull(),
+    hour: timestamp('hour', { withTimezone: true }).notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.meter, t.hour] }), tenantIsolation()],
 );
 
 /**

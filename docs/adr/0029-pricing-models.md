@@ -31,6 +31,13 @@ engine (tiers, proration, invoices). Usage: [docs/billing.md](../billing.md) "Pr
   `days_until_due`) are created by the same console action through the provider's API.
 - **A subscription keeps the provider it was made with** (`subscriptions.provider`), so a manual
   contract can sit in a Stripe contour.
+- **Usage goes to the provider's meters, rating stays there.** A scheduled worker activity
+  sends one event per `ai_calls` row (`llm_cost_micros`, `llm_tokens`) and per closed hour of
+  API-key requests (`api_calls`), with deterministic identifiers so the provider deduplicates
+  retries; the run window is carried in the workflow result, not in a table. On pay-as-you-go
+  plans the plan's LLM limit becomes a warning and the org's own cap the hard stop. The worker
+  holds the meter adapter (Stripe REST via the installed `httpx2`, no new SDK), because usage and
+  the gateway live there.
 - **Entitlements per model**: per seat, the purchased quantity is the seat limit (from the
   provider's webhook); limits otherwise come from the plan and operator overrides.
 

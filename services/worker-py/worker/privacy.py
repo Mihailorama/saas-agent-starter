@@ -691,6 +691,7 @@ class PrivacyActivities:
             "webhook_deliveries",
             "webhook_attempts",
             "subscriptions",
+            "usage_counters",
         )
 
         async def q(conn: Conn, _: str) -> dict[str, list[Doc]]:

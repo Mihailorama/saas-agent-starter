@@ -35,6 +35,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
     from worker.tracker import TrackerActivities, TrackerItem
+    from worker.usage import UsageActivities
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
 
 
@@ -156,27 +157,61 @@ RETENTION_SCHEDULE_ID = "privacy-retention"
 async def ensure_maintenance_schedule(
     client: Client, task_queue: str, schedule_id: str = MAINTENANCE_SCHEDULE_ID
 ) -> None:
-    await ensure_daily_schedule(client, WebhookMaintenanceWorkflow.run, task_queue, schedule_id)
+    await ensure_schedule(client, WebhookMaintenanceWorkflow.run, task_queue, schedule_id)
 
 
 async def ensure_retention_schedule(
     client: Client, task_queue: str, schedule_id: str = RETENTION_SCHEDULE_ID
 ) -> None:
-    await ensure_daily_schedule(client, PrivacyRetentionWorkflow.run, task_queue, schedule_id)
+    await ensure_schedule(client, PrivacyRetentionWorkflow.run, task_queue, schedule_id)
 
 
-async def ensure_daily_schedule(
-    client: Client, run: Any, task_queue: str, schedule_id: str
+async def ensure_schedule(
+    client: Client,
+    run: Any,
+    task_queue: str,
+    schedule_id: str,
+    every: timedelta = timedelta(days=1),
 ) -> None:
-    """Creates a daily schedule once; later worker starts leave it as it is (edit or pause it
-    in the Temporal UI). Settings are read by the activities at run time."""
+    """Creates a schedule (daily by default) once; later worker starts leave it as it is (edit
+    or pause it in the Temporal UI). Settings are read by the activities at run time."""
     schedule = Schedule(
         action=ScheduleActionStartWorkflow(run, id=schedule_id, task_queue=task_queue),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(days=1))]),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=every)]),
         policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
     )
     with contextlib.suppress(ScheduleAlreadyRunningError):
         await client.create_schedule(schedule_id, schedule)
+
+
+USAGE_SCHEDULE_ID = "billing-usage-report"
+
+
+async def ensure_usage_schedule(client: Client, task_queue: str) -> None:
+    await ensure_schedule(
+        client, UsageReportWorkflow.run, task_queue, USAGE_SCHEDULE_ID, timedelta(minutes=15)
+    )
+
+
+@workflow.defn(name="UsageReportWorkflow")
+class UsageReportWorkflow:
+    """Every 15 minutes (Temporal Schedule `billing-usage-report`): usage to the provider's
+    meters (worker/usage.py). The previous run's `until` is this run's start; a failed run is
+    covered by the next one (the provider deduplicates the overlap by identifier)."""
+
+    @workflow.run
+    async def run(self) -> dict[str, Any]:
+        last: dict[str, Any] = (
+            workflow.get_last_completion_result(dict[str, Any]) or {}
+            if workflow.has_last_completion_result()
+            else {}
+        )
+        return await workflow.execute_activity_method(
+            UsageActivities.report_usage,
+            last.get("until"),
+            start_to_close_timeout=timedelta(minutes=14),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
 
 
 @workflow.defn(name="SendEmailWorkflow")

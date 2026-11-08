@@ -3,6 +3,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import { and, eq } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { auth } from './auth.ts';
+import { countApiCall } from './billing/usage.ts';
 import { db } from './db.ts';
 import { flushEvents } from './events.ts';
 import { ORG_SUSPENDED, READ_ONLY } from './operator-guard.ts';
@@ -130,6 +131,7 @@ export const requireScope = (scope: Scope) => {
       rank: RANK[SCOPES[scope]]!,
       twoFactor: false,
     };
+    await countApiCall(key.referenceId, key.id, req.log);
   };
 };
 

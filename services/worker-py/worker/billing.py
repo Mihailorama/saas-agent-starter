@@ -27,6 +27,8 @@ from opentelemetry import metrics
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from worker.flags import is_enabled
+
 log = logging.getLogger(__name__)
 meter = metrics.get_meter("worker.billing")
 # Labelled by plan and cost currency only, never by org (AGENTS.md "Observability").
@@ -147,6 +149,13 @@ class Budget:
     plan_id: str
     spent: Decimal
     limit: Decimal | None
+    # Pay as you go (a metered LLM price, docs/billing.md "Usage-based"): the plan's limit is
+    # only a warning; `own` is the org's own raised cap, the one hard stop.
+    payg: bool = False
+    own: Decimal | None = None
+
+
+LLM_METERS = frozenset({"llm_cost_micros", "llm_tokens"})
 
 
 class SpendLimitExceeded(ApplicationError):
@@ -162,8 +171,8 @@ class UsageLimitExceeded(SpendLimitExceeded):
 
 
 _SUBSCRIPTION = (
-    "select plan_id, status, current_period_start, current_period_end, llm_spend_limits"
-    " from subscriptions"
+    "select plan_id, status, currency, current_period_start, current_period_end,"
+    " llm_spend_limits from subscriptions"
 )
 
 
@@ -208,9 +217,12 @@ async def llm_budget(
     )
     limit = plan.llm_spend_monthly.get(currency)
     raised: dict[str, Any] = json.loads(sub["llm_spend_limits"] or "{}") if sub else {}
+    own = None
     if plan.llm_limit_raise and currency in raised and currency in plan.llm_spend_max:
-        limit = min(Decimal(str(raised[currency])), plan.llm_spend_max[currency])
-    return Budget(plan_id, spent, limit)
+        limit = own = min(Decimal(str(raised[currency])), plan.llm_spend_max[currency])
+    prices = plan.prices.get(sub["currency"], []) if sub and plans.paid(sub, now) else []
+    payg = any(p.model == "metered" and p.meter in LLM_METERS for p in prices)
+    return Budget(plan_id, spent, limit, payg, own)
 
 
 async def check_llm_budget(pool: asyncpg.Pool, plans: Plans, org_id: str, currency: str) -> None:
@@ -227,7 +239,13 @@ async def check_llm_budget(pool: asyncpg.Pool, plans: Plans, org_id: str, curren
     labels = {"plan": budget.plan_id, "currency": currency}
     ratio = budget.spent / budget.limit if budget.limit > 0 else Decimal(1)
     spend_ratio.record(float(ratio), labels)
-    if budget.spent >= budget.limit:
+    hard: Decimal | None = budget.limit
+    if budget.payg and await is_enabled("billing-usage", user_id=org_id, org_id=org_id):
+        hard = budget.own  # usage is billed: stop only at the org's own cap
+        if budget.spent >= budget.limit and (hard is None or budget.spent < hard):
+            log.warning("org %s: LLM spend over the plan's limit (pay as you go)", org_id)
+            return
+    if hard is not None and budget.spent >= hard:
         blocked_calls.add(1, labels)
         log.warning("org %s: LLM spend limit reached, call refused", org_id)
         raise SpendLimitExceeded(
