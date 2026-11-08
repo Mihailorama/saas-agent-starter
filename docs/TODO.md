@@ -1,5 +1,17 @@
 # Known limitations / backlog
 
+- **MCP: OAuth 2.1 sign-in for hosted connectors** (docs/mcp.md, ADR 0027). `/mcp` accepts only
+  organization API keys as a bearer header; ChatGPT connectors and claude.ai custom connectors
+  expect OAuth 2.1 (RFC 9728 protected resource metadata, PKCE, client registration). Better Auth
+  can cover it: `@better-auth/mcp` (MIT, same 1.7.x line as `better-auth`) turns the app into an
+  OAuth 2.1 authorization server and protected resource on top of `@better-auth/oauth-provider`
+  (the old `oidc-provider` plugin is no longer in `better-auth` 1.7). To do: login/consent pages,
+  choose the organization at consent (OAuth tokens are per user, keys per org), map OAuth scopes
+  to `SCOPES` in tenant.ts, accept those tokens in `verifiedKey()` next to keys, and check
+  `pnpm check:licenses`. Its README recommends `legacy: 'reject'` (2026-07-28 clients only):
+  decide that against the clients customers use.
+- **Agent protocols A2A, AP2 and UCP are not supported** (agent-to-agent, agent payments, agent
+  commerce). Revisit when a customer needs one; MCP (docs/mcp.md) covers tool use.
 - **Operator console: no Chatwoot link per user/organization** (docs/admin.md). The integration
   stores none (ADR 0013). If support wants one: read the contact by `identifier` (user id) through
   the Chatwoot API in the worker or API and link `/app/accounts/<id>/contacts/<contact id>`; verify
