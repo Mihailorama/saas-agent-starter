@@ -226,6 +226,8 @@ Details: [docs/feature-flags.md](docs/feature-flags.md), [docs/releases.md](docs
   sends `email_verified: true`.
 - **SAML** or per-organization IdPs: add Better Auth's `@better-auth/sso` plugin to
   `apps/api/src/auth.ts`, regenerate the auth schema and run `pnpm db:generate`.
+- Sign-up protection: disposable email domains are refused at sign-up, SSO and invitations
+  (`SIGNUP_BLOCK_DISPOSABLE`, allow/deny lists): [docs/security.md](docs/security.md).
 - Need a standalone IdP instead (user federation, admin console)? Run Keycloak and connect it
   over OIDC as above. See `docs/adr/0003-auth.md`.
 

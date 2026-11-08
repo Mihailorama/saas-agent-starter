@@ -11,6 +11,7 @@ import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
 import { mfaGuard } from './mfa.ts';
 import { operatorGuard } from './operator-guard.ts';
+import { assertAllowedEmail } from './signup-guard.ts';
 import { type CrmEvent, startCrmSync, startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
@@ -67,13 +68,17 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
   // vouches for): an unverified sign-up must not claim a CRM person who has that email.
+  // Disposable addresses (signup-guard.ts) are refused on every user write: email sign-up, SSO,
+  // operator-created users and an email change. Invitations are checked in organizationHooks.
   databaseHooks: {
     user: {
       create: {
+        before: async (user) => assertAllowedEmail(user.email),
         after: async (user) => {
           if (user.emailVerified) await personSync(user.id);
         },
       },
+      update: { before: async (user) => assertAllowedEmail(user.email) },
     },
   },
   emailAndPassword: {
@@ -98,6 +103,7 @@ export const auth = betterAuth({
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
       organizationHooks: {
+        beforeCreateInvitation: async ({ invitation }) => assertAllowedEmail(invitation.email),
         afterCreateOrganization: ({ organization, user }) =>
           crmSync({
             kind: 'org.created',

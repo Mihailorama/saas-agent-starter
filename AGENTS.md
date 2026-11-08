@@ -44,6 +44,7 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP), passkey and API key plugins
+  src/signup-guard.ts disposable / allow / deny email domains on every address write (docs/security.md)
   src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
   src/tenant.ts       requireRole() / access(scope) + withTenant(): RBAC, org 2FA policy, API key
                       scopes, RLS transaction, audit log, webhook events started after commit
@@ -137,6 +138,7 @@ docs/privacy.md     data map, export/deletion flows, per-tool support matrix, re
 docs/mcp.md         external MCP tools: connect a server, the reference server, the tool loop
 docs/secrets.md     secrets vault: Vaultwarden install or Bitwarden connect, agent rules, vault -> SOPS
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
+docs/security.md    sign-up protection (disposable email), bot-check follow-up
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
@@ -538,6 +540,9 @@ Details: docs/secrets.md, ADR 0029.
 - Never log secrets, tokens, cookies or request bodies; the logger redacts common paths
   and drops query strings.
 - Validate all input with Zod/dataclasses; never build SQL with string concatenation.
+- Every place an email address enters (sign-up, SSO, email change, invitations, any new auth
+  plugin) goes through `assertAllowedEmail` (`apps/api/src/signup-guard.ts`, disposable list from
+  `mailchecker`); never add an own domain list or a runtime download (docs/security.md).
 - New dependencies must pass `pnpm check:licenses` (allowlist in `scripts/license-check.mjs` and
   `deny.toml`): permissive licenses plus MPL-2.0 (file-level copyleft, no obligations on our
   code while unmodified). GPL/LGPL/AGPL/EUPL/SSPL/BUSL and other copyleft or source-available

@@ -283,6 +283,9 @@ Notes:
   its LICENSE file and accepted as `MIT` through a reviewed-package entry pinned to that exact
   version (`REVIEWED` in `scripts/license-check.mjs`, owner approval 2026-11-07, ADR 0005); any
   other version fails the gate again until reviewed.
+- Sign-up protection (docs/security.md): `mailchecker` (MIT) bundles its disposable-domain list
+  inside the package's JS file; the list is part of the MIT-licensed package, not a separate
+  data file, and updates only with the dependency version.
 - License gate tooling (dev group of the worker, not in the image): `license-expression`
   (Apache-2.0, parses the SPDX expressions) with `boolean.py` (BSD-2-Clause). Its wheel also
   carries the ScanCode LicenseDB index (`license_expression/data/scancode-licensedb-index.json`),
