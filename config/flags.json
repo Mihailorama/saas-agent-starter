@@ -13,6 +13,12 @@
       "default": false,
       "expires": "2027-03-31"
     },
+    "csat-survey": {
+      "description": "CSAT popover (1-5) after a user creates a project; survey `csat-project` in config/journeys.json, linked to this flag in PostHog.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "mcp-tools": {
       "description": "Settings page where organization admins connect external MCP servers whose allowed tools AI features may call.",
       "owner": "@mihailorama",
@@ -21,6 +27,12 @@
     },
     "mcp-server": {
       "description": "MCP endpoint (/mcp) where customers' AI agents use the product with an organization API key.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "nps-survey": {
+      "description": "NPS popover (0-10) on project pages for users active for 14+ days, re-asked every 90 days; survey `nps` in config/journeys.json, linked to this flag in PostHog.",
       "owner": "@mihailorama",
       "default": false,
       "expires": "2027-05-31"
