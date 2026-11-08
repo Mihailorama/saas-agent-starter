@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto';
-import { aiCalls, auditLog, projects, withOrg } from '@app/db';
+import { aiCalls, auditLog, projects, verification, withOrg } from '@app/db';
 import {
   CreateBucketCommand,
   HeadBucketCommand,
@@ -184,15 +184,17 @@ describe('sign-in with an e-mail code', () => {
     expect(locked.statusCode).toBe(403);
     expect(locked.json()).toMatchObject({ code: 'TOO_MANY_ATTEMPTS' });
 
-    // Expired: the code really ages. Only this process's clock moves (the API runs in it); an
-    // expired row in the shared database would be swept by another test file's sign-in first.
+    // Expired. Better Auth sweeps expired verification rows on every lookup, from any test file
+    // running in parallel, so the answer is OTP_EXPIRED or, once swept, INVALID_OTP: both refuse.
+    // (A faked clock here would sweep the other files' fresh codes from the shared database.)
     otp = await newCode(email);
-    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6 * 60_000 });
-    try {
-      expect((await enter(email, otp)).json()).toMatchObject({ code: 'OTP_EXPIRED' });
-    } finally {
-      vi.useRealTimers();
-    }
+    await db
+      .update(verification)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(verification.identifier, `sign-in-otp-${email}`));
+    const expired = await enter(email, otp);
+    expect(expired.statusCode).toBe(400);
+    expect(['OTP_EXPIRED', 'INVALID_OTP']).toContain(expired.json().code);
   });
 
   it('mails one code per address per 30 s (resend cooldown)', async () => {
