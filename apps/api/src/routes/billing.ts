@@ -165,7 +165,13 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
             if (limit === undefined) return [];
             const s = spent[cur] ?? 0;
             // Pay as you go: the org's own cap, else the plan's llmSpendMax (as in the worker).
-            const cap = payg ? (e.llmSpendCap(cur) ?? e.plan.llmSpendMax[cur]) : limit;
+            // Calls priced in another currency cannot be billed on the meter: refused (worker).
+            const billable = cur === sub?.currency;
+            const cap = !payg
+              ? limit
+              : billable
+                ? (e.llmSpendCap(cur) ?? e.plan.llmSpendMax[cur])
+                : 0;
             const level =
               cap !== undefined && s >= cap
                 ? 'blocked'

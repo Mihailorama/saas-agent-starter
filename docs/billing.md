@@ -83,11 +83,18 @@ organization in the API and the worker alike:
   moves after every hour; a retry or re-run resends the same identifiers, which Stripe drops for
   24 hours (`duplicate_meter_event`). Meters of the plan in effect during that hour:
   - `llm_cost_micros`: the hour's successful `ai_calls` cost in the subscription's currency, in
-    millionths, rounded once. Cost in another currency is not put on the meter (a warning in the
-    log): price your models in the currency you bill, or bill each currency on its own plan;
+    millionths, rounded once. Calls priced in another currency are refused on such a plan (they
+    could not be billed): price your models in the currency you bill;
   - `llm_tokens`: the hour's `total_tokens` (calls through an org's own provider excluded);
   - `api_calls`: the hour's API-key requests (`usage_counters`, counted by `requireScope`;
     sessions do not count).
+
+  The plan is the subscription's current one: when a metered price is attached (a new
+  subscription, a re-subscription, an upgrade from a plan without one) the webhook sets the mark
+  to that moment, so earlier usage is never reported (in that first partial hour only AI usage
+  after the moment counts; its API calls are not billed). A change between two metered plans
+  keeps the mark: the not yet reported window (at most the 5-minute settle time plus the 15-minute
+  schedule) is billed at the new plan.
 
   Stripe takes events up to 35 days old: older hours are skipped with a warning instead of
   blocking the org, and one run catches up at most 72 hours per org. Worker env:
@@ -95,7 +102,8 @@ organization in the API and the worker alike:
 - **Spend limit**: on a plan with a metered LLM price (`llm_cost_micros` or `llm_tokens`) the
   plan's `llmSpendMonthly` only warns (worker log, "warning" on the billing page) because the
   usage is billed. Calls stop at the organization's own cap (the raised limit an admin or
-  operator set) or, without one, at the plan's `llmSpendMax`. Flat and other plans: as before.
+  operator set) or, without one, at the plan's `llmSpendMax`, both in the subscription's currency;
+  calls priced in any other currency are refused (above). Flat and other plans: as before.
 
 ### Hybrid (base + overage)
 
