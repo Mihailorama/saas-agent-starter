@@ -24,6 +24,9 @@ export const user = pgTable('user', {
   banned: boolean('banned').default(false),
   banReason: text('ban_reason'),
   banExpires: timestamp('ban_expires'),
+  /** Referral the user signed up with (docs/growth.md): an org's referral code, or Dub's click id
+   * with DUB_API_KEY. Read once when they create an organization. */
+  referralCode: text('referral_code'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -86,6 +89,10 @@ export const organization = pgTable('organization', {
   suspendReason: text('suspend_reason'),
   /** Operator overrides of plan limits, capped by the plan's `limitsMax` (config/plans.json). */
   limitOverrides: jsonb('limit_overrides').$type<{ seats?: number; projects?: number }>(),
+  /** This org's own referral code (`?ref=`), created with its first referral link. */
+  referralCode: text('referral_code').unique(),
+  /** Org that referred this one (docs/growth.md), or `dub` when Dub Partners attributed it. */
+  referredBy: text('referred_by'),
 });
 
 export const member = pgTable('member', {

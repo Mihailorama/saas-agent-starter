@@ -150,3 +150,48 @@ async def test_llm_spend_bonus_counts_until_it_expires(pool: asyncpg.Pool) -> No
             )
         b = await llm_budget(conn, PLANS, org_id, "USD", datetime.now(UTC))
     assert b.limit == Decimal(1) + Decimal(2)  # free plan's limit + the unexpired reward
+
+
+async def test_referral_fraud_guards(pool: asyncpg.Pool) -> None:
+    async def org(domain: str, customer: str | None = None) -> str:
+        org_id = await new_org(pool)
+        await new_user(pool, org_id, email=f"{uuid.uuid4()}@{domain}")
+        if customer:
+            async with pool.acquire() as conn, conn.transaction():
+                await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+                await conn.execute(
+                    "insert into subscriptions (org_id, plan_id, status, contour, provider,"
+                    " currency, customer_id)"
+                    " values ($1, 'pro', 'active', 'en', 'stripe', 'USD', $2)",
+                    org_id,
+                    customer,
+                )
+        return org_id
+
+    async def referral(referrer: str, referred: str, block: bool = True) -> str:
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(Api().handle))
+        acts = RewardActivities(pool, RULES, http, "", "", block_same_domain=block)
+        queue = f"test-{uuid.uuid4()}"
+        client = await Client.connect(
+            settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE
+        )
+        async with Worker(
+            client,
+            task_queue=queue,
+            workflows=[RewardWorkflow],
+            activities=[acts.eligible, acts.apply, acts.record],
+        ):
+            return await client.execute_workflow(
+                RewardWorkflow.run,
+                RewardRequest(referrer, "referral", referred, f"org:{referred}"),
+                id=f"reward-{referrer}-referral-{referred}-{uuid.uuid4()}",
+                task_queue=queue,
+            )
+
+    a = await org("a.example.com", "cus_same")
+    assert await referral(a, a) == "not eligible"  # self-referral
+    assert await referral(a, await org("b.example.com", "cus_same")) == "not eligible"  # customer
+    same_domain = await org("a.example.com", "cus_other")
+    assert await referral(a, same_domain) == "not eligible"
+    assert await referral(a, await org("a.example.com"), block=False) == "manual"  # no API link
+    assert await referral(a, await org("c.example.com", "cus_c")) == "manual"

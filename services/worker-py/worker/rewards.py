@@ -50,6 +50,36 @@ def load_rules(path: Path) -> dict[str, dict[str, Any]]:
     return {r["id"]: r for r in json.loads(path.read_text())["rules"]}
 
 
+def same_domain_blocked(path: Path) -> bool:
+    """config/rewards.json `referral.blockSameEmailDomain`."""
+    return bool(json.loads(path.read_text()).get("referral", {}).get("blockSameEmailDomain"))
+
+
+async def _referral_ok(conn: Any, referrer: str, referred: str, block_domain: bool) -> bool:
+    """Fraud guards for referral.converted: not the org itself, not the same provider customer,
+    and (configurable) no owner email domain shared by both orgs."""
+    if referrer == referred:
+        return False
+    customers: list[str | None] = []
+    for org in (referrer, referred):  # each subscription row under its own org's RLS scope
+        await conn.execute("select set_config('app.org_id', $1, true)", org)
+        customers.append(await conn.fetchval("select customer_id from subscriptions"))
+    await conn.execute("select set_config('app.org_id', $1, true)", referrer)
+    if customers[0] is not None and customers[0] == customers[1]:
+        return False
+    # ponytail: blocks two gmail.com owners too; add a public-domain list if that matters.
+    return not (
+        block_domain
+        and await conn.fetchval(
+            'select 1 from member m join "user" u on u.id = m.user_id'
+            " where m.organization_id = any($1::text[]) and m.role like '%owner%'"
+            " group by lower(split_part(u.email, '@', 2))"
+            " having count(distinct m.organization_id) > 1 limit 1",
+            [referrer, referred],
+        )
+    )
+
+
 class RewardActivities:
     def __init__(
         self,
@@ -58,8 +88,10 @@ class RewardActivities:
         http: httpx2.AsyncClient,
         api_url: str,
         api_token: str,
+        block_same_domain: bool = False,
     ) -> None:
         self.pool, self.rules, self.http = pool, rules, http
+        self.block_same_domain = block_same_domain
         self.api_url, self.api_token = api_url.rstrip("/"), api_token
 
     @activity.defn(name="reward_eligible")
@@ -90,6 +122,8 @@ class RewardActivities:
                         r.userId,
                     )
                 )
+            if ok and rule["trigger"] == "referral.converted":
+                ok = await _referral_ok(conn, r.orgId, r.subject, self.block_same_domain)
             if ok and rule["trigger"] == "org.profile_completed":
                 assert org is not None
                 parsed: Any = json.loads(org["metadata"] or "{}")

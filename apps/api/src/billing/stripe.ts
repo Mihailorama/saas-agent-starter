@@ -66,8 +66,18 @@ export function stripeProvider(opts: {
 
     async checkout(input) {
       if (!input.price.providerPriceId) throw new Error(`no Stripe price id for ${input.planId}`);
-      const metadata = { orgId: input.orgId, planId: input.planId };
+      const metadata = {
+        orgId: input.orgId,
+        planId: input.planId,
+        ...(input.referral && { referrerOrgId: input.referral.referrerOrgId }),
+      };
+      // The referrer's promotion code: Stripe applies it only to a first-time customer.
+      const promo = input.referral
+        ? (await stripe.promotionCodes.list({ code: input.referral.promotionCode, limit: 1 }))
+            .data[0]
+        : undefined;
       const session = await stripe.checkout.sessions.create({
+        ...(promo && { discounts: [{ promotion_code: promo.id }] }),
         mode: 'subscription',
         line_items: [{ price: input.price.providerPriceId, quantity: 1 }],
         client_reference_id: input.orgId,
@@ -156,6 +166,19 @@ export function stripeProvider(opts: {
       return s.id;
     },
 
+    async createPromotionCode(p) {
+      const promo = await stripe.promotionCodes.create(
+        {
+          promotion: { type: 'coupon', coupon: p.couponId },
+          code: p.code,
+          restrictions: { first_time_transaction: true },
+          metadata: { referrerOrgId: p.referrerOrgId },
+        },
+        { idempotencyKey: p.key },
+      );
+      return promo.id;
+    },
+
     async webhook(req) {
       const signature = req.headers['stripe-signature'];
       if (typeof signature !== 'string') throw new WebhookRejected('missing signature');
@@ -172,10 +195,33 @@ export function stripeProvider(opts: {
           return subscriptionEvent(e, e.data.object);
         case 'invoice.paid':
         case 'invoice.payment_failed': {
-          const orgId = e.data.object.parent?.subscription_details?.metadata?.orgId;
+          const invoice = e.data.object;
+          const meta = invoice.parent?.subscription_details?.metadata;
+          const orgId = meta?.orgId;
           if (!orgId) return [];
-          const type = e.type === 'invoice.paid' ? 'payment.succeeded' : 'payment.failed';
-          return [{ ...base(e, orgId), type }];
+          if (e.type === 'invoice.payment_failed')
+            return [{ ...base(e, orgId), type: 'payment.failed' }];
+          const paid = {
+            ...base(e, orgId),
+            amount: invoice.amount_paid,
+            currency: invoice.currency.toUpperCase(),
+            ...(invoice.id && { invoiceId: invoice.id }),
+          };
+          // A referral converts on a paid (non-zero) invoice; the reward counts it once per org.
+          const referrerOrgId = meta?.referrerOrgId;
+          return [
+            { ...paid, type: 'payment.succeeded' },
+            ...(referrerOrgId && invoice.amount_paid > 0
+              ? [
+                  {
+                    ...paid,
+                    eventId: `${e.id}:referral`,
+                    type: 'referral.converted' as const,
+                    referrerOrgId,
+                  },
+                ]
+              : []),
+          ];
         }
         default:
           return [];

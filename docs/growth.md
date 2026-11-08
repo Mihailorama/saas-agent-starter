@@ -40,7 +40,8 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
     metadata has every key of the rule's `requiredMetadata`, all non-empty. Code that writes
     organization metadata elsewhere (an onboarding flow) calls `triggerRewards('org.profile_completed',
     { orgId, subject: orgId, userId, metadata })` after its commit. Subject: the organization.
-  - `referral.converted`: reserved for referrals.
+  - `referral.converted`: a paid invoice of a referred organization (Referrals below). Subject: the
+    referred organization; the rewarded org is the referrer.
 - `reward`, one of:
   - `{ "kind": "balance_credit", "amount": "5.00", "currency": "USD" }`: money (two-decimal
     currencies);
@@ -87,6 +88,24 @@ A reward with no fallback that cannot be applied automatically is also `pending_
 silently dropped: operators see each pending grant in the console, apply it as a credit note or
 invoice line, and mark it applied (an `operator.reward.applied` audit row with the reference).
 A provider that cannot tell metered customers apart (no `usageBased()`) never gets credit grants.
+
+## Referrals
+
+Flag `referrals` (default off). Two ways, side by side; `DUB_API_KEY` picks:
+
+|               | Native (install, default)                                                                                                                                                                                                                                           | Dub Partners (connect)                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Setup         | a coupon in the provider; its id in `rewards.json` `referral.couponId`                                                                                                                                                                                              | `DUB_API_KEY` on the API; program, rewards and coupons configured in Dub                                                     |
+| Link          | `/settings/referrals`: `<app>/sign-in?ref=<code>`; the code is the org's provider promotion code (Stripe: `first_time_transaction`)                                                                                                                                 | `/settings/referrals`: the org's partner link (`POST /partners`, `tenantId` = org id)                                        |
+| Capture       | the sign-up page keeps `?ref=` (or Dub's `?dub_id=`) in session storage, no cookie, and sends it as the `referralCode` sign-up field (`user.referral_code`)                                                                                                         | same field: Dub's click id                                                                                                   |
+| Attribution   | the user's first organization gets `referred_by` = the referring org, once                                                                                                                                                                                          | `referred_by = 'dub'`, lead sent to Dub (`/track/lead`, customer = org id)                                                   |
+| Referred side | checkout applies the referrer's promotion code; the provider limits it to a first payment                                                                                                                                                                           | Dub's dual-sided coupon (on its side)                                                                                        |
+| Conversion    | `invoice.paid` (amount > 0) of a subscription checked out with a referral emits `referral.converted` (`audit_log` row `billing.referral.converted` via BillingEventWorkflow) and starts the referrer's `RewardWorkflow` (rule `referral`, needs flag `rewards` too) | each paid invoice goes to Dub (`/track/sale`); Dub pays partners. Do not also install Dub's Stripe app, or sales count twice |
+
+Fraud guards (native): no self-referral (a member of the referring org creating a new org), not
+the same provider customer, and with `referral.blockSameEmailDomain` no owner email domain shared by
+both orgs (it also blocks two owners on the same public mail domain). The reward rule's cap and the
+unique grant per referred org apply as for every rule.
 
 ## Add a rule
 

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { entitlements, llmSpend, requireEntitlement } from '../billing/entitlements.ts';
 import { contour, plans } from '../billing/plans.ts';
 import { ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
+import { checkoutReferral, onReferralEvent } from '../billing/referrals.ts';
 import { contourOfProvider, providerFor } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { env } from '../env.ts';
@@ -165,8 +166,10 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
       if (sub && (sub.status === 'active' || sub.status === 'past_due')) {
         throw httpError(409, 'already subscribed: change or cancel the current plan first');
       }
+      const referral = await checkoutReferral(req.tenant.orgId);
       const result = await viaProvider(req.log, () =>
         providerFor(contourId).checkout({
+          referral,
           orgId: req.tenant.orgId,
           planId: req.body.planId,
           planName: plan.name,
@@ -281,7 +284,10 @@ export const billingWebhookRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         throw err;
       }
-      for (const event of events) await startBillingEvent(event);
+      for (const event of events) {
+        await startBillingEvent(event);
+        await onReferralEvent(event); // referrer's reward, or the sale reported to Dub
+      }
       req.log.info(
         { provider: req.params.provider, events: events.map((e) => e.type) },
         'billing webhook',

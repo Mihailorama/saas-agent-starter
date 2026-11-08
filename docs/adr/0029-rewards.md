@@ -37,6 +37,12 @@ Free organizations have no provider customer. Usage: [docs/growth.md](../growth.
 - **`reward_grants` is append-only** like `ai_calls`: an operator's resolution is an audit row,
   not an update. `entitlements()` and the worker's LLM spend check read unexpired entitlement rows.
 
+- **Referrals**: native = the provider's promotion code per org (first-time customers only) and a
+  `referral.converted` billing event that starts the referrer's RewardWorkflow; connect = Dub
+  Partners with `DUB_API_KEY` only, plain fetch (no SDK). No self-hostable affiliate engine meets the
+  license and stack rules: Dub's partner and conversion code is its commercial `ee`, and its
+  self-hosting needs Tinybird, Upstash and Vercel.
+
 ## Alternatives
 
 - Stripe credit grants for everything: they apply only to metered prices with Meters, so they do

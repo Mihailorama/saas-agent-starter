@@ -46,7 +46,14 @@ const Rule = z
     message: 'requiredMetadata is set exactly on org.profile_completed rules',
   });
 export const RewardsConfig = z
-  .object({ version: z.number().int(), rules: z.array(Rule) })
+  .object({
+    version: z.number().int(),
+    rules: z.array(Rule),
+    /** Referrals (docs/growth.md): the referred customer's discount and a fraud guard. */
+    referral: z
+      .object({ couponId: z.string().min(1), blockSameEmailDomain: z.boolean() })
+      .optional(),
+  })
   .refine((c) => new Set(c.rules.map((r) => r.id)).size === c.rules.length, 'duplicate rule id');
 export type Reward = z.infer<typeof Reward>;
 export type Rule = z.infer<typeof Rule>;

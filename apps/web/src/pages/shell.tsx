@@ -18,6 +18,7 @@ import {
   CreditCard,
   Eye,
   FolderKanban,
+  Gift,
   KeyRound,
   LifeBuoy,
   Lightbulb,
@@ -330,6 +331,7 @@ export function Shell() {
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const byoProviders = useFlag('byo-llm-providers');
+  const referrals = useFlag('referrals');
   // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
   const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
 
@@ -391,6 +393,9 @@ export function Shell() {
             label: 'Settings',
             items: [
               { label: 'Members', icon: Users, to: '/settings/members' as const },
+              ...(referrals
+                ? [{ label: 'Referrals', icon: Gift, to: '/settings/referrals' as const }]
+                : []),
               { label: 'API keys', icon: KeyRound, to: '/settings/api-keys' as const },
               { label: 'Webhooks', icon: Webhook, to: '/settings/webhooks' as const },
               ...(byoProviders

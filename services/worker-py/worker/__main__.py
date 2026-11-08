@@ -31,7 +31,7 @@ from worker.mail import send_email
 from worker.posthog import PostHogAi
 from worker.privacy import PrivacyActivities, configured_tools
 from worker.providers import load_providers, providers_from_config
-from worker.rewards import RewardActivities, load_rules
+from worker.rewards import RewardActivities, load_rules, same_domain_blocked
 from worker.s3 import S3
 from worker.support import Chatwoot, SupportActivities
 from worker.text import backend
@@ -210,6 +210,7 @@ async def main() -> None:
         http,
         settings.API_INTERNAL_URL,
         settings.INTERNAL_API_TOKEN,
+        same_domain_blocked(settings.REWARDS_FILE),
     )
     if chatwoot and triage_model and ai:
         await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio

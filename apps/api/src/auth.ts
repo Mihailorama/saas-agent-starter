@@ -6,6 +6,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { admin, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
+import { attachReferral, cleanReferral } from './billing/referrals.ts';
 import { triggerRewards } from './billing/rewards.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
@@ -68,9 +69,14 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
   // vouches for): an unverified sign-up must not claim a CRM person who has that email.
+  // Referral the sign-up came with (docs/growth.md); only a well-formed code is stored.
+  user: { additionalFields: { referralCode: { type: 'string', required: false, input: true } } },
   databaseHooks: {
     user: {
       create: {
+        before: async (user) => ({
+          data: { ...user, referralCode: cleanReferral(user.referralCode) },
+        }),
         after: async (user) => {
           if (user.emailVerified) await personSync(user.id);
         },
@@ -99,13 +105,15 @@ export const auth = betterAuth({
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
       organizationHooks: {
-        afterCreateOrganization: ({ organization, user }) =>
-          crmSync({
+        afterCreateOrganization: async ({ organization, user }) => {
+          await attachReferral(organization.id, user.id);
+          await crmSync({
             kind: 'org.created',
             eventId: `org:${organization.id}`,
             orgId: organization.id,
             userId: user.id,
-          }),
+          });
+        },
         // Rewards (docs/growth.md): both run after Better Auth committed the change. The worker
         // re-checks the conditions (verified, still a member after holdDays; profile complete).
         afterAcceptInvitation: async ({ member, user, organization }) => {

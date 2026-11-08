@@ -64,6 +64,13 @@
       "when": 1794142025448,
       "tag": "0009_reward_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794144559759,
+      "tag": "0010_referrals",
+      "breakpoints": true
     }
   ]
 }

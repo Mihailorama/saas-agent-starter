@@ -1,5 +1,5 @@
 {
-  "$comment": "Rewards as code (docs/growth.md). Read by the API (triggers, provider dispatch) and the worker (conditions, caps, grants). A rule: `id` (stable, part of the workflow id and of reward_grants), `trigger` (a server-side event: org.profile_completed, invitation.accepted, referral.converted; never a client analytics event), `reward` ({kind: balance_credit, amount, currency} | {kind: coupon, couponId} | {kind: entitlement, key: seats|projects|llmSpendMonthly, delta, months}), optional `fallback` (an entitlement, used when the organization has no payment-provider customer to credit), `capPerOrg` (grants of this rule per organization, ever), `holdDays` (wait before granting; the conditions are checked after it) and, for org.profile_completed, `requiredMetadata` (organization metadata keys that must all be non-empty). Money and coupon rewards go through the billing provider (docs/billing.md); without a provider or with a manual contract they are recorded as pending_manual for operators.",
+  "$comment": "Rewards as code (docs/growth.md). Read by the API (triggers, provider dispatch) and the worker (conditions, caps, grants). A rule: `id` (stable, part of the workflow id and of reward_grants), `trigger` (a server-side event: org.profile_completed, invitation.accepted, referral.converted; never a client analytics event), `reward` ({kind: balance_credit, amount, currency} | {kind: coupon, couponId} | {kind: entitlement, key: seats|projects|llmSpendMonthly, delta, months}), optional `fallback` (an entitlement, used when the organization has no payment-provider customer to credit), `capPerOrg` (grants of this rule per organization, ever), `holdDays` (wait before granting; the conditions are checked after it) and, for org.profile_completed, `requiredMetadata` (organization metadata keys that must all be non-empty). `referral` (docs/growth.md, Referrals): `couponId` is the provider coupon behind each org's promotion code (the referred customer's discount on its first payment); `blockSameEmailDomain` refuses a referral reward when an owner of the referring and of the referred org share an email domain. Money and coupon rewards go through the billing provider (docs/billing.md); without a provider or with a manual contract they are recorded as pending_manual for operators.",
   "version": 1,
   "rules": [
     {
@@ -17,6 +17,18 @@
       "reward": { "kind": "entitlement", "key": "projects", "delta": 2, "months": 12 },
       "capPerOrg": 1,
       "holdDays": 0
+    },
+    {
+      "id": "referral",
+      "trigger": "referral.converted",
+      "reward": { "kind": "balance_credit", "amount": "20.00", "currency": "USD" },
+      "fallback": { "kind": "entitlement", "key": "llmSpendMonthly", "delta": 5, "months": 3 },
+      "capPerOrg": 20,
+      "holdDays": 0
     }
-  ]
+  ],
+  "referral": {
+    "couponId": "co_example_referral",
+    "blockSameEmailDomain": true
+  }
 }

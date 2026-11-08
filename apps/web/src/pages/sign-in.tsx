@@ -68,12 +68,26 @@ const copy: Record<Mode, { title: string; description: string; submit: string }>
   },
 };
 
+/** Referral the visitor arrived with (`?ref=<code>`, or Dub's `?dub_id=`; docs/growth.md), kept
+ * for this tab only (no cookie) and sent with the sign-up. */
+function referral() {
+  const params = new URLSearchParams(window.location.search);
+  const value = params.get('ref') ?? params.get('dub_id');
+  try {
+    if (value) sessionStorage.setItem('referral', value);
+    return sessionStorage.getItem('referral') ?? undefined;
+  } catch {
+    return value ?? undefined;
+  }
+}
+
 export function SignInPage() {
   const navigate = useNavigate();
   const { redirect } = useSearch({ from: '/sign-in' });
   const [mode, setMode] = useState<Mode>('sign-in');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [ref] = useState(referral);
   const { data: config } = useQuery({
     queryKey: ['auth-config'],
     queryFn: () => ok(client.GET('/api/auth-config')),
@@ -124,6 +138,7 @@ export function SignInPage() {
         password,
         name: String(form.get('name')),
         callbackURL: redirect ?? '/', // where the emailed confirmation link lands
+        referralCode: ref,
       });
       setPending(false);
       if (error) return toast.error(error.message ?? 'Something went wrong');

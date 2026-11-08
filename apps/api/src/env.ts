@@ -108,6 +108,10 @@ const schema = z
     /** Shared with the worker: it asks /internal/rewards to apply money rewards through the
      * billing provider (docs/growth.md). Empty = route off; such rewards wait for operators. */
     INTERNAL_API_TOKEN: z.string().optional(),
+    /** Connect Dub Partners instead of Stripe-native referrals (docs/growth.md); empty = native. */
+    DUB_API_KEY: z.string().optional(),
+    /** Only for tests; empty = https://api.dub.co. */
+    DUB_API_URL: z.union([z.url(), z.literal('')]).optional(),
     // Service desk (docs/support.md). Every secret empty = that endpoint is off (401/404).
     /** Secret of the Chatwoot account webhook (Settings -> Integrations -> Webhooks). */
     CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
