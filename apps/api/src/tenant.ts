@@ -89,6 +89,27 @@ export const requireRole =
     req.tenant = { userId: session.user.id, orgId, rank, twoFactor };
   };
 
+/** The request's bearer API key, verified and of an active org; otherwise answers 401/403. */
+export async function verifiedKey(req: FastifyRequest, reply: FastifyReply) {
+  const token = bearerToken(req);
+  const { valid, key } = token
+    ? await auth.api.verifyApiKey({ body: { key: token } })
+    : { valid: false, key: null };
+  if (!valid || !key) {
+    await reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'invalid API key' });
+    return;
+  }
+  const [org] = await db
+    .select({ suspendedAt: organization.suspendedAt })
+    .from(organization)
+    .where(eq(organization.id, key.referenceId));
+  if (org?.suspendedAt) {
+    await reply.code(403).send({ error: ORG_SUSPENDED });
+    return;
+  }
+  return key;
+}
+
 /**
  * preHandler for a public API route: `Authorization: Bearer <API key>` with `scope`, or a
  * session whose role is at least SCOPES[scope]. A key acts in the organization that owns it.
@@ -96,15 +117,9 @@ export const requireRole =
 export const requireScope = (scope: Scope) => {
   const sessionCheck = requireRole(SCOPES[scope]);
   return async (req: FastifyRequest, reply: FastifyReply) => {
-    const token = bearerToken(req);
-    if (!token) return sessionCheck(req, reply);
-    const { valid, key } = await auth.api.verifyApiKey({ body: { key: token } });
-    if (!valid || !key) return reply.code(401).send({ error: 'invalid API key' });
-    const [org] = await db
-      .select({ suspendedAt: organization.suspendedAt })
-      .from(organization)
-      .where(eq(organization.id, key.referenceId));
-    if (org?.suspendedAt) return reply.code(403).send({ error: ORG_SUSPENDED });
+    if (!bearerToken(req)) return sessionCheck(req, reply);
+    const key = await verifiedKey(req, reply);
+    if (!key) return reply;
     const [resource = '', action = ''] = scope.split(':');
     if (!key.permissions?.[resource]?.includes(action)) {
       return reply.code(403).send({ error: `API key lacks scope ${scope}` });

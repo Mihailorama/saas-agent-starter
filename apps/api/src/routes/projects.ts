@@ -10,7 +10,7 @@ import { presignDownload, presignUpload } from '../s3.ts';
 import { startProjectCreated } from '../temporal.ts';
 import { access, httpError, withTenant } from '../tenant.ts';
 
-const Project = z.object({
+export const Project = z.object({
   id: z.uuid(),
   name: z.string(),
   description: z.string().nullable(),
@@ -24,7 +24,7 @@ const Project = z.object({
   reviewedAt: z.string().nullable(),
   createdAt: z.string(),
 });
-const ProjectInput = z.object({
+export const ProjectInput = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).optional(),
 });
@@ -45,7 +45,7 @@ const AttachmentInput = z.object({
     .positive()
     .max(10 * 1024 * 1024),
 });
-const Id = z.object({ id: z.uuid() });
+export const Id = z.object({ id: z.uuid() });
 const ErrorBody = z.object({ error: z.string() });
 
 const toDto = <T extends { createdAt: Date }>({ createdAt, ...rest }: T) => ({

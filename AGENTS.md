@@ -57,7 +57,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       support.ts = Chatwoot/Plane/GitHub hooks, crm.ts = booking hook (Cal.diy),
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md),
-                      mcp-servers.ts = the org's external MCP servers (docs/mcp.md)
+                      mcp-servers.ts = the org's external MCP servers (docs/mcp.md),
+                      mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md)
@@ -187,6 +188,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - External tools: remote MCP servers per organization through the official `mcp` SDK
   (Streamable HTTP, via LiteLLM's `mcp` extra), a bounded opt-in tool loop in the gateway; the
   `mcp` profile runs the reference `server-everything` for dev/tests (ADR 0028, docs/mcp.md).
+- MCP server: official TypeScript SDK v2 (`@modelcontextprotocol/server`, Apache-2.0), Streamable
+  HTTP at `/mcp`, stateless, organization API keys as bearer; tools wrap the REST routes (ADR 0027).
 - Web API types generated from the API's OpenAPI document (`openapi-typescript`), calls through
   `openapi-fetch`; no hand-written response types (`apps/web/src/lib/api.ts`).
 - Twenty (AGPL-3.0 + app exception, unmodified container, `crm` profile) for customer records;
@@ -238,6 +241,20 @@ without a default go into a later release's migration marked `-- contract: <reas
   `await publishEvent(req, tx, '<type>', dto)` inside the `withTenant` transaction of the change.
   Never start deliveries yourself. Payload changes follow the versioning rule in
   docs/public-api.md.
+
+## Recipe: expose a tool over MCP
+
+Details: docs/mcp.md, ADR 0027. A tool is a REST route that already accepts API keys
+(`access('<scope>')`); never put logic, queries or authorization in the tool itself.
+
+1. In `apps/api/src/routes/mcp.ts`, inside the `scopes.has('<scope>')` block of the route's scope,
+   `mcp.registerTool('<verb>_<noun>', { description, inputSchema, outputSchema, annotations },
+   (input) => rest(req, '<tool>', '<METHOD>', '<url>', input))`. Reuse the route's exported Zod
+   schemas (an array result is wrapped as `{ <noun>s: [...] }`, see `rest`); mark reads
+   `readOnlyHint: true`.
+2. Test in `apps/api/test/mcp.test.ts`: listed only with the scope, a call that works, and a
+   cross-org id that comes back "Not Found".
+3. Add the tool to the table in docs/mcp.md.
 
 ## Recipe: add a background workflow
 
