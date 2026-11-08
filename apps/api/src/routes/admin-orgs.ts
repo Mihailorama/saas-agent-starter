@@ -539,7 +539,10 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
     contractRef: z.string().trim().min(1).max(200),
     periodStart: z.iso.datetime(),
     periodEnd: z.iso.datetime(),
-  }).refine((b) => Date.parse(b.periodStart) < Date.parse(b.periodEnd), 'periodEnd before start');
+  })
+    .refine((b) => Date.parse(b.periodStart) < Date.parse(b.periodEnd), 'periodEnd before start')
+    // A period that already ended would never get its past_due timer (it runs before commit).
+    .refine((b) => Date.parse(b.periodEnd) > Date.now(), 'periodEnd must be in the future');
   app.put(
     '/orgs/:id/contract',
     {
