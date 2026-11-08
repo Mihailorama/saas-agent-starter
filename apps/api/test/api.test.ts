@@ -14,6 +14,7 @@ import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { exportCalls } from '../src/eval-pull.ts';
 import { ensureBucket, getJson } from '../src/s3.ts';
+import { DISPOSABLE_EMAIL } from '../src/signup-guard.ts';
 import {
   closeTemporal,
   projectWorkflowId,
@@ -244,6 +245,81 @@ describe('transactional email', () => {
     });
     expect(accepted.statusCode).toBe(200);
     expect(accepted.json().member).toMatchObject({ organizationId: org, role: 'member' });
+  });
+});
+
+describe('sign-up protection (disposable email)', () => {
+  const signUpRes = (email: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-up/email',
+      remoteAddress: ip(),
+      headers: { origin },
+      payload: { email, password, name: 'T' },
+    });
+  /** Runs `fn` with extra allow/deny domains, restoring the parsed env afterwards. */
+  async function withDomains(allow: string[], deny: string[], fn: () => Promise<void>) {
+    const saved = [env.SIGNUP_EMAIL_ALLOW_DOMAINS, env.SIGNUP_EMAIL_DENY_DOMAINS];
+    Object.assign(env, { SIGNUP_EMAIL_ALLOW_DOMAINS: allow, SIGNUP_EMAIL_DENY_DOMAINS: deny });
+    try {
+      await fn();
+    } finally {
+      [env.SIGNUP_EMAIL_ALLOW_DOMAINS, env.SIGNUP_EMAIL_DENY_DOMAINS] = saved as [
+        string[],
+        string[],
+      ];
+    }
+  }
+
+  it('refuses a disposable address at sign-up with a neutral 400, accepts a normal one', async () => {
+    for (const email of [`${randomUUID()}@mailinator.com`, `${randomUUID()}@Sub.YOPmail.com`]) {
+      const res = await signUpRes(email);
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'EMAIL_NOT_ALLOWED', message: DISPOSABLE_EMAIL });
+    }
+    expect((await signUpRes(`${randomUUID()}@example.com`)).statusCode).toBe(200);
+  });
+
+  it('honours the operator allow-list and deny-list', async () => {
+    await withDomains(['mailinator.com'], ['example.org'], async () => {
+      expect((await signUpRes(`${randomUUID()}@mailinator.com`)).statusCode).toBe(200);
+      expect((await signUpRes(`${randomUUID()}@team.example.org`)).statusCode).toBe(400);
+    });
+  });
+
+  it('refuses users created without the form (SSO, operator) and email changes', async () => {
+    // OIDC and admin sign-ups go through the same internal adapter and its database hook.
+    const { internalAdapter } = await auth.$context;
+    for (const method of ['oauth', 'admin'] as const) {
+      await expect(
+        internalAdapter.createUser(
+          { email: `${randomUUID()}@mailinator.com`, name: 'T' },
+          { method },
+        ),
+      ).rejects.toMatchObject({ statusCode: 400 });
+    }
+    const user = await signUp();
+    await expect(
+      internalAdapter.updateUser(user.id, { email: `${randomUUID()}@mailinator.com` }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    await expect(internalAdapter.updateUser(user.id, { name: 'Renamed' })).resolves.toBeTruthy();
+  });
+
+  it('refuses an invitation to a disposable address', async () => {
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    const invite = (email: string) =>
+      call(owner, 'POST', '/api/auth/organization/invite-member', {
+        email,
+        role: 'member',
+        organizationId: org,
+      });
+    const refused = await invite(`${randomUUID()}@mailinator.com`);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().message).toBe(DISPOSABLE_EMAIL);
+    await withDomains(['mailinator.com'], [], async () => {
+      expect((await invite(`${randomUUID()}@mailinator.com`)).statusCode).toBe(200);
+    });
   });
 });
 
