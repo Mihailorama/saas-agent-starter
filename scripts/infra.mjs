@@ -64,15 +64,18 @@ function choices(key, ca) {
     return rows.filter((r) => r.provider === ca.AI_PROJECT_SUMMARY_PROVIDER).map((r) => r.model);
 }
 
-/** A connect field; `@apiKey` becomes the chosen provider's key (and base URL) variables. */
-function expandField(f, ca) {
+/** A connect field; `@apiKey` becomes the chosen provider's <ID>_API_KEY (and <ID>_BASE_URL),
+ * the naming config/ai-models.json follows (scripts/infra.test.mjs checks it). */
+export function expandField(f, ca) {
   if (f.key !== '@apiKey') return [f];
-  const p = models.providers[ca.AI_PROJECT_SUMMARY_PROVIDER] ?? {};
+  const id = String(ca.AI_PROJECT_SUMMARY_PROVIDER ?? '');
+  const p = models.providers[id] ?? {};
+  const env = id.toUpperCase();
   return [
     ...(p.baseUrlEnv
-      ? [{ key: p.baseUrlEnv, prompt: 'Base URL of the endpoint', validate: '^https?://' }]
+      ? [{ key: `${env}_BASE_URL`, prompt: 'Base URL of the endpoint', validate: '^https?://' }]
       : []),
-    ...(p.apiKeyEnv ? [{ ...f, key: p.apiKeyEnv }] : []),
+    ...('apiKeyEnv' in p ? [{ ...f, key: `${env}_API_KEY` }] : []),
   ];
 }
 const fields = (c, ca) => (c.connect ?? []).flatMap((f) => expandField(f, ca ?? {}));

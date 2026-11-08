@@ -1,9 +1,10 @@
 // node --test 'scripts/*.test.mjs' (part of pnpm check:ts). `pnpm run infra` without a server:
 // catalog check, answers validation, env rendering, the plan (dry-run) and that no value leaks.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { checkComponents } from './check-components.mjs';
-import { catalog, plan, render, validateAnswers } from './infra.mjs';
+import { catalog, expandField, plan, render, validateAnswers } from './infra.mjs';
 
 const answers = () => ({
   env: 'production',
@@ -133,4 +134,15 @@ test('plan (dry run): key names only, no value, exact text', () => {
     Object.assign(console, orig);
   }
   assert.deepEqual(printed, []);
+});
+
+test('@apiKey follows the env names of config/ai-models.json', () => {
+  const { providers } = JSON.parse(
+    readFileSync(new URL('../config/ai-models.json', import.meta.url)),
+  );
+  const f = { key: '@apiKey', prompt: 'key', secret: true };
+  for (const [id, p] of Object.entries(providers)) {
+    const keys = expandField(f, { AI_PROJECT_SUMMARY_PROVIDER: id }).map((x) => x.key);
+    assert.deepEqual(keys, [p.baseUrlEnv, p.apiKeyEnv].filter(Boolean), id);
+  }
 });
