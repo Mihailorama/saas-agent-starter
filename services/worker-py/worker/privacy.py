@@ -31,6 +31,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from worker import settings
+from worker.crm import BOOKING_PREFIX
 from worker.mail import SendEmail
 from worker.s3 import S3, NotFound
 from worker.tracker import INBOX
@@ -429,6 +430,72 @@ class Ga4UserDeletion:
         return outcome("done", "GA4 deletes the client id's data in its own processing window")
 
 
+class TwentyCrm:
+    """Twenty CRM (docs/crm.md), the same REST API and key as the sync (worker/crm.py). A user is
+    the person with appUserId = user id; an organization is the company and the deal with
+    appOrgId = org id. Both come with the notes the sync wrote on them (appEventId set). Deletes
+    are Twenty's destroy, a hard delete: `DELETE /rest/<object>/<id>` without `soft_delete=true`
+    (twenty-server rest-api-core.service.ts, v2.56.1); its UI "Delete" is the soft one."""
+
+    name = "twenty"
+    subjects = frozenset({"user", "org"})
+
+    def __init__(self, url: str, token: str, http: httpx2.AsyncClient) -> None:
+        self.base = f"{url.rstrip('/')}/rest"
+        self.http, self.headers = http, {"authorization": f"Bearer {token}"}
+
+    async def _get(self, path: str, **params: str) -> Doc:
+        found = await call(
+            self.http, self.name, "GET", f"{self.base}{path}", params=params, headers=self.headers
+        )
+        return obj(obj(found).get("data"))
+
+    async def _list(self, plural: str, field: str, value: str) -> list[Doc]:
+        # ponytail: first 200 matches; a person or company has a handful of sync notes.
+        found = await self._get(f"/{plural}", filter=f'{field}[eq]:"{value}"', limit="200")
+        return objs(found.get(plural))
+
+    async def _records(self, s: Subject) -> dict[str, list[Doc]]:
+        if s.type == "user":
+            records = {"people": await self._list("people", "appUserId", s.id)}
+            targets = [("targetPersonId", p["id"]) for p in records["people"]]
+        else:
+            records = {
+                "companies": await self._list("companies", "appOrgId", s.id),
+                "opportunities": await self._list("opportunities", "appOrgId", s.id),
+            }
+            targets = [("targetCompanyId", c["id"]) for c in records["companies"]]
+        notes: dict[str, Doc] = {}
+        for key, target in targets:
+            for t in await self._list("noteTargets", key, target):
+                note = obj((await self._get(f"/notes/{t['noteId']}")).get("note"))
+                if note.get("appEventId"):  # written by the sync, not by a person in the CRM
+                    notes[note["id"]] = note
+        records["notes"] = list(notes.values())
+        return records
+
+    async def export(self, s: Subject) -> Doc:
+        return await self._records(s)
+
+    async def delete(self, s: Subject) -> Doc:
+        records = await self._records(s)
+        for plural in ("notes", "opportunities", "people", "companies"):
+            for r in records.get(plural, []):
+                await call(
+                    self.http,
+                    self.name,
+                    "DELETE",
+                    f"{self.base}/{plural}/{r['id']}",
+                    params={"soft_delete": "false"},
+                    headers=self.headers,
+                )
+        return outcome(
+            "done",
+            "destroyed (hard delete); notes people wrote in Twenty stay, without the link",
+            **{k: len(v) for k, v in records.items()},
+        )
+
+
 # Tools with no per-person export API: listed in the ZIP's README instead.
 NOT_EXPORTABLE = {
     "ga4": "GA4 has no API that returns one user's events (raw events only via a BigQuery export)",
@@ -462,6 +529,8 @@ def configured_tools(http: httpx2.AsyncClient) -> Tools:
                 s.CHATWOOT_URL, s.CHATWOOT_ACCOUNT_ID, s.CHATWOOT_ADMIN_API_TOKEN, http
             )
         )
+    if s.TWENTY_API_URL and s.TWENTY_API_KEY:
+        tools.append(TwentyCrm(s.TWENTY_API_URL, s.TWENTY_API_KEY, http))
     if s.GA4_PROPERTY_ID and s.GA4_SERVICE_ACCOUNT_JSON:
         tools.append(
             Ga4UserDeletion(s.GA4_PROPERTY_ID, json.loads(s.GA4_SERVICE_ACCOUNT_JSON), http)
@@ -506,10 +575,12 @@ class PrivacyActivities:
         tools: Tools,
         export_ttl_days: int = 7,
         org_records_days: int = 180,
+        booking_days: int = 7,
     ) -> None:
         self.pool, self.files, self.ai_content, self.tools = pool, files, ai_content, tools
         self.export_ttl = timedelta(days=export_ttl_days)
         self.org_records = timedelta(days=org_records_days)
+        self.booking_days = booking_days
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -972,6 +1043,17 @@ class PrivacyActivities:
             await self.files.delete(key)
         return len(old)
 
+    @activity.defn(name="privacy_purge_booking_payloads")
+    async def purge_booking_payloads(self) -> int:
+        """Deletes booking webhook payloads (attendee name and email, apps/api/src/routes/crm.ts)
+        older than BOOKING_PAYLOAD_DAYS. The CRM sync deletes each one after use; this catches
+        the ones whose sync failed for good. The key's day segment is the day it was written."""
+        cutoff = (datetime.now(UTC) - timedelta(days=self.booking_days)).date().isoformat()
+        old = [k for k in await self.files.list_keys(BOOKING_PREFIX) if k.split("/")[1] < cutoff]
+        for key in old:
+            await self.files.delete(key)
+        return len(old)
+
     @activity.defn(name="privacy_purge_deleted_orgs")
     async def purge_deleted_orgs(self) -> int:
         """Removes deleted organizations once their record period ended: the anonymised row and,
@@ -986,7 +1068,16 @@ class PrivacyActivities:
         return len(due)
 
 
-USER_STEPS = ("sessions", "posthog", "langfuse", "chatwoot", "ga4", "storage", "database")
-ORG_STEPS = ("access", "webhooks", "billing", "langfuse", "storage", "database")
+USER_STEPS = (
+    "sessions",
+    "posthog",
+    "langfuse",
+    "chatwoot",
+    "ga4",
+    "twenty",
+    "storage",
+    "database",
+)
+ORG_STEPS = ("access", "webhooks", "billing", "langfuse", "twenty", "storage", "database")
 # Our own steps retry until they succeed (or fail for good); a tool that keeps failing is reported.
 CORE_STEPS = frozenset({"sessions", "access", "webhooks", "billing", "storage", "database"})

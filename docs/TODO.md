@@ -202,6 +202,24 @@
   each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
   task queues this server does not poll) listing the networks you do not use; measure before and
   after in docs/STACK.md, and never exclude a network you post to.
+- **Data-subject rights do not reach Cal.diy's bookings** (2026-11-07; docs/privacy.md, docs/crm.md
+  "Privacy"). Attendee name, email and answers live in Cal.diy's database; its web container has
+  no API for them (API v2 is a separate server we do not run), so an operator deletes them in
+  Cal.diy's UI. Options: run Cal.diy's API v2 in the `booking` profile and add a privacy `Tool`
+  (bookings by attendee email: export, cancel + delete), or a reviewed SQL step against the
+  `caldiy` database (couples us to its Prisma schema; pin to the commit). Same gap for Cal.com
+  Cloud (its own deletion process).
+- **Cal.diy image build on every CI run** (`caldiy-image`, 20-40 minutes). Add a layer cache
+  (buildx + GHA cache) or run the job only when `infra/caldiy/` or the compose files change, if
+  the runner minutes matter.
+- **Twenty leftovers after a deletion** (docs/privacy.md "Twenty"): notes people wrote on the
+  person stay (unlinked) and Twenty's record history (timeline activities) was not checked on a
+  live Twenty; verify, and if it keeps the email, delete those entries through the REST API too.
+- **Permissive CRM twin.** `compose.permissive.yaml` only disables Twenty (AGPL); the sync then
+  dry-runs. Evaluate Krayin (MIT, Laravel) or Atomic CRM (MIT) behind the `Crm` protocol
+  (`services/worker-py/worker/crm.py`) if an AGPL-free delivery needs a CRM.
+- **Twenty attachments are not backed up** (`twenty-data` volume, `STORAGE_TYPE=local`,
+  docs/backups.md). Point Twenty at a bucket in `BACKUP_APP_BUCKETS` once attachments matter.
 - **Pages not yet on the UI patterns.** `ai-calls`, `api-keys`, `webhooks`, `security`,
   `billing`, `sign-in` and `two-factor` still use hand-written headers, native `<select>`,
   `<input type="checkbox">` and `<textarea>` and their own empty/error markup. They pass axe, but

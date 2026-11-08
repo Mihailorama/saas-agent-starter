@@ -24,6 +24,7 @@ from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import Byo, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
+from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
@@ -38,6 +39,7 @@ from worker.tracker import connect as tracker_connect
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
+    CrmSyncWorkflow,
     DataDeletionWorkflow,
     DataExportWorkflow,
     PrivacyRetentionWorkflow,
@@ -165,6 +167,7 @@ async def main() -> None:
         tools=privacy_tools,
         export_ttl_days=settings.PRIVACY_EXPORT_TTL_DAYS,
         org_records_days=settings.PRIVACY_ORG_RECORDS_DAYS,
+        booking_days=settings.BOOKING_PAYLOAD_DAYS,
     )
     chatwoot = (
         Chatwoot(
@@ -188,6 +191,17 @@ async def main() -> None:
         ai_org_id=settings.SUPPORT_AI_ORG_ID,
         notify=settings.SUPPORT_NOTIFY,
     )
+    crm = CrmActivities(
+        pool=pool,
+        crm=Twenty(settings.TWENTY_API_URL, settings.TWENTY_API_KEY, http)
+        if settings.TWENTY_API_URL and settings.TWENTY_API_KEY
+        else None,
+        config=load_config(settings.CRM_FILE),
+        plans=plans,
+        chatwoot=chatwoot,
+        files=files,
+        booking_url=settings.BOOKING_PUBLIC_URL,
+    )
     if chatwoot and triage_model and ai:
         await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio
     stop = asyncio.Event()
@@ -200,6 +214,7 @@ async def main() -> None:
         workflows=[
             ProjectCreatedWorkflow,
             BillingEventWorkflow,
+            CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
             TrackerItemWorkflow,
@@ -213,6 +228,7 @@ async def main() -> None:
             activities.fingerprint_project,
             activities.summarize_project,
             billing.apply_billing_event,
+            crm.sync,
             support.triage,
             support.issue_closed,
             tracker_items.file_item,
@@ -228,6 +244,7 @@ async def main() -> None:
             privacy.purge_exports,
             privacy.purge_deleted_orgs,
             privacy.purge_tracker_inbox,
+            privacy.purge_booking_payloads,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],
@@ -245,7 +262,7 @@ async def main() -> None:
     async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
-            " support: chatwoot %s, tracker %s, triage model %s, privacy tools: %s)",
+            " support: chatwoot %s, tracker %s, triage model %s, privacy tools: %s, crm %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
@@ -253,6 +270,7 @@ async def main() -> None:
             tracker.name,
             triage_model or "off",
             ",".join(t.name for t in privacy_tools.all) or "none",
+            crm.crm.name if crm.crm else "dry run",
         )
         await stop.wait()
         log.info("shutting down")

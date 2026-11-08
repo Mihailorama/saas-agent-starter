@@ -52,8 +52,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       suspended orgs on Better Auth's endpoints (docs/admin.md)
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
-                      hooks.ts = PostHog alerts (-> S3 + TrackerItemWorkflow),
-                      support.ts = Chatwoot/Plane/GitHub hooks,
+                      hooks.ts = PostHog alerts (-> S3 + TrackerItemWorkflow) + CRM signals,
+                      support.ts = Chatwoot/Plane/GitHub hooks, crm.ts = booking hook (Cal.diy),
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
@@ -87,6 +87,7 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/support.py   service desk triage, return path
   worker/tracker.py   the one tracker client (Plane SDK default, GitHub optional): alerts,
                       feedback, triage items; worker/released.py = release comments
+  worker/crm.py       CRM sync (Twenty REST behind the `Crm` protocol), one workflow per source event
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts (posthog SDK)
   worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
@@ -98,7 +99,8 @@ config/             ai-models.json (providers, allowed models per contour/purpos
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
                     flags.json (feature flag catalog),
-                    webhook-events.json (outbound webhook event catalog)
+                    webhook-events.json (outbound webhook event catalog),
+                    crm.json (deal stages, product signals; `pnpm crm:sync`)
 prompts/            prompt templates, one immutable file per version; lock.json pins hashes
 evals/              Promptfoo golden sets per purpose (`pnpm eval`, scripts/eval.mjs)
 services/llm-cli    vendor CLI subscriptions (claude, codex, gemini, ...) as an internal
@@ -113,8 +115,10 @@ deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (loc
 compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
 infra/backup/       Postgres image (+ pgvector) and backup image (+ pgBackRest/rclone), scripts (ADR 0015)
 infra/chatwoot/     Chatwoot initializer: attachments served through Chatwoot (docs/support.md)
+infra/caldiy/       build.sh + scan.sh: Cal.diy image from a pinned upstream commit (`booking` profile)
 scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`pnpm run sbom`),
                     check-events.mjs, journeys.mjs (sync/report PostHog + Umami funnels),
+                    crm.mjs (`pnpm crm:sync`: Twenty fields, PostHog signal destinations),
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
                     deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract),
                     check-flags.mjs, flags.mjs (flags:sync),
@@ -122,6 +126,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
+docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync flows, mapping
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
@@ -177,6 +182,10 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   tracker client in the worker; triage is a Temporal workflow, no own ticket table (ADR 0013).
 - Web API types generated from the API's OpenAPI document (`openapi-typescript`), calls through
   `openapi-fetch`; no hand-written response types (`apps/web/src/lib/api.ts`).
+- Twenty (AGPL-3.0 + app exception, unmodified container, `crm` profile) for customer records;
+  booking on self-hosted Cal.diy (MIT, `booking` profile, image built by CI from a pinned upstream
+  commit; Cal.com Cloud connects the same way). Sync is one Temporal workflow per source event,
+  cross-links in Twenty custom fields, no own CRM tables (ADR 0026).
 
 ## Where code goes (TS vs Python vs Rust)
 

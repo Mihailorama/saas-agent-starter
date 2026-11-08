@@ -24,6 +24,16 @@
       ]
     },
     {
+      "name": "demo-booking",
+      "description": "A visitor or user opens a booking link and books a call in the Cal.com embed (docs/crm.md). Bookings made on the Cal.com page after the link opened there are counted in Cal.com, not here.",
+      "windowDays": 1,
+      "minConversion": 10,
+      "steps": [
+        { "event": "booking_opened" },
+        { "event": "booking_completed", "maxStepSeconds": 600 }
+      ]
+    },
+    {
       "name": "site-to-signup",
       "description": "A marketing-site visitor clicks a call to action and creates an account in the app. Needs the site and the app on one PostHog/Umami project (docs/marketing.md).",
       "windowDays": 1,
