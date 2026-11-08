@@ -40,6 +40,7 @@ from worker.tracker import connect as tracker_connect
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
+    ContractPeriodWorkflow,
     CrmSyncWorkflow,
     DataDeletionWorkflow,
     DataExportWorkflow,
@@ -223,6 +224,7 @@ async def main() -> None:
         workflows=[
             ProjectCreatedWorkflow,
             BillingEventWorkflow,
+            ContractPeriodWorkflow,
             CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
@@ -237,6 +239,7 @@ async def main() -> None:
             activities.fingerprint_project,
             activities.summarize_project,
             billing.apply_billing_event,
+            billing.end_contract_period,
             crm.sync,
             support.triage,
             support.issue_closed,

@@ -62,8 +62,9 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md),
                       onboarding.ts = checklist item ids + conditions, GET /api/onboarding (docs/onboarding.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
-  src/billing/        plans config, entitlements() + requireEntitlement, payment providers
-                      (Stripe) behind one interface (docs/billing.md)
+  src/billing/        plans config (any pricing model), entitlements() + requireEntitlement,
+                      payment providers (Stripe, manual contracts) behind one interface,
+                      money.ts = currency minor units (docs/billing.md)
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -103,7 +104,8 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
                       GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
 config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
-                    plans.json (plans, limits, prices per currency, billing contours),
+                    plans.json (plans, limits, priced components per currency, billing
+                    contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
                     flags.json (feature flag catalog),

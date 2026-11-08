@@ -146,6 +146,15 @@ export async function startBillingEvent(event: BillingEvent) {
   }
 }
 
+/** Contract with services/worker-py (worker/billing.py ContractPeriod). */
+export type ContractPeriod = { orgId: string; periodEnd: string };
+/**
+ * A durable timer to the end of a manual contract's period (ContractPeriodWorkflow): then the
+ * worker marks it `past_due` unless the period was extended meanwhile. One per org and end.
+ */
+export const startContractPeriod = (p: ContractPeriod) =>
+  startOnce('ContractPeriodWorkflow', `billing-contract-${p.orgId}-${Date.parse(p.periodEnd)}`, p);
+
 /** Contract with services/worker-py (worker/webhooks.py): ids only, the payload stays in the DB. */
 export type WebhookEvent = {
   orgId: string;

@@ -21,7 +21,7 @@ from temporalio.workflow import ParentClosePolicy
 with workflow.unsafe.imports_passed_through():
     import worker.settings as settings
     from worker.activities import Activities, ProjectCreated
-    from worker.billing import BillingActivities, BillingEvent
+    from worker.billing import BillingActivities, BillingEvent, ContractPeriod
     from worker.crm import CrmActivities, CrmEvent
     from worker.mail import SendEmail, send_email
     from worker.privacy import (
@@ -231,6 +231,24 @@ class BillingEventWorkflow:
                 parent_close_policy=ParentClosePolicy.ABANDON,
             )
         return applied
+
+
+@workflow.defn(name="ContractPeriodWorkflow")
+class ContractPeriodWorkflow:
+    """A durable timer to the end of a manual contract's period, then `end_contract_period`.
+    Started by the operator console with id `billing-contract-<org>-<period end ms>`."""
+
+    @workflow.run
+    async def run(self, p: ContractPeriod) -> str:
+        wait = datetime.fromisoformat(p.periodEnd) - workflow.now()
+        if wait > timedelta(0):
+            await workflow.sleep(wait)
+        return await workflow.execute_activity_method(
+            BillingActivities.end_contract_period,
+            p,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+        )
 
 
 @workflow.defn(name="CrmSyncWorkflow")
