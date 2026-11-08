@@ -192,7 +192,7 @@
       "props": { "source": "string" }
     },
     "support_opened": {
-      "description": "The Help menu opened the support widget (docs/support.md). `kind` is what the user picked: question, bug or feature_request.",
+      "description": "The Help menu opened the support widget or the Telegram support bot (docs/support.md). `kind` is what the user picked: question, bug, feature_request or telegram.",
       "pii": false,
       "props": {
         "kind": "string"

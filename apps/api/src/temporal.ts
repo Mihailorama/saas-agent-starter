@@ -74,6 +74,23 @@ export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) 
   `support-closed-${e.tracker}-${e.issueId}-${closeId}`;
 export const startSupportIssueClosed = (e: SupportIssueClosed, closeId: string) =>
   startOnce('SupportIssueClosedWorkflow', supportClosedWorkflowId(e, closeId), e);
+/**
+ * Lite Telegram support (docs/support.md). Contract with services/worker-py (worker/telegram.py):
+ * ids only; the worker copies messages by id, so their content stays in Telegram. `arg` is the
+ * `/start` token or a team command's title, already redacted.
+ */
+export type TelegramUpdate = {
+  chatId: number;
+  messageId: number;
+  fromId: number;
+  threadId?: number;
+  command?: 'start' | 'bug' | 'feature' | 'other';
+  arg?: string;
+  lang?: string;
+};
+/** Message ids are unique per chat (update ids are not: they restart after a quiet week). */
+export const startTelegramUpdate = (u: TelegramUpdate) =>
+  startOnce('TelegramSupportWorkflow', `telegram-support-${u.chatId}-${u.messageId}`, u);
 /** CRM sync (docs/crm.md). Contract with services/worker-py (worker/crm.py, CrmEvent). Ids only. */
 export type CrmEvent = {
   kind: 'user.created' | 'org.created' | 'signal' | 'support.conversation' | 'booking';

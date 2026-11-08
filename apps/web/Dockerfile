@@ -15,6 +15,8 @@ ARG VITE_RELEASE=dev VITE_POSTHOG_KEY= VITE_POSTHOG_HOST= VITE_POSTHOG_AI_FEEDBA
     VITE_GA4_ID= VITE_YM_ID= VITE_YM_WEBVISOR= VITE_LANGFUSE_PUBLIC_KEY= VITE_LANGFUSE_HOST=
 # In-app help widget (Chatwoot); both empty = no Help entry, no request (docs/support.md).
 ARG VITE_CHATWOOT_BASE_URL= VITE_CHATWOOT_WEBSITE_TOKEN=
+# Telegram support bot's username (flag `telegram-support`); empty = no Telegram entry.
+ARG VITE_TELEGRAM_SUPPORT_BOT=
 # "Talk to us" booking link (Cal.diy / Cal.com, docs/crm.md); empty = no entry; flag `booking`.
 ARG VITE_BOOKING_ORIGIN= VITE_BOOKING_LINK=
 # Feature flag overrides (docs/feature-flags.md), comma-separated names.

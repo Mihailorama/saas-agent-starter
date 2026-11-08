@@ -64,6 +64,13 @@
       "when": 1794141061982,
       "tag": "0008_mcp_servers",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794148614188,
+      "tag": "0013_telegram_support",
+      "breakpoints": true
     }
   ]
 }

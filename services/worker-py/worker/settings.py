@@ -112,6 +112,13 @@ SUPPORT_AI_ORG_ID = os.environ.get("SUPPORT_AI_ORG_ID", "")
 # "Released in vX.Y.Z" comment (docs/releases.md); anything else = private notes only.
 _notify = os.environ.get("SUPPORT_NOTIFY_ON_CLOSE", "false").lower()
 SUPPORT_NOTIFY = {"true": "close", "release": "release"}.get(_notify, "")
+# Lite Telegram support (docs/support.md "Lite: Telegram only", flag `telegram-support`): the bot
+# token and the forum supergroup the team answers in. Either empty = off.
+TELEGRAM_SUPPORT_BOT_TOKEN = os.environ.get("TELEGRAM_SUPPORT_BOT_TOKEN", "")
+TELEGRAM_SUPPORT_CHAT_ID = int(os.environ.get("TELEGRAM_SUPPORT_CHAT_ID") or 0)
+# Public URL of POST /api/hooks/telegram; set = the worker registers the webhook at start.
+TELEGRAM_SUPPORT_WEBHOOK_URL = os.environ.get("TELEGRAM_SUPPORT_WEBHOOK_URL", "")
+TELEGRAM_API_URL = os.environ.get("TELEGRAM_API_URL", "https://api.telegram.org")  # tests: a fake
 # CRM sync (docs/crm.md): Twenty's REST API; URL or key empty = dry run (logs only).
 TWENTY_API_URL = os.environ.get("TWENTY_API_URL", "")  # with --profile crm: http://twenty:3000
 TWENTY_API_KEY = os.environ.get("TWENTY_API_KEY", "")

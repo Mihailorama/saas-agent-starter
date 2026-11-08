@@ -27,6 +27,7 @@ import {
   Plug,
   Plus,
   ScrollText,
+  Send,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -61,7 +62,13 @@ import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/
 import { authClient } from '@/lib/auth';
 import { bookingUrl, onBookingClick } from '@/lib/booking';
 import { useFlag } from '@/lib/flags';
-import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
+import {
+  openSupport,
+  resetSupport,
+  supportEnabled,
+  telegramConfigured,
+  telegramLink,
+} from '@/lib/support';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
 
 /** API error text for members of a suspended organization (apps/api/src/operator-guard.ts). */
@@ -213,10 +220,17 @@ function UserMenu() {
 }
 
 /** The one entry point for questions, problem reports and ideas (Chatwoot, docs/support.md). */
-function HelpMenu() {
+function HelpMenu({ telegram }: { telegram: boolean }) {
   const { data: active } = authClient.useActiveOrganization();
   const open = (kind: Parameters<typeof openSupport>[0]) => () =>
     openSupport(kind, active?.id).catch(() => toast.error('Help is unavailable right now'));
+  // Fetched ahead (valid for a day), so the click is a plain link no popup blocker stops.
+  const link = useQuery({
+    queryKey: ['telegram-link'],
+    queryFn: telegramLink,
+    enabled: telegram,
+    staleTime: 60 * 60_000,
+  });
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -225,15 +239,31 @@ function HelpMenu() {
         </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60" align="start" side="top">
-        <DropdownMenuItem onSelect={open('question')}>
-          <MessageCircle className="size-4" /> Ask a question
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={open('bug')}>
-          <Bug className="size-4" /> Report a problem
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={open('feature_request')}>
-          <Lightbulb className="size-4" /> Suggest an improvement
-        </DropdownMenuItem>
+        {supportEnabled && (
+          <>
+            <DropdownMenuItem onSelect={open('question')}>
+              <MessageCircle className="size-4" /> Ask a question
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={open('bug')}>
+              <Bug className="size-4" /> Report a problem
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={open('feature_request')}>
+              <Lightbulb className="size-4" /> Suggest an improvement
+            </DropdownMenuItem>
+          </>
+        )}
+        {telegram && link.data && (
+          <DropdownMenuItem asChild>
+            <a
+              href={link.data}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => track('support_opened', { kind: 'telegram' })}
+            >
+              <Send className="size-4" /> Telegram
+            </a>
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -333,6 +363,8 @@ export function Shell() {
   const mcpTools = useFlag('mcp-tools');
   // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
   const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
+  // Lite Telegram support: rolled out (flag) and the bot's username set (docs/support.md).
+  const telegram = useFlag('telegram-support') && telegramConfigured;
 
   const banner = viewedBy && session && (
     <ImpersonationBanner
@@ -424,9 +456,9 @@ export function Shell() {
               <TalkToUs />
             </SidebarMenuItem>
           )}
-          {supportEnabled && !viewedBy && (
+          {(supportEnabled || telegram) && !viewedBy && (
             <SidebarMenuItem>
-              <HelpMenu />
+              <HelpMenu telegram={telegram} />
             </SidebarMenuItem>
           )}
           <SidebarMenuItem>

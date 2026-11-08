@@ -34,6 +34,7 @@ from worker.privacy import PrivacyActivities, configured_tools
 from worker.providers import load_providers, providers_from_config
 from worker.s3 import S3
 from worker.support import Chatwoot, SupportActivities
+from worker.telegram import Bot, TelegramActivities
 from worker.text import backend
 from worker.tracker import TrackerActivities
 from worker.tracker import connect as tracker_connect
@@ -48,6 +49,7 @@ from worker.workflows import (
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
+    TelegramSupportWorkflow,
     TrackerItemWorkflow,
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
@@ -192,7 +194,26 @@ async def main() -> None:
     )
     tracker = await tracker_connect(http)  # refuses a completed/cancelled target state
     tracker_items = TrackerActivities(tracker, files)
+    s = settings
+    telegram = (
+        TelegramActivities(
+            bot=Bot(s.TELEGRAM_SUPPORT_BOT_TOKEN, http, s.TELEGRAM_API_URL),
+            token=s.TELEGRAM_SUPPORT_BOT_TOKEN,
+            chat_id=s.TELEGRAM_SUPPORT_CHAT_ID,
+            pool=pool,
+            tracker=tracker,
+        )
+        if s.TELEGRAM_SUPPORT_BOT_TOKEN and s.TELEGRAM_SUPPORT_CHAT_ID
+        else None
+    )
+    if (
+        telegram
+        and s.TELEGRAM_SUPPORT_WEBHOOK_URL
+        and await flags.is_enabled("telegram-support", user_id="telegram")
+    ):
+        await telegram.register_webhook(s.TELEGRAM_SUPPORT_WEBHOOK_URL)
     support = SupportActivities(
+        telegram=telegram,
         chatwoot=chatwoot,
         tracker=tracker,
         ai=ai,
@@ -211,8 +232,8 @@ async def main() -> None:
         files=files,
         booking_url=settings.BOOKING_PUBLIC_URL,
     )
-    if chatwoot and triage_model and ai:
-        await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio
+    if (chatwoot and triage_model and ai) or telegram:
+        await asyncio.to_thread(pii.warm_up)  # triage output and /bug titles: Presidio
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)
@@ -226,6 +247,7 @@ async def main() -> None:
             CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
+            TelegramSupportWorkflow,
             TrackerItemWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,
@@ -240,6 +262,7 @@ async def main() -> None:
             crm.sync,
             support.triage,
             support.issue_closed,
+            *([telegram.handle] if telegram else []),
             tracker_items.file_item,
             webhooks.deliver_webhook,
             webhooks.prune_webhooks,
@@ -271,11 +294,13 @@ async def main() -> None:
     async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
-            " support: chatwoot %s, tracker %s, triage model %s, privacy tools: %s, crm %s)",
+            " support: chatwoot %s, telegram %s, tracker %s, triage model %s, privacy tools: %s,"
+            " crm %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
             "on" if chatwoot else "dry run",
+            "on" if telegram else "off",
             tracker.name,
             triage_model or "off",
             ",".join(t.name for t in privacy_tools.all) or "none",

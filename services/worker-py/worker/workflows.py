@@ -34,6 +34,7 @@ with workflow.unsafe.imports_passed_through():
         Step,
     )
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
+    from worker.telegram import TelegramActivities, TelegramUpdate
     from worker.tracker import TrackerActivities, TrackerItem
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
 
@@ -85,6 +86,20 @@ class SupportIssueClosedWorkflow:
             e,
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5),
+        )
+
+
+@workflow.defn(name="TelegramSupportWorkflow")
+class TelegramSupportWorkflow:
+    """Started by POST /api/hooks/telegram, id `telegram-support-<chat>-<message>`."""
+
+    @workflow.run
+    async def run(self, u: TelegramUpdate) -> str:
+        return await workflow.execute_activity_method(
+            TelegramActivities.handle,
+            u,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), maximum_attempts=5),
         )
 
 

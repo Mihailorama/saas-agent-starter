@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -14,7 +15,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { organization } from './auth-schema.ts';
+import { organization, user } from './auth-schema.ts';
 
 export * from './auth-schema.ts';
 
@@ -388,4 +389,23 @@ export const privacyRequests = pgTable(
       sql`${t.status} in ('scheduled', 'running', 'completed', 'failed', 'cancelled')`,
     ),
   ],
+);
+
+/**
+ * Lite Telegram support (docs/support.md "Lite: Telegram only"): which forum topic of the support
+ * group belongs to which Telegram user, and the app user they linked with the Help menu's deep
+ * link. Not tenant-scoped: a Telegram user is not an organization's data. Messages are not stored
+ * here; they stay in Telegram. Deleting the app user deletes the row (docs/privacy.md).
+ */
+export const telegramSupportUsers = pgTable(
+  'telegram_support_users',
+  {
+    telegramUserId: bigint('telegram_user_id', { mode: 'number' }).primaryKey(),
+    /** Support group (TELEGRAM_SUPPORT_CHAT_ID) the topic is in; another group = a new topic. */
+    chatId: bigint('chat_id', { mode: 'number' }).notNull(),
+    topicId: integer('topic_id').notNull(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex().on(t.chatId, t.topicId), index().on(t.userId)],
 );
