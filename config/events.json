@@ -13,6 +13,11 @@
       "pii": false,
       "props": { "cta": "string" }
     },
+    "waitlist_joined": {
+      "description": "A visitor joined the waitlist on a landing page drafted by /validate-idea (docs/validate-idea.md). `variant` is the page variant id (e.g. the price under test, `pro_29`), never the email or any free text.",
+      "pii": false,
+      "props": { "variant": "string" }
+    },
     "signup_started": {
       "description": "The sign-up form was opened on the sign-in page.",
       "pii": false,

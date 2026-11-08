@@ -226,6 +226,7 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 7. `pnpm check`.
 
 A Claude Code command with the same steps: `/add-resource <name>`.
+Before building a product at all: `/validate-idea <idea>` (opt-in founder-skill plugin, real-signal plan; docs/validate-idea.md).
 
 Schema changes are expand/contract (docs/deploy.md "Schema changes"): the previous release
 must keep working on the new schema. Drops, renames, type changes and new NOT NULL columns
