@@ -33,6 +33,15 @@ engine (tiers, proration, invoices). Usage: [docs/billing.md](../billing.md) "Pr
   through the webhook: one path that writes provider state, no second API client for it.
 - **A subscription keeps the provider it was made with** (`subscriptions.provider`), so a manual
   contract can sit in a Stripe contour.
+- **Usage goes to the provider's meters, rating stays there.** One worker activity per org and
+  run sends one event per meter and closed hour (`<meter>:<org>:<hour>`, so the provider
+  deduplicates retries), moving a per-org mark (`subscriptions.usage_reported_until`) after each
+  hour; a failing org never stalls the others, and hours past the provider's 35-day window are
+  skipped, not retried forever. There is no plan history: attaching a metered price moves the
+  mark to that moment (nothing earlier is billed), and calls priced in a currency the metered
+  subscription cannot bill are refused. On pay-as-you-go plans the plan's LLM limit becomes a warning and
+  the org's own cap (else `llmSpendMax`) the hard stop. The worker holds the meter adapter
+  (Stripe REST via the installed `httpx2`), because usage and the gateway live there.
 - **Entitlements per model**: per seat, the purchased quantity is the seat limit (from the
   provider's webhook); limits otherwise come from the plan and operator overrides.
 

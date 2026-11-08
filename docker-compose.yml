@@ -238,6 +238,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
       SENTRY_DSN: ${WORKER_SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-} # usage reporting to Stripe Meters
       # LLM observability (ADR 0009): each call as a PostHog $ai_generation when set.
       POSTHOG_PRIVACY_MODE: ${POSTHOG_PRIVACY_MODE:-true}
       # With --profile llmops: spans to Langfuse (see .env.example, "LLM-ops Full").

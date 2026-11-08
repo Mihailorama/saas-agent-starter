@@ -693,6 +693,7 @@ class PrivacyActivities:
             "webhook_attempts",
             "subscriptions",
             "mcp_servers",
+            "usage_counters",
         )
 
         async def q(conn: Conn, _: str) -> dict[str, list[Doc]]:

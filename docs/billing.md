@@ -70,9 +70,40 @@ portal settings). An operator override (`limit_overrides`) still wins.
 
 `{"model": "metered", "meter": "llm_cost_micros", "interval": "month", "providerPriceId": ...}`
 with the provider's metered price (Stripe: a price on a
-[Meter](https://docs.stripe.com/billing/subscriptions/usage-based) with the same event name as
-`meter`). Checkout adds it without quantity. Reporting usage to the meter is the follow-up in
-docs/TODO.md; until then such a plan is billed for nothing beyond its base price.
+[Meter](https://docs.stripe.com/billing/subscriptions/usage-based) whose event name is the
+`meter`, customer mapping `stripe_customer_id`, value key `value`, aggregation sum). Checkout
+adds it without quantity. Behind the flag `billing-usage` (default off), evaluated per
+organization in the API and the worker alike:
+
+- **Reporting** (`worker/usage.py`): `UsageReportWorkflow` runs every 15 minutes (Temporal
+  Schedule `billing-usage-report`) and starts one `report_org_usage` activity per organization,
+  each with its own retries, so a failing org never holds up the others. An org's progress is
+  `subscriptions.usage_reported_until`. Each closed hour after it (closed 5 minutes ago) is
+  aggregated and sent as one event per meter, identifier `<meter>:<org>:<hour>`, and the mark
+  moves after every hour; a retry or re-run resends the same identifiers, which Stripe drops for
+  24 hours (`duplicate_meter_event`). Meters of the plan in effect during that hour:
+  - `llm_cost_micros`: the hour's successful `ai_calls` cost in the subscription's currency, in
+    millionths, rounded once. Calls priced in another currency are refused on such a plan (they
+    could not be billed): price your models in the currency you bill;
+  - `llm_tokens`: the hour's `total_tokens` (calls through an org's own provider excluded);
+  - `api_calls`: the hour's API-key requests (`usage_counters`, counted by `requireScope`;
+    sessions do not count).
+
+  The plan is the subscription's current one: when a metered price is attached (a new
+  subscription, a re-subscription, an upgrade from a plan without one) the webhook sets the mark
+  to that moment, so earlier usage is never reported (in that first partial hour only AI usage
+  after the moment counts; its API calls are not billed). A change between two metered plans
+  keeps the mark: the not yet reported window (at most the 5-minute settle time plus the 15-minute
+  schedule) is billed at the new plan.
+
+  Stripe takes events up to 35 days old: older hours are skipped with a warning instead of
+  blocking the org, and one run catches up at most 72 hours per org. Worker env:
+  `STRIPE_SECRET_KEY` (empty: no reporting), `STRIPE_API_URL` for stripe-mock.
+- **Spend limit**: on a plan with a metered LLM price (`llm_cost_micros` or `llm_tokens`) the
+  plan's `llmSpendMonthly` only warns (worker log, "warning" on the billing page) because the
+  usage is billed. Calls stop at the organization's own cap (the raised limit an admin or
+  operator set) or, without one, at the plan's `llmSpendMax`, both in the subscription's currency;
+  calls priced in any other currency are refused (above). Flat and other plans: as before.
 
 ### Hybrid (base + overage)
 
@@ -123,7 +154,9 @@ that stops being enough:
 - **Polar**: a merchant of record (sales tax, invoices in its name) with checkout and usage
   billing (connect; follow-up).
 
-Each is another provider adapter behind the same interface, plus a meter adapter in the worker.
+Each is another provider adapter behind the same interface, plus a meter adapter in the worker
+(`Meters` in `worker/usage.py`: `report_usage(customer, meter, value, identifier, at)`, the
+`reportUsage` of the provider surface).
 
 ## Entitlements
 

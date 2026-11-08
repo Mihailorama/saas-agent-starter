@@ -15,6 +15,7 @@ import { ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
 import { contourOfProvider, providerFor, providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { env } from '../env.ts';
+import { isEnabled } from '../flags.ts';
 import { startBillingEvent } from '../temporal.ts';
 import { httpError, requireRole, withTenant } from '../tenant.ts';
 
@@ -47,6 +48,8 @@ const Billing = z.object({
   canManage: z.boolean(),
   /** What the subscription's provider offers its customers (a manual contract: neither). */
   selfService: z.object({ portal: z.boolean(), cancel: z.boolean() }),
+  /** LLM usage is billed (pay as you go): the limit warns, the org's own cap stops calls. */
+  payg: z.boolean(),
   usage: z.object({ seats: Usage, projects: Usage }),
   llmSpend: z.array(
     z.object({
@@ -138,6 +141,9 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
           .from(member)
           .where(eq(member.organizationId, orgId));
         const spent = await llmSpend(tx, orgId, e.period);
+        // Pay as you go (flag billing-usage): over the plan's limit is a warning; calls stop at the
+        // org's own cap or the plan's llmSpendMax, as in the worker's gateway.
+        const payg = e.payg && (await isEnabled('billing-usage', { userId: orgId, orgId }));
         return {
           planId: e.planId,
           planName: e.plan.name,
@@ -149,6 +155,7 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
           cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
           canManage: rank >= 2,
           selfService: selfService(sub),
+          payg,
           usage: {
             seats: { used: seatCount?.n ?? 0, limit: e.limits.seats },
             projects: { used: projectCount?.n ?? 0, limit: e.limits.projects },
@@ -157,7 +164,20 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
             const limit = e.llmSpendLimit(cur);
             if (limit === undefined) return [];
             const s = spent[cur] ?? 0;
-            const level = s >= limit ? 'blocked' : s >= limit * LLM_WARN_RATIO ? 'warning' : 'ok';
+            // Pay as you go: the org's own cap, else the plan's llmSpendMax (as in the worker).
+            // Calls priced in another currency cannot be billed on the meter: refused (worker).
+            const billable = cur === sub?.currency;
+            const cap = !payg
+              ? limit
+              : billable
+                ? (e.llmSpendCap(cur) ?? e.plan.llmSpendMax[cur])
+                : 0;
+            const level =
+              cap !== undefined && s >= cap
+                ? 'blocked'
+                : s >= limit * LLM_WARN_RATIO
+                  ? 'warning'
+                  : 'ok';
             const max = e.plan.features.llmLimitRaise ? (e.plan.llmSpendMax[cur] ?? limit) : limit;
             return [{ currency: cur, spent: s, limit, max, level } as const];
           }),

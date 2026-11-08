@@ -27,6 +27,8 @@ from opentelemetry import metrics
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from worker.flags import is_enabled
+
 log = logging.getLogger(__name__)
 meter = metrics.get_meter("worker.billing")
 # Labelled by plan and cost currency only, never by org (AGENTS.md "Observability").
@@ -112,6 +114,14 @@ class Plans:
         end: datetime | None = sub["current_period_end"]
         return sub["status"] == "active" or end is None or now < end + self.past_due_grace
 
+    def at(self, sub: Any, at: datetime) -> Plan:
+        """The plan that was in effect at `at` (usage reporting, hour by hour): as `effective`,
+        but a canceled subscription still counts until the end of its last period."""
+        end: datetime | None = sub["current_period_end"] if sub is not None else None
+        if sub is not None and sub["status"] == "canceled" and end is not None and at < end:
+            return self.plans.get(sub["plan_id"], self.plans[self.default])
+        return self.effective(sub, at)[1]
+
     def effective(self, sub: asyncpg.Record | None, now: datetime) -> tuple[str, Plan]:
         """Plan in force: the subscribed one while paid (or in grace), else the default."""
         plan_id = sub["plan_id"] if sub is not None and self.paid(sub, now) else None
@@ -167,6 +177,14 @@ class Budget:
     plan_id: str
     spent: Decimal
     limit: Decimal | None
+    # Pay as you go (a metered LLM price, docs/billing.md "Usage-based"): the plan's limit is
+    # only a warning; `cap` is the hard stop: the org's own raised cap, else llmSpendMax.
+    payg: bool = False
+    cap: Decimal | None = None
+    billed_in: str | None = None  # the subscription's currency: what its meter can bill
+
+
+LLM_METERS = frozenset({"llm_cost_micros", "llm_tokens"})
 
 
 class SpendLimitExceeded(ApplicationError):
@@ -182,8 +200,8 @@ class UsageLimitExceeded(SpendLimitExceeded):
 
 
 _SUBSCRIPTION = (
-    "select plan_id, status, current_period_start, current_period_end, llm_spend_limits"
-    " from subscriptions"
+    "select plan_id, status, currency, current_period_start, current_period_end,"
+    " llm_spend_limits from subscriptions"
 )
 
 
@@ -228,9 +246,13 @@ async def llm_budget(
     )
     limit = plan.llm_spend_monthly.get(currency)
     raised: dict[str, Any] = json.loads(sub["llm_spend_limits"] or "{}") if sub else {}
+    own = None
     if plan.llm_limit_raise and currency in raised and currency in plan.llm_spend_max:
-        limit = min(Decimal(str(raised[currency])), plan.llm_spend_max[currency])
-    return Budget(plan_id, spent, limit)
+        limit = own = min(Decimal(str(raised[currency])), plan.llm_spend_max[currency])
+    prices = plan.prices.get(sub["currency"], []) if sub and plans.paid(sub, now) else []
+    payg = any(p.model == "metered" and p.meter in LLM_METERS for p in prices)
+    cap = own if own is not None else plan.llm_spend_max.get(currency)
+    return Budget(plan_id, spent, limit, payg, cap, sub["currency"] if sub else None)
 
 
 async def check_llm_budget(pool: asyncpg.Pool, plans: Plans, org_id: str, currency: str) -> None:
@@ -247,7 +269,20 @@ async def check_llm_budget(pool: asyncpg.Pool, plans: Plans, org_id: str, curren
     labels = {"plan": budget.plan_id, "currency": currency}
     ratio = budget.spent / budget.limit if budget.limit > 0 else Decimal(1)
     spend_ratio.record(float(ratio), labels)
-    if budget.spent >= budget.limit:
+    hard: Decimal | None = budget.limit
+    if budget.payg and await is_enabled("billing-usage", user_id=org_id, org_id=org_id):
+        if currency != budget.billed_in:
+            # The meter bills in the subscription's currency only: never run calls it cannot bill.
+            blocked_calls.add(1, labels)
+            raise SpendLimitExceeded(
+                f"this plan bills AI usage in {budget.billed_in}; models priced in {currency}"
+                " cannot be billed on it"
+            )
+        hard = budget.cap  # usage is billed: stop at the org's own cap, else llmSpendMax
+        if budget.spent >= budget.limit and (hard is None or budget.spent < hard):
+            log.warning("org %s: LLM spend over the plan's limit (pay as you go)", org_id)
+            return
+    if hard is not None and budget.spent >= hard:
         blocked_calls.add(1, labels)
         log.warning("org %s: LLM spend limit reached, call refused", org_id)
         raise SpendLimitExceeded(
@@ -351,6 +386,23 @@ class BillingActivities:
     def __init__(self, pool: asyncpg.Pool, plans: Plans) -> None:
         self.pool, self.plans = pool, plans
 
+    def _metered(self, plan_id: str | None, currency: str | None) -> bool:
+        plan = self.plans.plans.get(plan_id or "")
+        prices = plan.prices.get(currency or "", []) if plan else []
+        return any(p.model == "metered" for p in prices)
+
+    def _starts_metering(self, prev: Any, e: BillingEvent, at: datetime) -> bool:
+        """The event attaches a metered price: a new or ended subscription, or a plan that had
+        none. A change between metered plans keeps the mark (the open window bills at the new
+        plan)."""
+        if not self._metered(e.planId, e.currency or (prev["currency"] if prev else None)):
+            return False
+        return (
+            prev is None
+            or not self.plans.paid(prev, at)
+            or not self._metered(prev["plan_id"], prev["currency"])
+        )
+
     @activity.defn(name="apply_billing_event")
     async def apply_billing_event(self, e: BillingEvent) -> bool:
         """Applies the event; False if it was older than the state already stored."""
@@ -360,7 +412,11 @@ class BillingActivities:
                 await _audit_once(conn, e.orgId, f"billing.{e.type}", f"{e.provider}:{e.eventId}")
                 return True
             occurred = datetime.fromisoformat(e.occurredAt)
-            last = await conn.fetchval("select last_event_at from subscriptions for update")
+            prev = await conn.fetchrow(
+                "select plan_id, status, currency, current_period_end, last_event_at"
+                " from subscriptions for update"
+            )
+            last = prev["last_event_at"] if prev else None
             if last is not None and last > occurred:
                 activity.logger.info("billing event %s is older than the stored state", e.eventId)
                 return False
@@ -399,6 +455,10 @@ class BillingActivities:
                 e.seats,
                 e.contractRef,
             )
+            if e.type == "subscription.activated" and self._starts_metering(prev, e, occurred):
+                # Usage is reported from now on, never from before the metered price was attached
+                # (an upgrade from flat, a re-subscription): docs/billing.md "Usage-based".
+                await conn.execute("update subscriptions set usage_reported_until = $1", occurred)
             await _audit_once(conn, e.orgId, f"billing.{e.type}", f"{e.provider}:{e.eventId}")
         activity.logger.info("billing event %s (%s) applied for org %s", e.eventId, e.type, e.orgId)
         return True
