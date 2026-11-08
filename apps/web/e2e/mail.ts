@@ -27,6 +27,10 @@ async function mailText(to: string, subject: RegExp, seen: string[] = []): Promi
  */
 export async function requestCode(page: Page, email: string): Promise<string> {
   const seen = (await inbox(email)).map((m) => m.ID);
+  // One client IP per sign-in (the API trusts x-forwarded-for in e2e, playwright.config.ts): the
+  // per-IP auth limit then applies per simulated user, like in production.
+  const ip = `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
+  await page.setExtraHTTPHeaders({ 'x-forwarded-for': ip });
   await page.goto('/sign-in');
   await page.getByLabel('Email').fill(email);
   await page.getByRole('button', { name: 'Email me a code' }).click();

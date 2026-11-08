@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto';
-import { aiCalls, auditLog, projects, verification, withOrg } from '@app/db';
+import { aiCalls, auditLog, projects, withOrg } from '@app/db';
 import {
   CreateBucketCommand,
   HeadBucketCommand,
@@ -184,12 +184,15 @@ describe('sign-in with an e-mail code', () => {
     expect(locked.statusCode).toBe(403);
     expect(locked.json()).toMatchObject({ code: 'TOO_MANY_ATTEMPTS' });
 
+    // Expired: the code really ages. Only this process's clock moves (the API runs in it); an
+    // expired row in the shared database would be swept by another test file's sign-in first.
     otp = await newCode(email);
-    await db
-      .update(verification)
-      .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(verification.identifier, `sign-in-otp-${email}`));
-    expect((await enter(email, otp)).json()).toMatchObject({ code: 'OTP_EXPIRED' });
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 6 * 60_000 });
+    try {
+      expect((await enter(email, otp)).json()).toMatchObject({ code: 'OTP_EXPIRED' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('mails one code per address per 30 s (resend cooldown)', async () => {

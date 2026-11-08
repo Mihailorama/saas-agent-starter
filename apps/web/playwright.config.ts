@@ -32,7 +32,11 @@ export default defineConfig({
       command: 'pnpm --filter api start',
       // The API side of the `onboarding` flag (only the build on onboardingPort shows its UI), and
       // that build's origin, which e2e/onboarding.spec.ts writes from.
+      // TRUST_PROXY: the client IP comes from x-forwarded-for (as behind Caddy in production), so
+      // each e2e sign-in can have its own IP (e2e/mail.ts) and the suite stays under the per-IP
+      // auth limit that many sign-ins from 127.0.0.1 would hit.
       env: {
+        TRUST_PROXY: 'true',
         FLAGS_ON: [process.env.FLAGS_ON, 'onboarding'].filter(Boolean).join(','),
         CORS_ORIGINS: [process.env.CORS_ORIGINS, `http://localhost:${onboardingPort}`]
           .filter(Boolean)
