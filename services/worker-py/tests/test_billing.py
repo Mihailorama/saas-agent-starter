@@ -463,7 +463,8 @@ def test_price_models_parse_and_old_prices_stay_flat() -> None:
     assert PLANS.plans["pro"].prices["USD"] == [Price("flat", "29.00", "month")]  # no `model`
     examples = load_plans(settings.PLANS_FILE.with_name("plans.examples.json")).plans
     assert [p.model for p in examples["growth"].prices["USD"]] == ["flat", "metered"]
-    assert examples["prepaid"].prices["USD"][1] == Price("credits", None, None, "llm_cost_micros")
+    pack = Price("credits", None, None, "llm_cost_micros", 365)
+    assert examples["prepaid"].prices["USD"][1] == pack
     assert examples["enterprise"].prices["USD"] == [Price("contract")]
 
 

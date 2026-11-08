@@ -37,7 +37,7 @@ from worker.support import Chatwoot, SupportActivities
 from worker.text import backend
 from worker.tracker import TrackerActivities
 from worker.tracker import connect as tracker_connect
-from worker.usage import StripeMeters, UsageActivities
+from worker.usage import Credits, StripeCredits, StripeMeters, UsageActivities
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
@@ -166,13 +166,18 @@ async def main() -> None:
     await ensure_retention_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     await ensure_usage_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
+    stripe = (settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)
+    credits: dict[str, Credits] = (
+        {"stripe": StripeCredits(http, *stripe)} if settings.STRIPE_SECRET_KEY else {}
+    )
     usage = UsageActivities(
         pool,
         plans,
-        {"stripe": StripeMeters(http, settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)}
-        if settings.STRIPE_SECRET_KEY
-        else {},
+        {"stripe": StripeMeters(http, *stripe)} if settings.STRIPE_SECRET_KEY else {},
+        credits,
     )
+    if ai:
+        ai.credits = credits  # built before the HTTP client
     files = S3(
         endpoint=settings.S3_ENDPOINT,
         region=settings.S3_REGION,
@@ -253,6 +258,7 @@ async def main() -> None:
             billing.apply_billing_event,
             billing.end_contract_period,
             usage.report_usage,
+            usage.grant_credits,
             crm.sync,
             support.triage,
             support.issue_closed,

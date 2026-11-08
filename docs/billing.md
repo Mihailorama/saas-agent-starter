@@ -100,9 +100,25 @@ metered price in the provider (`tiers` shows it on the page). Example: `growth` 
 
 ### Prepaid credits
 
-`metered` plus `credits` on the same meter: the customer buys packs, usage draws them down in the
-provider. Example: `prepaid`. Selling packs is the follow-up in docs/TODO.md; until then such a
-plan is not offered at checkout.
+`metered` plus `credits` on the same meter (example: `prepaid`): the subscription carries the
+metered price (checkout subscribes to it), and the customer buys packs on top. Behind the flag
+`billing-credits` (default off):
+
+- **Top-up**: "Buy N credits" on the billing page (`POST /api/billing/credits/checkout`, admins)
+  opens a one-time Stripe Checkout for the pack's `providerPriceId`, for the org's Stripe
+  customer. `pack.credits` is the number shown; the grant is the amount paid.
+- **Grant after payment**: `checkout.session.completed` (or `.async_payment_succeeded`) with
+  `payment_status: paid` becomes `credits.purchased` with the Checkout Session id as event id;
+  `BillingEventWorkflow` then runs `grant_credits` in the worker, which creates a Stripe
+  [credit grant](https://docs.stripe.com/billing/subscriptions/usage-based/billing-credits)
+  (category `paid`, applies to metered prices, expires after `expiresDays`) with the idempotency
+  key `credits-<session id>`, and writes `billing.credits.granted` once. Stripe keeps idempotency
+  keys for 24 hours; the activity stops retrying after 12.
+- **Balance check**: before a priced AI call the gateway reads the customer's available credit
+  balance for metered prices (`credit_balance_summary`, cached 30 s per org) and refuses the call
+  with `SpendLimitExceeded` when it is used up. Usage itself goes to the meter as in
+  "Usage-based" and Stripe draws the grant down on the invoice. The billing page shows the
+  balance. There is no local ledger: the balance is Stripe's.
 
 ### Contract
 
@@ -135,8 +151,9 @@ assuming:
   invoicing: 'provider' | 'external' }
 ```
 
-Stripe: checkout, portal, cancel, `flat`/`per_seat`/`metered`/`contract`, usage reporting
-(the worker's `StripeMeters`), invoicing by the provider. `manual`: `contract` only, nothing self-serve, invoicing external. A subscription is
+Stripe: checkout, portal, cancel, `flat`/`per_seat`/`metered`/`credits`/`contract`, usage
+reporting (the worker's `StripeMeters`), credit balance (`topUp`, `creditBalance`; grants by the
+worker's `StripeCredits`), invoicing by the provider. `manual`: `contract` only, nothing self-serve, invoicing external. A subscription is
 served by the provider it was made with (`subscriptions.provider`), so a `manual` contract can
 sit in a Stripe contour.
 
@@ -153,7 +170,8 @@ that stops being enough:
   billing (connect; `merchantOfRecord: true`; follow-up).
 
 Each is another provider adapter behind the same interface, plus a meter adapter in the worker
-(`Meters` in `worker/usage.py`: `report(customer, meter, value, identifier, at)`).
+(`Meters` in `worker/usage.py`: `report(customer, meter, value, identifier, at)`; `Credits`:
+`balance`, `grant`).
 
 ## Entitlements
 
@@ -243,7 +261,8 @@ LLM spend in the currencies of your models.
    adapter maps the price id back to the plan.
 3. Add a webhook endpoint `https://<your app>/api/billing/webhooks/stripe` with the events
    `customer.subscription.created`, `customer.subscription.updated`,
-   `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`.
+   `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`, and for credit
+   packs `checkout.session.completed`, `checkout.session.async_payment_succeeded`.
 4. Env (API; forwarded by `compose.prod.yaml`, set in `deploy/env/<env>.enc.env`):
    `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (the endpoint's signing secret);
    leave `STRIPE_API_URL` empty. Signatures are checked with the SDK's `constructEventAsync`.

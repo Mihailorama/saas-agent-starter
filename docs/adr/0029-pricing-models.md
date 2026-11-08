@@ -38,6 +38,9 @@ engine (tiers, proration, invoices). Usage: [docs/billing.md](../billing.md) "Pr
   plans the plan's LLM limit becomes a warning and the org's own cap the hard stop. The worker
   holds the meter adapter (Stripe REST via the installed `httpx2`, no new SDK), because usage and
   the gateway live there.
+- **Prepaid credits are provider credit grants.** A paid pack (one-time checkout) becomes a
+  grant in the provider, once per payment (idempotency key from the checkout session); the
+  gateway reads the provider's balance before a priced call. No local credit ledger.
 - **Entitlements per model**: per seat, the purchased quantity is the seat limit (from the
   provider's webhook); limits otherwise come from the plan and operator overrides.
 

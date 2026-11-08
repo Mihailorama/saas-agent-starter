@@ -11,6 +11,7 @@ from typing import Any
 import asyncpg
 import httpx2
 import pytest
+from temporalio import activity
 from temporalio.client import Client
 from temporalio.worker import Worker
 
@@ -19,10 +20,11 @@ from tests.test_billing import call, fake, in_org, spend, subscribe
 from worker import settings
 from worker.ai import AllowedModel, Gateway
 from worker.ai import Price as ModelPrice
-from worker.billing import SpendLimitExceeded, load_plans
+from worker.billing import BillingActivities, BillingEvent, SpendLimitExceeded, load_plans
 from worker.s3 import S3
-from worker.usage import StripeMeters, UsageActivities
-from worker.workflows import UsageReportWorkflow
+from worker.usage import StripeCredits, StripeMeters, UsageActivities
+from worker.usage import balance_cache as usage_balances
+from worker.workflows import BillingEventWorkflow, CrmSyncWorkflow, UsageReportWorkflow
 
 PLANS = load_plans(settings.PLANS_FILE.with_name("plans.examples.json"))
 
@@ -134,3 +136,97 @@ async def test_pay_as_you_go_warns_over_the_plan_limit_and_stops_at_own_cap(
     await in_org(pool, org, "update subscriptions set llm_spend_limits = null")
     with pytest.raises(SpendLimitExceeded):  # flag off: the plan's limit stops calls as before
         await call(gateway, org)
+
+
+class FakeCredits:
+    def __init__(self, balance: int = 0) -> None:
+        self.left = balance
+        self.grants: list[tuple[str, str, int, datetime | None, str]] = []
+
+    async def balance(self, customer_id: str, currency: str) -> int:
+        return self.left
+
+    async def grant(
+        self, customer_id: str, currency: str, amount: int, expires: datetime | None, key: str
+    ) -> None:
+        self.grants.append((customer_id, currency, amount, expires, key))
+
+
+async def test_paid_pack_is_granted_once_through_the_billing_workflow(pool: asyncpg.Pool) -> None:
+    credits = FakeCredits()
+    usage = UsageActivities(pool, PLANS, {}, {"stripe": credits})
+    billing = BillingActivities(pool, PLANS)
+    org = await new_org(pool)
+    await subscribe(pool, org, plan_id="prepaid", customer_id="cus_1")
+    at = datetime.now(UTC)
+    e = BillingEvent(
+        provider="stripe",
+        contour="en",
+        eventId=f"cs_{uuid.uuid4().hex}",
+        type="credits.purchased",
+        orgId=org,
+        occurredAt=at.isoformat(),
+        planId="prepaid",
+        currency="USD",
+        customerId="cus_1",
+        amount=1000,
+    )
+    client = await Client.connect(settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE)
+    queue = f"test-{uuid.uuid4()}"
+    async with Worker(
+        client,
+        task_queue=queue,
+        workflows=[BillingEventWorkflow, CrmSyncWorkflow],
+        activities=[billing.apply_billing_event, usage.grant_credits, _crm_noop],
+    ):
+        await client.execute_workflow(
+            BillingEventWorkflow.run, e, id=f"billing-stripe-{e.eventId}", task_queue=queue
+        )
+    assert await usage.grant_credits(e)  # a retry: same idempotency key for the provider
+    key = f"credits-{e.eventId}"
+    assert credits.grants == [("cus_1", "USD", 1000, at + timedelta(days=365), key)] * 2
+    audit = await in_org(pool, org, "select action from audit_log order by action")
+    assert [a["action"] for a in audit] == ["billing.credits.granted", "billing.credits.purchased"]
+
+
+@activity.defn(name="crm_sync")
+async def _crm_noop(_: Any) -> None:
+    return None
+
+
+async def test_calls_stop_when_the_prepaid_credit_is_used_up(
+    pool: asyncpg.Pool, s3: S3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    credits = FakeCredits(balance=0)
+    gateway = Gateway(
+        pool=pool,
+        s3=s3,
+        contour="eu",
+        registry={
+            ("fake", "fake-model"): AllowedModel(
+                frozenset({"project.summary"}), ModelPrice(Decimal("0.001"), Decimal(0), "USD")
+            )
+        },
+        providers={"fake": fake},
+        retention_days=1,
+        plans=PLANS,
+        credits={"stripe": credits},
+    )
+    org = await new_org(pool)
+    await subscribe(pool, org, plan_id="prepaid", customer_id="cus_1")
+    monkeypatch.setattr(settings, "FLAGS_ON", frozenset[str]())
+    await call(gateway, org)  # flag off: no balance check
+    monkeypatch.setattr(settings, "FLAGS_ON", frozenset({"billing-credits"}))
+    with pytest.raises(SpendLimitExceeded, match="prepaid credit is used up"):
+        await call(gateway, org)
+    usage_balances.pop(org)  # a new pack (grant_credits drops the cached balance)
+    credits.left = 500
+    await call(gateway, org)
+
+
+async def test_stripe_credit_grants_against_stripe_mock() -> None:
+    url = os.environ.get("STRIPE_API_URL", "http://localhost:12111")
+    async with httpx2.AsyncClient(timeout=10) as http:
+        stripe = StripeCredits(http, "sk_test_123", url)
+        assert await stripe.balance("cus_1", "USD") == 0  # stripe-mock's fixture currency is fake
+        await stripe.grant("cus_1", "USD", 1000, datetime.now(UTC) + timedelta(days=1), "k-1")

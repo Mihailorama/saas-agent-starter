@@ -19,7 +19,8 @@ const { allowedOrigins, env } = await import('../src/env.ts');
 const { closeTemporal, temporal } = await import('../src/temporal.ts');
 const { parsePlans, plans } = await import('../src/billing/plans.ts');
 const { entitlementsOf } = await import('../src/billing/entitlements.ts');
-const { lineItems } = await import('../src/billing/stripe.ts');
+const { lineItems, stripeProvider } = await import('../src/billing/stripe.ts');
+const { default: Stripe } = await import('stripe');
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
@@ -169,11 +170,11 @@ describe('checkout per model (stripe-mock)', () => {
       team: true,
       payg: true,
       growth: true,
-      prepaid: false, // Stripe sells credit packs only once credit grants are on (PR 3)
+      prepaid: true, // the metered part; packs are bought afterwards (top-up)
       enterprise: false,
       'enterprise-invoiced': false,
     });
-    for (const planId of ['starter', 'team', 'payg', 'growth']) {
+    for (const planId of ['starter', 'team', 'payg', 'growth', 'prepaid']) {
       const res = await call(owner, 'POST', '/api/billing/checkout', { planId });
       expect(res.statusCode, `${planId}: ${res.body}`).toBe(200);
     }
@@ -331,5 +332,89 @@ describe('usage-based billing (flag billing-usage)', () => {
     expect((await call(owner, 'GET', '/api/billing')).json().payg).toBe(true);
     await call(owner, 'PATCH', '/api/billing/llm-limit', { currency: 'USD', amount: 120 });
     expect(await level()).toBe('blocked');
+  });
+});
+
+describe('prepaid credit packs (flag billing-credits)', () => {
+  const withFlag = (on: boolean) => {
+    env.FLAGS_ON.splice(0, env.FLAGS_ON.length, ...(on ? ['billing-credits'] : []));
+  };
+  afterAll(() => withFlag(false));
+
+  it('sells a pack to a prepaid plan and shows the balance', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await withOrg(db, org, (tx) =>
+      tx.insert(subscriptions).values({
+        orgId: org,
+        planId: 'prepaid',
+        status: 'active',
+        contour: 'en',
+        provider: 'stripe',
+        currency: 'USD',
+        customerId: 'cus_123',
+        currentPeriodStart: new Date(Date.now() - 86_400_000),
+        currentPeriodEnd: new Date(Date.now() + 86_400_000),
+      }),
+    );
+    withFlag(false);
+    expect((await call(owner, 'GET', '/api/billing')).json().credits).toBeNull();
+    expect((await call(owner, 'POST', '/api/billing/credits/checkout')).statusCode).toBe(409);
+    withFlag(true);
+    const billing = (await call(owner, 'GET', '/api/billing')).json();
+    // stripe-mock's balance fixture has a placeholder currency: nothing in USD.
+    expect(billing.credits).toEqual({ balance: 0, pack: { credits: 1000, amount: '10.00' } });
+    const res = await call(owner, 'POST', '/api/billing/credits/checkout');
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().url).toMatch(/^https:\/\//);
+  });
+
+  it('maps a paid pack session to one credits.purchased event per session', async () => {
+    const secret = 'whsec_local-dev-test';
+    const provider = stripeProvider({
+      contour: 'en',
+      secretKey: 'sk_test_123',
+      webhookSecret: secret,
+      apiUrl: env.STRIPE_API_URL,
+    });
+    const stripe = new Stripe('sk_test_123');
+    const deliver = async (type: string, object: object) => {
+      const payload = JSON.stringify({
+        id: `evt_${randomUUID()}`,
+        object: 'event',
+        type,
+        created: 1_800_000_000,
+        data: { object },
+      });
+      const signature = await stripe.webhooks.generateTestHeaderStringAsync({ payload, secret });
+      return provider.webhook({
+        body: payload,
+        headers: { 'stripe-signature': signature },
+        ip: '',
+      });
+    };
+    const session = {
+      id: 'cs_1',
+      object: 'checkout.session',
+      metadata: { orgId: 'org_1', planId: 'prepaid', kind: 'credits' },
+      payment_status: 'paid',
+      currency: 'usd',
+      customer: 'cus_1',
+      amount_total: 1000,
+    };
+    for (const type of ['checkout.session.completed', 'checkout.session.async_payment_succeeded']) {
+      expect(await deliver(type, session)).toMatchObject([
+        {
+          type: 'credits.purchased',
+          eventId: 'cs_1',
+          orgId: 'org_1',
+          amount: 1000,
+          currency: 'USD',
+        },
+      ]);
+    }
+    expect(
+      await deliver('checkout.session.completed', { ...session, payment_status: 'unpaid' }),
+    ).toEqual([]);
+    expect(await deliver('checkout.session.completed', { ...session, metadata: {} })).toEqual([]);
   });
 });

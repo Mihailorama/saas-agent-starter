@@ -14,6 +14,10 @@ export interface BillingProvider {
   /** Optional: a subscription billed by invoice (bank transfer, `invoicing: 'provider'`), no
    * payment page. Its state arrives through the webhook like a checkout's. */
   invoice?(input: InvoiceInput): Promise<void>;
+  /** Optional (`creditBalance`): hosted payment page for one prepaid credit pack. */
+  topUp?(input: TopUpInput): Promise<{ url: string }>;
+  /** Optional (`creditBalance`): the prepaid balance left, in minor units of the currency. */
+  creditBalance?(sub: Subscription): Promise<number>;
   /** Hosted self-service page (invoices, payment method), or null if the provider has none. */
   portal(sub: Subscription, returnUrl: string): Promise<string | null>;
   /** Stop renewing at the end of the paid period. */
@@ -55,6 +59,16 @@ export type CheckoutInput = {
   returnUrl: string;
 };
 
+export type TopUpInput = {
+  orgId: string;
+  planId: string;
+  currency: string;
+  customerId: string;
+  /** The plan's `credits` component in `currency`. */
+  pack: Extract<PriceComponent, { model: 'credits' }>;
+  returnUrl: string;
+};
+
 export type InvoiceInput = Omit<CheckoutInput, 'returnUrl' | 'seats'> & {
   orgName: string;
   contractRef: string;
@@ -79,7 +93,9 @@ export type BillingEvent = {
     | 'subscription.past_due'
     | 'subscription.canceled'
     | 'payment.succeeded'
-    | 'payment.failed';
+    | 'payment.failed'
+    /** A paid credit pack; the worker grants the credit in the provider (once per eventId). */
+    | 'credits.purchased';
   orgId: string;
   /** ISO time the provider produced the event; older events never overwrite newer state. */
   occurredAt: string;
@@ -94,6 +110,8 @@ export type BillingEvent = {
   seats?: number;
   /** Contract reference (order form, PO number) of an invoiced contract. */
   contractRef?: string;
+  /** credits.purchased: amount paid, minor units of `currency`. */
+  amount?: number;
 };
 
 export class WebhookRejected extends Error {}
