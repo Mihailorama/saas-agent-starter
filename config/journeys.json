@@ -24,6 +24,16 @@
       ]
     },
     {
+      "name": "onboarding-tour",
+      "description": "A new user who sees the product tour finishes it (docs/onboarding.md).",
+      "windowDays": 1,
+      "minConversion": 40,
+      "steps": [
+        { "event": "onboarding_tour_started" },
+        { "event": "onboarding_tour_completed", "maxStepSeconds": 120 }
+      ]
+    },
+    {
       "name": "demo-booking",
       "description": "A visitor or user opens a booking link and books a call in the Cal.com embed (docs/crm.md). Bookings made on the Cal.com page after the link opened there are counted in Cal.com, not here.",
       "windowDays": 1,
