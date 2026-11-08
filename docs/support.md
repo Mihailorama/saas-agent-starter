@@ -250,8 +250,7 @@ still a description of a user's problem; use Plane on-prem where that is not all
 
 ### Live smoke run
 
-Against a real Plane project (for example a demo project such as `STARTERDEMO`), once a token
-is available. It files one alert (`[cjm] smoke test: signup funnel`, a comment on later runs),
+Against a real Plane test project, once a token is available. It files one alert (`[cjm] smoke test: signup funnel`, a comment on later runs),
 one support item and one release comment on that item, all in Intake, and prints their links;
 nothing is closed or moved. Decline the items in Intake afterwards.
 
