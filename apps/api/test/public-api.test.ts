@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto';
 import {
   auditLog,
   organization,
-  user,
   webhookDeliveries,
   webhookEndpoints,
   webhookEvents,

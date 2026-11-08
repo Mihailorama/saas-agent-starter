@@ -76,6 +76,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Kbd } from '@/components/ui/kbd';
 import { Label } from '@/components/ui/label';
 import {
@@ -371,6 +372,16 @@ export function UiGallery() {
           <div className="space-y-2">
             <Label htmlFor="g-date">Date picker</Label>
             <DatePicker id="g-date" value={date} onChange={setDate} defaultMonth={sampleMonth} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="g-otp">One-time code</Label>
+            <InputOTP id="g-otp" maxLength={6} autoComplete="one-time-code">
+              <InputOTPGroup>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <InputOTPSlot key={i} index={i} />
+                ))}
+              </InputOTPGroup>
+            </InputOTP>
           </div>
           <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="g-textarea">Textarea</Label>

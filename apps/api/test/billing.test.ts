@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { aiCalls, aiProviders, auditLog, subscriptions, user, withOrg } from '@app/db';
+import { aiCalls, aiProviders, auditLog, subscriptions, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
-import { signUp as codeSignUp } from './sign-in.ts';
 import { auth } from '../src/auth.ts';
 import { billingPeriod, entitlementsOf, type Subscription } from '../src/billing/entitlements.ts';
 import { plans } from '../src/billing/plans.ts';
@@ -13,6 +12,7 @@ import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { costCurrency } from '../src/routes/billing.ts';
 import { billingWorkflowId, closeTemporal, temporal } from '../src/temporal.ts';
+import { signUp as codeSignUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;

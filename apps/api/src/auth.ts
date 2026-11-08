@@ -1,10 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { schema } from '@app/db';
 import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { createAuthMiddleware } from 'better-auth/api';
-import { randomUUID } from 'node:crypto';
 import { admin, emailOTP, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
@@ -155,7 +155,10 @@ export const auth = betterAuth({
         // The twoFactor plugin only challenges password sign-ins; run its same step after a code
         // sign-in, so an account with TOTP gets { twoFactorRedirect } and no session.
         after: [
-          { matcher: (c) => c.path === '/sign-in/email-otp', handler: totp.hooks.after[0]!.handler },
+          {
+            matcher: (c) => c.path === '/sign-in/email-otp',
+            handler: totp.hooks.after[0]!.handler,
+          },
         ],
       },
     },

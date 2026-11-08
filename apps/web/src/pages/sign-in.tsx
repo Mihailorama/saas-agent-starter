@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { KeyRound, Layers, MailCheck } from 'lucide-react';
 import { REGEXP_ONLY_DIGITS } from 'input-otp';
+import { KeyRound, Layers, MailCheck } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -136,7 +136,8 @@ export function SignInPage() {
     }
     // ponytail: "new" = created by this sign-in (within a minute); the API does not say it.
     const created = 'user' in data ? new Date(data.user.createdAt).getTime() : 0;
-    track(Date.now() - created < 60_000 ? 'signup_completed' : 'signin_completed');
+    if (Date.now() - created < 60_000) track('signup_completed');
+    else track('signin_completed');
     navigate({ href: redirect ?? '/' });
   }
 
@@ -208,7 +209,10 @@ export function SignInPage() {
   }
 
   return (
-    <AuthLayout title="Sign in" description="Enter your email: we will send you a code. New here? The code creates your account.">
+    <AuthLayout
+      title="Sign in"
+      description="Enter your email: we will send you a code. New here? The code creates your account."
+    >
       <form
         className="space-y-4"
         aria-label="Sign in"

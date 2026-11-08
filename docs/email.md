@@ -1,7 +1,8 @@
 # Transactional email
 
-Better Auth sends three mails: email verification on sign-up (and again on a sign-in attempt
-with an unconfirmed address), password reset, and organization invitations. Design:
+Better Auth sends three mails: the sign-in code (sign-in and sign-up, ADR 0029), an
+email-verification code where Better Auth verifies an address by itself, and organization
+invitations. The privacy flows add "your data export is ready". Design:
 [ADR 0014](adr/0014-transactional-email.md).
 
 ```
@@ -11,21 +12,20 @@ Better Auth callback (apps/api/src/auth.ts)
   -> worker (services/worker-py/worker/mail.py): one SMTP delivery per attempt, retried
 ```
 
-The callbacks run after the HTTP response (`advanced.backgroundTasks`), so a reset request for
+The callbacks run after the HTTP response (`advanced.backgroundTasks`), so a code request for
 an unknown address answers exactly like one for a real account. An SMTP outage does not lose
-mail: Temporal retries the activity (5 s, doubling, at most 5 min apart) for up to 1 hour,
-which is how long verification and reset links stay valid. A recipient the server refuses
+mail: Temporal retries the activity (5 s, doubling, at most 5 min apart) for up to 1 hour; a
+code lives 5 minutes, so a late one is useless and the user asks for a new one. A recipient the server refuses
 (unknown mailbox, policy) fails at once, without retries.
 
 ## Configuration
 
-| Variable                     | Where  | Default (`.env.example`)           | Meaning                                                |
-| ---------------------------- | ------ | ---------------------------------- | ------------------------------------------------------ |
-| `SMTP_URL`                   | worker | `smtp://localhost:1025?tls=none`   | SMTP server, see below                                 |
-| `MAIL_FROM`                  | worker | `Workspace <no-reply@example.com>` | From header; its domain must be set up at the provider |
-| `EMAIL_TASK_QUEUE`           | both   | `email`                            | Temporal task queue of `SendEmailWorkflow`             |
-| `REQUIRE_EMAIL_VERIFICATION` | API    | `true`                             | No session until the address is confirmed              |
-| `BETTER_AUTH_URL`            | API    | `http://localhost:5173`            | Origin the links point to (web origin, `/api` proxied) |
+| Variable           | Where  | Default (`.env.example`)           | Meaning                                                |
+| ------------------ | ------ | ---------------------------------- | ------------------------------------------------------ |
+| `SMTP_URL`         | worker | `smtp://localhost:1025?tls=none`   | SMTP server, see below                                 |
+| `MAIL_FROM`        | worker | `Workspace <no-reply@example.com>` | From header; its domain must be set up at the provider |
+| `EMAIL_TASK_QUEUE` | both   | `email`                            | Temporal task queue of `SendEmailWorkflow`             |
+| `BETTER_AUTH_URL`  | API    | `http://localhost:5173`            | Origin the links point to (web origin, `/api` proxied) |
 
 `SMTP_URL` forms (credentials URL-encoded, e.g. `@` as `%40`):
 
@@ -42,7 +42,7 @@ and a DNS change, no code.
 `docker compose up -d mailpit` (part of the default stack and of the infra line in AGENTS.md)
 catches every mail. Web UI and REST API: http://localhost:8025 (`MAILPIT_UI_PORT`), SMTP on
 `localhost:1025` (`MAILPIT_SMTP_PORT`). Nothing leaves the machine. The integration tests read
-the mails from its API (`MAILPIT_URL`) and follow the links, so `pnpm check` needs Mailpit and
+the mails from its API (`MAILPIT_URL`) and type the codes, so `pnpm check` needs Mailpit and
 a running worker (`pnpm worker`).
 
 ## Choosing a provider

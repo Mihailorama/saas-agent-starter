@@ -33,7 +33,8 @@ const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
       heading: () => 'Confirm your email address',
       body: () => 'Enter this code to confirm your email address.',
       button: '',
-      footer: 'The code expires in 5 minutes. If you did not ask for it, you can ignore this email.',
+      footer:
+        'The code expires in 5 minutes. If you did not ask for it, you can ignore this email.',
     },
     invitation: {
       subject: (v) => `${v.inviter} invited you to ${v.org}`,
@@ -172,28 +173,29 @@ export async function renderEmail(
             action,
           ),
         ]
-      : [    h(
-      'p',
-      { key: 'a', style: { margin: '24px 0' } },
-      h(
-        'a',
-        {
-          href: action,
-          style: {
-            backgroundColor: '#18181b',
-            borderRadius: '6px',
-            color: '#ffffff',
-            display: 'inline-block',
-            fontSize: '14px',
-            fontWeight: 600,
-            padding: '12px 20px',
-            textDecoration: 'none',
-          },
-        },
-        t.button,
-      ),
-    ),
-    h('p', { key: 'f', style: muted }, `${copy.fallback} `, h('a', { href: action }, action)),
+      : [
+          h(
+            'p',
+            { key: 'a', style: { margin: '24px 0' } },
+            h(
+              'a',
+              {
+                href: action,
+                style: {
+                  backgroundColor: '#18181b',
+                  borderRadius: '6px',
+                  color: '#ffffff',
+                  display: 'inline-block',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  padding: '12px 20px',
+                  textDecoration: 'none',
+                },
+              },
+              t.button,
+            ),
+          ),
+          h('p', { key: 'f', style: muted }, `${copy.fallback} `, h('a', { href: action }, action)),
         ]),
     h('p', { key: 'n', style: muted }, t.footer),
   ]);

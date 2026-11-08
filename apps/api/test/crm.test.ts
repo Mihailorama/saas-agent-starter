@@ -1,6 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { WorkflowNotFoundError } from '@temporalio/client';
-import { createEmailVerificationToken } from 'better-auth/api';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
@@ -9,6 +8,7 @@ import { allowedOrigins, env } from '../src/env.ts';
 import { ensureBucket, getJson } from '../src/s3.ts';
 import { closeTemporal, crmWorkflowId, temporal } from '../src/temporal.ts';
 import { historyText } from './history.ts';
+import { signUp } from './sign-in.ts';
 
 // CRM sync starts (docs/crm.md): the API verifies the webhook and starts CrmSyncWorkflow with ids
 // only (a booking's attendee goes to S3); the worker's side is services/worker-py/tests/test_crm.py.
@@ -159,26 +159,27 @@ describe('Chatwoot conversation -> CRM', () => {
 
 describe('verified sign-up and new organization -> CRM', () => {
   it('syncs the person only once the email is verified, the company on create', async () => {
+    // An unverified account (an SSO user the IdP does not vouch for): not proven, so it must not
+    // match a CRM person yet. It verifies with an email-verification code.
     const email = `${randomUUID()}@example.com`;
-    const res = await app.inject({
+    const { internalAdapter } = await auth.$context;
+    const { id: userId } = await internalAdapter.createUser(
+      { email, name: 'T' },
+      { method: 'oauth' },
+    );
+    await notStarted(`user:${userId}`);
+    const otp = await auth.api.createVerificationOTP({
+      body: { email, type: 'email-verification' },
+    });
+    const verified = await app.inject({
       method: 'POST',
-      url: '/api/auth/sign-up/email',
+      url: '/api/auth/email-otp/verify-email',
       remoteAddress: ip(),
       headers: { origin: allowedOrigins[0]! },
-      payload: { email, password: 'correct-horse-battery', name: 'T' },
+      payload: { email, otp },
     });
-    expect(res.statusCode).toBe(200);
-    const userId: string = res.json().user.id;
-    // Unverified: the address is not proven, so it must not match a CRM person yet.
-    await notStarted(`user:${userId}`);
-
-    const token = await createEmailVerificationToken(env.BETTER_AUTH_SECRET, email);
-    const verified = await app.inject({
-      method: 'GET',
-      url: `/api/auth/verify-email?token=${token}`,
-      remoteAddress: ip(),
-    });
-    expect(verified.statusCode).toBeLessThan(400);
+    expect(verified.statusCode, verified.body).toBe(200);
+    expect(verified.json().token).toBeNull(); // verifying is not signing in (no 2FA skip)
     const run = await started(`user:${userId}`);
     expect(run.type).toBe('CrmSyncWorkflow');
     expect(JSON.parse(run.input)).toEqual({
@@ -187,6 +188,10 @@ describe('verified sign-up and new organization -> CRM', () => {
       userId,
     }); // ids only
     expect(run.history).not.toContain(email);
+
+    // A code sign-up is verified from the start: synced at once.
+    const signedUp = await signUp(app);
+    expect((await started(`user:${signedUp.id}`)).type).toBe('CrmSyncWorkflow');
 
     const org = await auth.api.createOrganization({
       body: { name: 'Acme', slug: randomUUID(), userId },

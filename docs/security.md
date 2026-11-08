@@ -9,16 +9,16 @@ like), so they cannot be used to spam the system with throwaway accounts.
 
 | Entry point                                  | Where it is enforced                                    |
 | -------------------------------------------- | ------------------------------------------------------- |
-| Email + password sign-up                     | Better Auth `databaseHooks.user.create.before`          |
+| Asking for a sign-in code (no code, no mail) | `before` hook on `/email-otp/send-verification-otp`     |
+| First code sign-in (creates the account)     | Better Auth `databaseHooks.user.create.before`          |
 | SSO (OIDC) first login                       | same hook: the IdP's address is checked too             |
 | Users created by an operator (admin plugin)  | same hook                                               |
 | Email change (off in this app; if turned on) | `databaseHooks.user.update.before` when `email` changes |
 | Organization invitations (invited address)   | `organizationHooks.beforeCreateInvitation`              |
 
-Magic link and email OTP are not enabled; if added, their users are created through the same
-hook. The answer is a `400` with code `EMAIL_NOT_ALLOWED` and a neutral message ("This email
+The answer is a `400` with code `EMAIL_NOT_ALLOWED` and a neutral message ("This email
 address cannot be used. Please use another one."), never the list or the matched domain. The
-sign-up form shows that message.
+sign-in page shows that message.
 
 **SSO choice: reject.** An IdP vouches that the mailbox works, and a temporary mailbox works
 too: an IdP with open self-registration would otherwise be a way around the check. An operator

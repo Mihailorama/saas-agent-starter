@@ -11,5 +11,11 @@ import { createAuthClient } from 'better-auth/react';
  * adminClient only types `user.role` and `session.impersonatedBy` (docs/admin.md): the admin
  * plugin's endpoints are closed; operator actions go through /api/admin. */
 export const authClient = createAuthClient({
-  plugins: [emailOTPClient(), organizationClient(), twoFactorClient(), passkeyClient(), adminClient()],
+  plugins: [
+    emailOTPClient(),
+    organizationClient(),
+    twoFactorClient(),
+    passkeyClient(),
+    adminClient(),
+  ],
 });

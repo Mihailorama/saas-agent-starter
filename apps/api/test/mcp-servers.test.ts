@@ -1,7 +1,7 @@
 // MCP servers an organization connects (docs/mcp.md "Calling external tools"): flag, admin and
 // API key access, validation, secret at rest, tenancy. Tool calls are tested in the worker.
 import { randomUUID } from 'node:crypto';
-import { auditLog, mcpServers, user, withOrg } from '@app/db';
+import { auditLog, mcpServers, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 

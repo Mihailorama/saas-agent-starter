@@ -52,9 +52,11 @@ export async function buildApp() {
         const ctx = trace.getActiveSpan()?.spanContext();
         return ctx ? { trace_id: ctx.traceId, span_id: ctx.spanId } : {};
       },
-      redact: { paths: ['*.password', '*.otp', '*.token', '*.secret', '*.cookie', '*.authorization'] },
+      redact: {
+        paths: ['*.password', '*.otp', '*.token', '*.secret', '*.cookie', '*.authorization'],
+      },
       serializers: {
-        // Never log query strings or reset tokens (mailed auth links carry them) or headers.
+        // Never log query strings (mailed links can carry tokens) or headers.
         req: (req) => ({ method: req.method, url: redactUrl(req.url), ip: req.ip }),
       },
     },
@@ -220,21 +222,28 @@ export async function buildApp() {
   authRoute('/api/auth/send-verification-email', 10, ['POST']);
   authRoute('/api/auth/email-otp/*', 10, ['POST']);
   // Resend cooldown: one code per address per 30 s, whoever asks. Each request replaces the
-  // address's code, so this also stops others from invalidating a code faster than that.
-  const codeCooldown = app.rateLimit({
-    max: 1,
-    timeWindow: '30 seconds',
-    keyGenerator: (req) =>
-      `otp:${createHash('sha256')
-        .update(String((req.body as { email?: unknown })?.email ?? '').toLowerCase())
-        .digest('base64url')}`,
+  // address's code, so this also stops others from invalidating a code faster than that. A
+  // Redis key of its own: the rate-limit plugin runs only one limiter per request.
+  const cooldownKey = (body: unknown) =>
+    `otp-cooldown:${createHash('sha256')
+      .update(String((body as { email?: unknown })?.email ?? '').toLowerCase())
+      .digest('base64url')}`;
+  // A code that signed in ends the cooldown: signing out and in again needs no wait.
+  app.addHook('onResponse', async (req, reply) => {
+    if (req.url === '/api/auth/sign-in/email-otp' && reply.statusCode === 200) {
+      await redis.del(cooldownKey(req.body));
+    }
   });
   app.post(
     '/api/auth/email-otp/send-verification-otp',
     {
       schema: { hide: true },
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
-      preHandler: codeCooldown,
+      preHandler: async (req, reply) => {
+        if (!(await redis.set(cooldownKey(req.body), '1', 'EX', 30, 'NX'))) {
+          return reply.code(429).send({ error: 'wait 30 seconds before asking for another code' });
+        }
+      },
     },
     authHandler,
   );
