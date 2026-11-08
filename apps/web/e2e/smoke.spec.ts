@@ -15,6 +15,16 @@ async function signUp(page: Page, email: string) {
   await page.goto(await mailedLink(email, /Confirm/));
 }
 
+test('sign-up refuses a disposable email address with a clear message', async ({ page }) => {
+  await page.goto('/sign-in');
+  await page.getByRole('button', { name: 'Create an account' }).click();
+  await page.getByLabel('Name').fill('Ada Lovelace');
+  await page.getByLabel('Email').fill(`${randomUUID()}@mailinator.com`);
+  await page.getByLabel('Password').fill('correct-horse-battery');
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByText('This email address cannot be used')).toBeVisible();
+});
+
 test('sign up, create an organization and a project', async ({ page }) => {
   // On-prem default: no request leaves our own hosts (analytics sinks are env-gated).
   const hosts = new Set<string>();
@@ -31,6 +41,9 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await page.getByLabel('Description (optional)').fill('Tabulates polynomial functions.');
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('link', { name: 'Difference Engine' })).toBeVisible();
+  // The `onboarding` flag is off here: no checklist and no tour (e2e/onboarding.spec.ts).
+  await expect(page.getByText('Get set up')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // The owner is an org admin and sees the AI call log (empty: no AI configured in tests).
   await page.getByRole('link', { name: 'AI calls' }).click();

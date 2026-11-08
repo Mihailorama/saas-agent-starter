@@ -3,7 +3,9 @@ import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { APIError } from 'better-auth/api';
 import { admin, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { z } from 'zod';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
 import { attachReferral, cleanReferral } from './billing/referrals.ts';
@@ -13,6 +15,7 @@ import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
 import { mfaGuard } from './mfa.ts';
 import { operatorGuard } from './operator-guard.ts';
+import { assertAllowedEmail } from './signup-guard.ts';
 import { type CrmEvent, startCrmSync, startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
@@ -61,6 +64,24 @@ const oidc =
     : [];
 export const ssoEnabled = oidc.length > 0;
 
+/**
+ * The only keys an organization's `metadata` may hold (onboarding company details,
+ * docs/onboarding.md). Checked on create and update; anything else is a 400.
+ */
+export const ORG_SIZES = ['1-10', '11-50', '51-200', '201-1000', '1000+'] as const;
+export const OrgMetadata = z.strictObject({
+  size: z.enum(ORG_SIZES).optional(),
+  website: z
+    .url({ protocol: /^https?$/ })
+    .max(200)
+    .optional(),
+});
+const checkMetadata = async ({ organization }: { organization: { metadata?: unknown } }) => {
+  if (organization.metadata != null && !OrgMetadata.safeParse(organization.metadata).success) {
+    throw new APIError('BAD_REQUEST', { message: 'invalid organization metadata' });
+  }
+};
+
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   basePath: '/api/auth',
@@ -71,16 +92,20 @@ export const auth = betterAuth({
   // vouches for): an unverified sign-up must not claim a CRM person who has that email.
   // Referral the sign-up came with (docs/growth.md); only a well-formed code is stored.
   user: { additionalFields: { referralCode: { type: 'string', required: false, input: true } } },
+  // Disposable addresses (signup-guard.ts) are refused on every user write: email sign-up, SSO,
+  // operator-created users and an email change. Invitations are checked in organizationHooks.
   databaseHooks: {
     user: {
       create: {
-        before: async (user) => ({
-          data: { ...user, referralCode: cleanReferral(user.referralCode) },
-        }),
+        before: async (user) => {
+          await assertAllowedEmail(user.email);
+          return { data: { ...user, referralCode: cleanReferral(user.referralCode) } };
+        },
         after: async (user) => {
           if (user.emailVerified) await personSync(user.id);
         },
       },
+      update: { before: async (user) => assertAllowedEmail(user.email) },
     },
   },
   emailAndPassword: {
@@ -105,6 +130,9 @@ export const auth = betterAuth({
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
       organizationHooks: {
+        beforeCreateOrganization: checkMetadata,
+        beforeUpdateOrganization: checkMetadata,
+        beforeCreateInvitation: async ({ invitation }) => assertAllowedEmail(invitation.email),
         afterCreateOrganization: async ({ organization, user }) => {
           await attachReferral(organization.id, user.id);
           await crmSync({

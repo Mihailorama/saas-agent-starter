@@ -27,6 +27,11 @@ const schema = z
     EMAIL_TASK_QUEUE: z.string().default('email'),
     /** Sign-in needs a confirmed email address. Off only for setups that verify elsewhere. */
     REQUIRE_EMAIL_VERIFICATION: z.stringbool().default(true),
+    /** Refuse disposable addresses at sign-up, email change and invitation (docs/security.md). */
+    SIGNUP_BLOCK_DISPOSABLE: z.stringbool().default(true),
+    /** Domains (and their subdomains) always accepted / always refused, comma-separated. */
+    SIGNUP_EMAIL_ALLOW_DOMAINS: list.transform((l) => l.map((d) => d.toLowerCase())),
+    SIGNUP_EMAIL_DENY_DOMAINS: list.transform((l) => l.map((d) => d.toLowerCase())),
     S3_ENDPOINT: z.url().optional(),
     /** Endpoint browsers use for presigned URLs; defaults to S3_ENDPOINT. */
     S3_PUBLIC_ENDPOINT: z.url().optional(),

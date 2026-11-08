@@ -7,6 +7,7 @@ import { WorkflowNotFoundError } from '@temporalio/client';
 import { eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
+import { OrgMetadata } from '../src/auth.ts';
 import { entitlements, type Subscription } from '../src/billing/entitlements.ts';
 import type { BillingProvider } from '../src/billing/provider.ts';
 import { providerFor } from '../src/billing/registry.ts';
@@ -120,6 +121,12 @@ describe('config/rewards.json', () => {
     expect(bad({ ...money, trigger: 'button_clicked' })).toBe(false); // client events never count
     expect(bad({ ...money, trigger: 'org.profile_completed' })).toBe(false); // no requiredMetadata
     expect(RewardsConfig.safeParse({ version: 1, rules: [money, money] }).success).toBe(false);
+  });
+  it('org.profile_completed rules need only the metadata keys the API validates (OrgMetadata)', () => {
+    const valid = Object.keys(OrgMetadata.shape);
+    for (const r of rewards.rules.filter((x) => x.trigger === 'org.profile_completed')) {
+      expect(valid).toEqual(expect.arrayContaining(r.requiredMetadata!));
+    }
   });
 });
 

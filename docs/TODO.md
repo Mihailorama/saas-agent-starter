@@ -1,5 +1,10 @@
 # Known limitations / backlog
 
+- **Onboarding: tour "seen" and checklist "dismissed" are per browser** (docs/onboarding.md,
+  `apps/web/src/lib/onboarding.ts`). They live in `localStorage` to avoid a table and a migration,
+  so a user on a second device sees the tour once more and the card again. If that bothers users:
+  a nullable `user.onboarding_tour_seen_at` column (Better Auth `additionalFields`) set from the
+  tour and read in the session; the checklist dismissal the same way or per organization.
 - **MCP tools: admins type tool names; no "test connection"** (docs/mcp.md "Not covered"). The
   API never connects out. Fix: a small Temporal workflow (`ListMcpToolsWorkflow`) the settings
   page starts, returning the server's tool names through the SSRF pin; offer them as checkboxes.
@@ -256,3 +261,13 @@
   (docs/support.md "Live smoke run": `python -m worker.tracker smoke`) against the `STARTERDEMO`
   test project (Cloud and self-hosted CE) and check labels, Intake placement, the release
   comment's author check (`users/me`) and the return-path notes. Needs a Plane token.
+- **Bot check on sign-up (captcha), not wired yet** (docs/security.md "Sign-up protection",
+  2026-11-08). Disposable addresses are refused; scripted sign-ups with real-looking addresses
+  are only rate-limited. Better Auth's `captcha` plugin (`better-auth/plugins`) supports Cloudflare
+  Turnstile, reCAPTCHA, hCaptcha, CaptchaFox and Vercel BotID, server side in a few lines; it needs
+  the provider widget on `apps/web/src/pages/sign-in.tsx` (header `x-captcha-response`) and the
+  provider's origins in the web CSP. Plan: default off, env-only "connect" (`CAPTCHA_PROVIDER`,
+  `CAPTCHA_SECRET_KEY`, `VITE_CAPTCHA_SITE_KEY`) for Turnstile/hCaptcha. Self-hosted "install"
+  path: ALTCHA (MIT, proof of work) has no Better Auth provider; it would be a small own
+  `hooks.before` verifying the ALTCHA payload with its library, check its license and
+  maintenance first.
