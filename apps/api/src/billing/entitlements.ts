@@ -2,7 +2,7 @@ import { aiCalls, organization, subscriptions, type Tx, withOrg } from '@app/db'
 import { and, eq, gte, lt, sum } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db.ts';
-import { type Limit, type Plan, planById, plans } from './plans.ts';
+import { type Limit, type Plan, type PriceModel, planById, plans } from './plans.ts';
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type Entitlements = {
@@ -12,6 +12,8 @@ export type Entitlements = {
   /** Billing period the LLM spend is counted in: the paid period, else the calendar month. */
   period: { start: Date; end: Date };
   limits: Record<Limit, number>;
+  /** Price models of the plan in force, in the subscription's currency (empty: free plan). */
+  models: PriceModel[];
   features: Record<string, boolean>;
   /** Effective monthly LLM spend limit per cost currency (plan default or admin-raised). */
   llmSpendLimit: (currency: string) => number | undefined;
@@ -57,15 +59,21 @@ export function entitlementsOf(
   overrides: LimitOverrides = null,
 ): Entitlements {
   const [planId, plan] = planById(paid(sub, now) ? sub.planId : null);
+  const models = (sub && paid(sub, now) ? (plan.prices[sub.currency] ?? []) : []).map(
+    (c) => c.model,
+  );
+  // Per seat: the purchased quantity is the limit (more seats are bought in the portal).
+  const seats = models.includes('per_seat') && sub?.seats ? sub.seats : undefined;
   return {
     planId,
     plan,
     subscription: sub,
     period: billingPeriod(sub, now),
     limits: {
-      seats: limitOf(plan, 'seats', overrides),
+      seats: overrides?.seats === undefined && seats ? seats : limitOf(plan, 'seats', overrides),
       projects: limitOf(plan, 'projects', overrides),
     },
+    models,
     features: plan.features,
     llmSpendLimit: (currency) => {
       const base = plan.limits.llmSpendMonthly[currency];
