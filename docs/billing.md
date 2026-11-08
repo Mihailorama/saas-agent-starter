@@ -1,7 +1,7 @@
 # Billing, plans and LLM spend limits
 
 Design and alternatives: [ADR 0019](adr/0019-billing.md), pricing models
-[ADR 0029](adr/0029-pricing-models.md). This page is the how-to.
+[ADR 0031](adr/0031-pricing-models.md). This page is the how-to.
 
 ## What is where
 

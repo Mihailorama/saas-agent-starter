@@ -1,8 +1,7 @@
-# 0029. Billing without an assumed pricing model or payment rail
+# 0031. Billing without an assumed pricing model or payment rail
 
 Status: accepted (owner rule, 2026-11-08: the boilerplate must not assume a pricing model or a
-payment rail; research on Stripe Meters, credit grants and OSS engines on 2026-11-08). Number to
-be renumbered at merge if taken.
+payment rail; research on Stripe Meters, credit grants and OSS engines on 2026-11-08).
 
 ## Context
 
