@@ -441,6 +441,8 @@ services:
         VITE_YM_WEBVISOR: ${VITE_YM_WEBVISOR:-}
         VITE_LANGFUSE_PUBLIC_KEY: ${VITE_LANGFUSE_PUBLIC_KEY:-}
         VITE_LANGFUSE_HOST: ${VITE_LANGFUSE_HOST:-}
+        VITE_FORMBRICKS_WORKSPACE_ID: ${VITE_FORMBRICKS_WORKSPACE_ID:-}
+        VITE_FORMBRICKS_API_HOST: ${VITE_FORMBRICKS_API_HOST:-}
         # in-app help widget (Chatwoot); empty = no Help entry (docs/support.md)
         VITE_CHATWOOT_BASE_URL: ${VITE_CHATWOOT_BASE_URL:-}
         VITE_CHATWOOT_WEBSITE_TOKEN: ${VITE_CHATWOOT_WEBSITE_TOKEN:-}
@@ -917,6 +919,69 @@ services:
       start_period: 5m
     ports: ["127.0.0.1:${CALDIY_PORT:-3500}:3000"]
 
+  # --- vault profile: Vaultwarden (AGPL-3.0, unmodified, Bitwarden-compatible) as the secrets
+  # vault humans and coding agents read from and save to with the `bw` CLI (docs/secrets.md,
+  # scripts/vault.mjs). docker compose --profile vault up -d ; its data lives in database
+  # `vaultwarden` on our Postgres server, so pgBackRest covers it (docs/backups.md). No public
+  # signups: the first and every further account is invited from /admin, which is on only while
+  # VAULT_ADMIN_TOKEN is set. An existing Bitwarden/Vaultwarden needs no container (docs/secrets.md).
+  vault-db:
+    logging: *logging
+    profiles: [vault]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'vaultwarden'" | grep -q 1 ||
+         psql -c "create role vaultwarden login password 'vaultwarden'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'vaultwarden'" | grep -q 1 ||
+         psql -c "create database vaultwarden owner vaultwarden")
+
+  vault:
+    logging: *logging
+    profiles: [vault]
+    image: vaultwarden/server:1.37.5-alpine@sha256:bbe684a02d6b0db54256ff88eac9754f4519284a7b26314afc241fd7d0918191
+    mem_limit: 128m
+    depends_on:
+      vault-db: { condition: service_completed_successfully }
+      mailpit: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://vaultwarden:vaultwarden@postgres:5432/vaultwarden
+      DOMAIN: ${VAULT_DOMAIN:-https://localhost:${VAULT_PORT:-8222}}
+      SIGNUPS_ALLOWED: "false"
+      INVITATIONS_ALLOWED: "true"
+      ADMIN_TOKEN: ${VAULT_ADMIN_TOKEN:-} # empty = /admin disabled; argon2 hash recommended
+      # Secrets stay in the database (backed up): no file attachments or file Sends on the volume.
+      USER_ATTACHMENT_LIMIT: "0"
+      ORG_ATTACHMENT_LIMIT: "0"
+      SENDS_ALLOWED: "false"
+      SMTP_HOST: mailpit # invitation mails land in Mailpit (:8025)
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: "off"
+      SMTP_FROM: vault@example.com
+    volumes: [vault-data:/data] # RSA signing key + icon cache only (docs/backups.md)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:80/alive"]
+      interval: 5s
+      start_period: 30s
+      retries: 12
+
+  # The bw CLI refuses plain HTTP, even to localhost: Caddy's local CA terminates TLS. Trust it
+  # once: docker compose cp vault-tls:/data/caddy/pki/authorities/local/root.crt \
+  #   ~/.config/agent-vault/ca.crt   (scripts/vault.mjs passes it to bw, docs/secrets.md)
+  vault-tls:
+    logging: *logging
+    profiles: [vault]
+    image: caddy:2.11-alpine
+    mem_limit: 64m
+    command:
+      ["caddy", "reverse-proxy", "--from", "localhost", "--to", "vault:80", "--internal-certs"]
+    depends_on: { vault: { condition: service_healthy } }
+    volumes: [vault-tls:/data] # the local CA: keep it, or trust the new root again
+    ports: ["127.0.0.1:${VAULT_PORT:-8222}:443"]
+
   # Full LLM-ops profile: Langfuse v4 (MIT core) on our Postgres server (own database), our
   # Redis (own db index) and our S3 (own bucket), plus ClickHouse. Langfuse's optional AI
   # gateway container is left out. Memory limits are the measured working set plus headroom
@@ -1040,3 +1105,5 @@ volumes:
   serpbear-data:
   twenty-data:
   clickhousedata:
+  vault-data:
+  vault-tls:

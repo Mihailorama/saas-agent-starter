@@ -36,3 +36,13 @@ services:
     profiles: !override [agpl-disabled]
   twenty-db:
     profiles: !override [agpl-disabled]
+
+  # No Vaultwarden (AGPL-3.0) in the vault profile: connect scripts/vault.mjs to Bitwarden Cloud or
+  # a Bitwarden-compatible server you license (docs/secrets.md "Connect"). OpenBao (MPL-2.0) and
+  # Infisical (MIT core) were evaluated: neither speaks the Bitwarden API the bw CLI needs.
+  vault:
+    profiles: !override [agpl-disabled]
+  vault-db:
+    profiles: !override [agpl-disabled]
+  vault-tls:
+    profiles: !override [agpl-disabled]
