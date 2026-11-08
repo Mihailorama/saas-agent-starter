@@ -77,7 +77,7 @@ async def test_profile_reward_once_when_complete(pool: asyncpg.Pool) -> None:
     await pool.execute(
         "update organization set metadata = $2 where id = $1",
         org_id,
-        json.dumps({"website": "https://example.com", "industry": "saas"}),
+        json.dumps({"website": "https://example.com", "size": "11-50"}),
     )
     r2 = RewardRequest(orgId=org_id, ruleId="org-profile", subject=org_id, userId="u2")
     with pytest.raises(WorkflowAlreadyStartedError):  # the id already ran: never twice
@@ -86,7 +86,7 @@ async def test_profile_reward_once_when_complete(pool: asyncpg.Pool) -> None:
     await pool.execute(
         "update organization set metadata = $2 where id = $1",
         other,
-        json.dumps({"website": "https://example.com", "industry": "saas"}),
+        json.dumps({"website": "https://example.com", "size": "11-50"}),
     )
     assert await run(pool, RewardRequest(other, "org-profile", other, "u")) == "entitlement"
     [g] = await grants(pool, other)

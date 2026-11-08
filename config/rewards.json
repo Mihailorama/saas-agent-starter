@@ -13,7 +13,7 @@
     {
       "id": "org-profile",
       "trigger": "org.profile_completed",
-      "requiredMetadata": ["website", "industry"],
+      "requiredMetadata": ["size", "website"],
       "reward": { "kind": "entitlement", "key": "projects", "delta": 2, "months": 12 },
       "capPerOrg": 1,
       "holdDays": 0
