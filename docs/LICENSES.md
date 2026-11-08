@@ -202,6 +202,20 @@ Notes:
   - External services, not shipped software: Google Search Console, Bing Webmaster Tools /
     IndexNow, the social networks Postiz posts to, the SERP scraper SerpBear is configured with.
 
+- UI kit ([docs/ui.md](ui.md), [ADR 0023](adr/0023-ui-kit-and-checks.md)); code dependencies,
+  checked by the gate: `radix-ui` (MIT; the shadcn/ui primitives, replacing the separate
+  `@radix-ui/react-*` packages), `react-hook-form` and `@hookform/resolvers` (MIT), `zod` (MIT),
+  `cmdk` (MIT, command palette and combobox), `react-day-picker` (MIT, calendar; brings
+  `date-fns`/`@date-fns/tz`, MIT), and `@axe-core/playwright` with `axe-core` (MPL-2.0, tests
+  only, unmodified; see ADR 0005). shadcn/ui itself is MIT and copied into the repo by its CLI,
+  not installed. Not added: Storybook 10.6.6 and Ladle 5.1.1, which fail the gate through
+  `caniuse-lite` (CC-BY-4.0) and, for Ladle, `only` (no license declared); the dev gallery at `/dev/ui`
+  replaces them.
+  - CI tooling, not dependencies: Lighthouse CI runs through `pnpm dlx` exactly as for the site
+    (note above), in `.github/workflows/ui.yml`. The `impeccable` design detector
+    ([Apache-2.0](https://github.com/pbakaus/impeccable/blob/main/LICENSE)) runs as the
+    upstream release binary, pinned by version and SHA-256 in the same workflow; the impeccable
+    skill is installed by developers who want it, not vendored.
 - PII redaction ([docs/support.md](support.md#personal-data)) adds no new image: the `pii`
   profile runs the worker image with another command. Code dependencies, checked by the gate:
   `presidio-analyzer` and `presidio-anonymizer` (Microsoft Presidio, MIT), spaCy 3.8 (MIT) with

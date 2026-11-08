@@ -6,7 +6,13 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/migrations/meta", "!pnpm-lock.yaml", "!apps/web/src/lib/api.gen.ts"]
+    "includes": [
+      "**",
+      "!**/migrations/meta",
+      "!pnpm-lock.yaml",
+      "!DESIGN.md",
+      "!apps/web/src/lib/api.gen.ts"
+    ]
   },
   "formatter": {
     "indentStyle": "space",
@@ -21,6 +27,7 @@
     "enabled": true,
     "rules": {
       "recommended": true,
+      "a11y": "error",
       "style": {
         "noNonNullAssertion": "off"
       },

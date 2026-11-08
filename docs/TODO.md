@@ -202,6 +202,18 @@
   each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
   task queues this server does not poll) listing the networks you do not use; measure before and
   after in docs/STACK.md, and never exclude a network you post to.
+- **Pages not yet on the UI patterns.** `ai-calls`, `api-keys`, `webhooks`, `security`,
+  `billing`, `sign-in` and `two-factor` still use hand-written headers, native `<select>`,
+  `<input type="checkbox">` and `<textarea>` and their own empty/error markup. They pass axe, but
+  new pages copy what they see. Fix: move each to `PageHeader`, `QueryView`/`DataTable`,
+  `EmptyState`, `Select`/`Checkbox`/`Textarea` and `SettingsSection` (docs/ui.md), one page per PR,
+  keeping the e2e selectors (labels, roles) unchanged.
+- **`/sign-in` Lighthouse performance ~0.79** (reported, not enforced, in
+  `apps/web/lighthouserc.cjs`). Routes and the command palette are code-split since 2026-11-07
+  (entry JS 212 kB compressed, budget 230 kB enforced), yet total blocking time is still ~440 ms
+  on desktop; `/ai-transparency` scores 1.0. Fix: profile the sign-in boot (Sentry, analytics,
+  cookie banner, Better Auth client) and defer what is not needed before first input, then raise
+  the performance assertion to `error` at 0.9.
 - **Plane Python SDK search has no `project_id`/`limit` params** (`plane-sdk` 0.3.2,
   `WorkItems.search`; `RetrieveQueryParams` ignores extra fields). `worker/tracker.py` passes them
   through a small `RetrieveQueryParams` subclass and also filters hits by project. Ask upstream

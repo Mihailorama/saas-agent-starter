@@ -13,5 +13,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   // Same-origin /api in dev, like nginx does in the container: cookies just work.
-  server: { proxy: { '/api': `http://localhost:${process.env.PORT ?? 3000}` } },
+  server: {
+    proxy: { '/api': `http://localhost:${process.env.PORT ?? 3000}` },
+    // Test reports and screenshots are written while the dev server runs; do not reload on them.
+    watch: { ignored: ['**/.visual/**', '**/.lighthouseci/**', '**/test-results/**'] },
+  },
 });

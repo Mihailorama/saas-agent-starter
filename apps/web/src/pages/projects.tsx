@@ -1,18 +1,16 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import {
-  type ColumnDef,
-  flexRender,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
-  type SortingState,
-  useReactTable,
-} from '@tanstack/react-table';
-import { ArrowUpDown, FolderPlus, MoreHorizontal, Plus, Search, Trash2 } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { FolderPlus, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { z } from 'zod';
+import { ConfirmDialog } from '@/components/patterns/confirm-dialog';
+import { DataTable, RowActions, sortable } from '@/components/patterns/data-table';
+import { PageContainer, PageHeader } from '@/components/patterns/page-header';
+import { EmptyState } from '@/components/patterns/states';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -24,34 +22,27 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 import { track } from '@/lib/analytics';
 import { client, formatDate, ok, type Project } from '@/lib/api';
 
 const projectsQuery = { queryKey: ['projects'], queryFn: () => ok(client.GET('/api/projects/')) };
 
-function SortButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <Button variant="ghost" size="sm" className="-ml-3 h-8" onClick={onClick}>
-      {label} <ArrowUpDown className="size-3.5" />
-    </Button>
-  );
-}
+// Same limits as the API schema (apps/api/src/routes/projects.ts); the API stays the authority.
+const projectSchema = z.object({
+  name: z.string().trim().min(1, 'Enter a name.').max(200, 'Use at most 200 characters.'),
+  description: z.string().max(2000, 'Use at most 2000 characters.'),
+});
+type ProjectInput = z.infer<typeof projectSchema>;
 
 function NewProjectDialog({
   open,
@@ -61,63 +52,77 @@ function NewProjectDialog({
   onOpenChange: (o: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const form = useForm<ProjectInput>({
+    resolver: zodResolver(projectSchema),
+    defaultValues: { name: '', description: '' },
+  });
   const create = useMutation({
-    mutationFn: (json: { name: string; description: string }) =>
-      ok(client.POST('/api/projects/', { body: json })),
+    mutationFn: (json: ProjectInput) => ok(client.POST('/api/projects/', { body: json })),
     onSuccess: (project) => {
       track('project_created', { has_description: Boolean(project.description) });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast.success(`Created ${project.name}`);
+      form.reset();
       onOpenChange(false);
     },
     onError: (err) => toast.error(err.message),
   });
 
-  function onSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = new FormData(e.currentTarget);
-    create.mutate({
-      name: String(form.get('name')),
-      description: String(form.get('description') ?? ''),
-    });
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <form onSubmit={onSubmit} className="space-y-4" aria-label="New project">
-          <DialogHeader>
-            <DialogTitle>New project</DialogTitle>
-            <DialogDescription>
-              A background workflow fingerprints the name right after creation.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="project-name">Name</Label>
-            <Input id="project-name" name="name" maxLength={200} required autoFocus />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="project-description">Description (optional)</Label>
-            <textarea
-              id="project-description"
-              name="description"
-              maxLength={2000}
-              rows={3}
-              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+        <Form {...form}>
+          <form
+            onSubmit={form.handleSubmit((values) => create.mutate(values))}
+            className="space-y-4"
+            aria-label="New project"
+            noValidate
+          >
+            <DialogHeader>
+              <DialogTitle>New project</DialogTitle>
+              <DialogDescription>
+                A background workflow fingerprints the name right after creation.
+              </DialogDescription>
+            </DialogHeader>
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Name</FormLabel>
+                  <FormControl>
+                    <Input autoFocus {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
-            <p className="text-xs text-muted-foreground">
-              If AI is enabled, a model summarizes it; you can confirm or correct the summary.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={create.isPending}>
-              Create project
-            </Button>
-          </DialogFooter>
-        </form>
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea rows={3} {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    If AI is enabled, a model summarizes it; you can confirm or correct the summary.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={create.isPending}>
+                Create project
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );
@@ -131,8 +136,7 @@ export function ProjectsPage() {
     refetchInterval: (q) => (q.state.data?.some((p) => !p.fingerprint) ? 3000 : false),
   });
   const [creating, setCreating] = useState(false);
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'createdAt', desc: true }]);
-  const [filter, setFilter] = useState('');
+  const [deleting, setDeleting] = useState<Project>();
 
   const remove = useMutation({
     mutationFn: (p: Project) =>
@@ -148,7 +152,7 @@ export function ProjectsPage() {
   const columns: ColumnDef<Project>[] = [
     {
       accessorKey: 'name',
-      header: ({ column }) => <SortButton label="Name" onClick={() => column.toggleSorting()} />,
+      header: sortable('Name'),
       cell: ({ row }) => (
         <Link
           to="/projects/$projectId"
@@ -162,6 +166,7 @@ export function ProjectsPage() {
     {
       accessorKey: 'fingerprint',
       header: 'Fingerprint',
+      meta: { className: 'hidden sm:table-cell' },
       enableGlobalFilter: false,
       cell: ({ row }) =>
         row.original.fingerprint ? (
@@ -174,7 +179,7 @@ export function ProjectsPage() {
     },
     {
       accessorKey: 'createdAt',
-      header: ({ column }) => <SortButton label="Created" onClick={() => column.toggleSorting()} />,
+      header: sortable('Created'),
       enableGlobalFilter: false,
       cell: ({ row }) => (
         <span className="text-muted-foreground">{formatDate(row.original.createdAt)}</span>
@@ -183,132 +188,59 @@ export function ProjectsPage() {
     {
       id: 'actions',
       cell: ({ row }) => (
-        <div className="text-right">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label={`Actions for ${row.original.name}`}>
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onSelect={() => remove.mutate(row.original)}
-              >
-                <Trash2 className="size-4" /> Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <RowActions
+          label={row.original.name}
+          actions={[
+            {
+              label: 'Delete',
+              icon: Trash2,
+              destructive: true,
+              onSelect: () => setDeleting(row.original),
+            },
+          ]}
+        />
       ),
     },
   ];
 
-  const table = useReactTable({
-    data: projects.data ?? [],
-    columns,
-    state: { sorting, globalFilter: filter },
-    onSortingChange: setSorting,
-    onGlobalFilterChange: setFilter,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-  });
+  const newProject = (
+    <Button onClick={() => setCreating(true)}>
+      <Plus /> New project
+    </Button>
+  );
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
-          <p className="text-sm text-muted-foreground">
-            Everything your organization is working on.
-          </p>
-        </div>
-        <Button onClick={() => setCreating(true)}>
-          <Plus className="size-4" /> New project
-        </Button>
-      </div>
-
-      {projects.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Could not load projects</AlertTitle>
-          <AlertDescription className="flex items-center justify-between gap-4">
-            {projects.error.message}
-            <Button size="sm" variant="outline" onClick={() => projects.refetch()}>
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : projects.isPending ? (
-        <div className="space-y-2 rounded-lg border p-4">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-9 w-full" />
-          ))}
-        </div>
-      ) : projects.data.length === 0 ? (
-        <div className="flex flex-col items-center rounded-lg border border-dashed px-6 py-16 text-center">
-          <span className="flex size-12 items-center justify-center rounded-lg bg-muted">
-            <FolderPlus className="size-6 text-muted-foreground" />
-          </span>
-          <h2 className="mt-4 font-semibold">No projects yet</h2>
-          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            Create your first project to see the background workflow fill in its fingerprint.
-          </p>
-          <Button className="mt-6" onClick={() => setCreating(true)}>
-            <Plus className="size-4" /> New project
-          </Button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="relative max-w-xs">
-            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              placeholder="Filter projects…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="pl-8"
-            />
-          </div>
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                {table.getHeaderGroups().map((group) => (
-                  <TableRow key={group.id}>
-                    {group.headers.map((header) => (
-                      <TableHead key={header.id}>
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {table.getRowModel().rows.length ? (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow key={row.id}>
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length}
-                      className="h-24 text-center text-muted-foreground"
-                    >
-                      No projects match “{filter}”.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-      )}
+    <PageContainer>
+      <PageHeader
+        title="Projects"
+        description="Everything your organization is working on."
+        actions={newProject}
+      />
+      <DataTable
+        query={projects}
+        columns={columns}
+        label="Projects"
+        errorTitle="Could not load projects"
+        filterPlaceholder="Filter projects…"
+        initialSorting={[{ id: 'createdAt', desc: true }]}
+        empty={
+          <EmptyState
+            icon={FolderPlus}
+            title="No projects yet"
+            description="Create your first project to see the background workflow fill in its fingerprint."
+            action={newProject}
+          />
+        }
+      />
       <NewProjectDialog open={creating} onOpenChange={setCreating} />
-    </div>
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        onOpenChange={(o) => !o && setDeleting(undefined)}
+        title={`Delete ${deleting?.name ?? 'project'}?`}
+        description="The project and its files are deleted for everyone in the organization. This cannot be undone."
+        confirmLabel="Delete project"
+        onConfirm={() => deleting && remove.mutate(deleting)}
+      />
+    </PageContainer>
   );
 }

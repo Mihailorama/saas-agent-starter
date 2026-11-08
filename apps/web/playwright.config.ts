@@ -17,6 +17,8 @@ const consentPort = process.env.PLAYWRIGHT_CONSENT_PORT ?? '5174';
 
 export default defineConfig({
   testDir: 'e2e',
+  // Screenshots run with their own config (playwright.visual.config.ts, CI workflow ui.yml).
+  testIgnore: 'visual.spec.ts',
   retries: process.env.CI ? 1 : 0,
   workers: 1, // the smoke flows and the consent build share one API and Mailpit
   use: { baseURL: `http://localhost:${webPort}`, trace: 'retain-on-failure' },

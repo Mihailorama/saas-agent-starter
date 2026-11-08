@@ -5,7 +5,14 @@ import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -158,22 +165,20 @@ export function BillingPage() {
       )}
 
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
-          <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2">
-              {b.planName}
-              {b.status && b.status !== 'active' && <Badge variant="outline">{b.status}</Badge>}
-            </CardTitle>
-            <CardDescription>
-              {paid
-                ? b.cancelAtPeriodEnd
-                  ? `Ends on ${formatDate(b.periodEnd)}`
-                  : `Renews on ${formatDate(b.periodEnd)}`
-                : `Usage period ${formatDate(b.periodStart)} – ${formatDate(b.periodEnd)}`}
-            </CardDescription>
-          </div>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            {b.planName}
+            {b.status && b.status !== 'active' && <Badge variant="outline">{b.status}</Badge>}
+          </CardTitle>
+          <CardDescription>
+            {paid
+              ? b.cancelAtPeriodEnd
+                ? `Ends on ${formatDate(b.periodEnd)}`
+                : `Renews on ${formatDate(b.periodEnd)}`
+              : `Usage period ${formatDate(b.periodStart)} – ${formatDate(b.periodEnd)}`}
+          </CardDescription>
           {b.canManage && paid && (
-            <div className="flex gap-2">
+            <CardAction className="flex gap-2">
               <Button variant="outline" onClick={() => portal.mutate()} disabled={portal.isPending}>
                 Invoices and payment method <ExternalLink className="size-4" />
               </Button>
@@ -182,7 +187,7 @@ export function BillingPage() {
                   Cancel plan
                 </Button>
               )}
-            </div>
+            </CardAction>
           )}
         </CardHeader>
         <CardContent className="space-y-5">
