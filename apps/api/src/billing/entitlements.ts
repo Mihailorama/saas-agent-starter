@@ -52,7 +52,8 @@ export const limitOf = (plan: Plan, name: Limit, overrides: LimitOverrides) => {
 };
 
 /** Unexpired entitlement rewards (reward_grants, docs/growth.md), summed per key. */
-export type RewardBonus = Partial<Record<Limit | 'llmSpendMonthly', number>>;
+/** `llmSpendMonthly:<currency>` for spend rewards (one cost currency each). */
+export type RewardBonus = Partial<Record<Limit | `llmSpendMonthly:${string}`, number>>;
 
 export function entitlementsOf(
   sub: Subscription | null,
@@ -77,8 +78,8 @@ export function entitlementsOf(
       const raised = plan.features.llmLimitRaise ? sub?.llmSpendLimits?.[currency] : undefined;
       const max = plan.llmSpendMax[currency] ?? base;
       const limit = raised === undefined || max === undefined ? base : Math.min(raised, max);
-      // The reward adds the same amount in each currency (worker/billing.py does the same).
-      return limit === undefined ? undefined : limit + extra('llmSpendMonthly');
+      // Only in the reward's currency (worker/billing.py does the same).
+      return limit === undefined ? undefined : limit + extra(`llmSpendMonthly:${currency}`);
     },
   };
 }
@@ -98,7 +99,9 @@ export async function entitlements(orgId: string, tx?: Tx): Promise<Entitlements
       .where(and(eq(rewardGrants.via, 'entitlement'), gt(rewardGrants.expiresAt, now)));
     const bonus: RewardBonus = {};
     for (const { reward } of grants) {
-      const key = reward.key as keyof RewardBonus;
+      const key = (
+        reward.key === 'llmSpendMonthly' ? `llmSpendMonthly:${reward.currency}` : reward.key
+      ) as keyof RewardBonus;
       bonus[key] = (bonus[key] ?? 0) + Number(reward.delta);
     }
     return entitlementsOf(sub ?? null, now, org?.overrides ?? null, bonus);

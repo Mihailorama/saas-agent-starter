@@ -248,7 +248,7 @@ async def main() -> None:
             activities.fingerprint_project,
             activities.summarize_project,
             billing.apply_billing_event,
-            rewards.eligible,
+            rewards.reserve,
             rewards.apply,
             rewards.record,
             crm.sync,

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { member, organization, user } from '@app/db';
+import { member, organization, subscriptions, user, withOrg } from '@app/db';
 import * as Sentry from '@sentry/node-core';
 import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '../db.ts';
@@ -56,19 +56,27 @@ export async function attachReferral(orgId: string, userId: string) {
   }
 }
 
-/** The org's referral link; creates its code and promotion code the first time. */
+/**
+ * The org's referral link. Created once and kept in the organization row: the native code and its
+ * provider promotion code, or Dub's partner link. Never throws for a provider or Dub error: the
+ * page then shows no link and the next view tries again.
+ */
 export async function referralLink(org: { id: string; name: string }, adminEmail: string) {
-  const d = dub();
-  if (d) {
-    return {
-      via: 'dub' as const,
-      link: await d.partnerLink({ orgId: org.id, name: org.name, email: adminEmail }),
-    };
-  }
   const [row] = await db
-    .select({ code: organization.referralCode })
+    .select({ code: organization.referralCode, link: organization.referralLink })
     .from(organization)
     .where(eq(organization.id, org.id));
+  const d = dub();
+  if (d) {
+    if (row?.link) return { via: 'dub' as const, link: row.link };
+    const link = await d
+      .partnerLink({ orgId: org.id, name: org.name, email: adminEmail })
+      .catch((err) => void Sentry.captureException(err));
+    if (link) {
+      await db.update(organization).set({ referralLink: link }).where(eq(organization.id, org.id));
+    }
+    return { via: 'dub' as const, link: link ?? null };
+  }
   let code = row?.code ?? null;
   if (!code) {
     const [set] = await db
@@ -76,20 +84,23 @@ export async function referralLink(org: { id: string; name: string }, adminEmail
       .set({ referralCode: randomBytes(6).toString('base64url') })
       .where(and(eq(organization.id, org.id), isNull(organization.referralCode)))
       .returning({ code: organization.referralCode });
-    code = set?.code ?? null;
-    // ponytail: a failed promotion code is not retried; the link still attributes and rewards.
-    const p = providerFor(env.BILLING_CONTOUR);
-    if (code && p.createPromotionCode && rewards.referral) {
-      await p
-        .createPromotionCode({
+    if (!set?.code) return referralLink(org, adminEmail); // a concurrent request set it
+    code = set.code;
+    // Once, with the code. ponytail: a failed promotion code is not retried; the link still
+    // attributes and rewards, only the referred discount is missing.
+    try {
+      const p = providerFor(env.BILLING_CONTOUR);
+      if (p.createPromotionCode && rewards.referral) {
+        await p.createPromotionCode({
           code,
           couponId: rewards.referral.couponId,
           referrerOrgId: org.id,
           key: `referral-${code}`,
-        })
-        .catch((err) => Sentry.captureException(err));
+        });
+      }
+    } catch (err) {
+      Sentry.captureException(err);
     }
-    if (!code) return referralLink(org, adminEmail); // a concurrent request set it
   }
   return { via: 'native' as const, link: `${env.BETTER_AUTH_URL}/sign-in?ref=${code}` };
 }
@@ -108,30 +119,50 @@ export async function checkoutReferral(orgId: string) {
   return r?.code ? { promotionCode: r.code, referrerOrgId: o.by } : undefined;
 }
 
-/** Billing webhook events (routes/billing.ts): rewards the referrer, or reports the sale to Dub. */
+/** Same payer: the referrer's and the referred customer's saved cards share a fingerprint. */
+async function samePayer(e: BillingEvent, referrerOrgId: string) {
+  const [sub] = await withOrg(db, referrerOrgId, (tx) => tx.select().from(subscriptions));
+  if (!sub?.customerId || !e.customerId) return false; // a free referrer has no card to compare
+  const p = providerFor(e.contour);
+  if (!p.cardFingerprints) return false;
+  const theirs = new Set(await p.cardFingerprints(sub.customerId));
+  return (await p.cardFingerprints(e.customerId)).some((f) => theirs.has(f));
+}
+
+/**
+ * Billing webhook events (routes/billing.ts): rewards the referrer, or reports the sale to Dub.
+ * Never throws: a provider or Dub outage must not fail the webhook (Sentry gets the error).
+ */
 export async function onReferralEvent(e: BillingEvent) {
   const ctx = { userId: `org:${e.orgId}`, orgId: e.orgId };
-  if (e.type === 'referral.converted' && e.referrerOrgId) {
-    if (!(await isEnabled('referrals', ctx))) return;
-    await triggerRewards('referral.converted', {
-      orgId: e.referrerOrgId,
-      subject: e.orgId,
-      userId: ctx.userId,
-    });
-  }
-  const d = dub();
-  if (d && e.type === 'payment.succeeded' && e.amount && e.currency) {
-    const [o] = await db
-      .select({ by: organization.referredBy })
-      .from(organization)
-      .where(eq(organization.id, e.orgId));
-    if (o?.by === 'dub' && (await isEnabled('referrals', ctx))) {
-      await d.trackSale({
-        orgId: e.orgId,
-        amount: e.amount,
-        currency: e.currency,
-        invoiceId: e.invoiceId,
+  try {
+    if (e.type === 'referral.converted' && e.referrerOrgId) {
+      if (!(await isEnabled('referrals', ctx))) return;
+      if (await samePayer(e, e.referrerOrgId)) return; // self-referral with a second org
+      await triggerRewards('referral.converted', {
+        orgId: e.referrerOrgId,
+        subject: e.orgId,
+        userId: ctx.userId,
       });
     }
+    const d = dub();
+    if (d && e.type === 'payment.succeeded' && e.amount && e.currency) {
+      const [o] = await db
+        .select({ by: organization.referredBy })
+        .from(organization)
+        .where(eq(organization.id, e.orgId));
+      if (o?.by === 'dub' && (await isEnabled('referrals', ctx))) {
+        // ponytail: a sale lost in a Dub outage is not retried; move it to a worker activity if
+        // payouts depend on it.
+        await d.trackSale({
+          orgId: e.orgId,
+          amount: e.amount,
+          currency: e.currency,
+          invoiceId: e.invoiceId,
+        });
+      }
+    }
+  } catch (err) {
+    Sentry.captureException(err);
   }
 }

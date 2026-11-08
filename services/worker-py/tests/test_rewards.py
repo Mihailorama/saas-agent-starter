@@ -1,6 +1,7 @@
 """RewardWorkflow end to end (real Temporal and Postgres): conditions, caps, the API call for money
 rewards (canned HTTP), the operators' fallback and the llmSpendMonthly bonus (docs/growth.md)."""
 
+import asyncio
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -38,8 +39,13 @@ class Api:
 
 
 async def run(
-    pool: asyncpg.Pool, r: RewardRequest, api: Api | None = None, configured: bool = True
-) -> str:
+    pool: asyncpg.Pool,
+    r: RewardRequest | list[RewardRequest],
+    api: Api | None = None,
+    configured: bool = True,
+    suffix: str = "",
+) -> Any:
+    """Runs one workflow (or several at once) on a fresh worker; `suffix` = a new workflow id."""
     http = httpx2.AsyncClient(transport=httpx2.MockTransport((api or Api()).handle))
     acts = RewardActivities(
         pool, RULES, http, "http://api:3000" if configured else "", "t0ken" if configured else ""
@@ -50,15 +56,39 @@ async def run(
         client,
         task_queue=queue,
         workflows=[RewardWorkflow],
-        activities=[acts.eligible, acts.apply, acts.record],
+        activities=[acts.reserve, acts.apply, acts.record],
     ):
-        return await client.execute_workflow(
-            RewardWorkflow.run,
-            r,
-            id=f"reward-{r.orgId}-{r.ruleId}-{r.subject}",  # as apps/api/src/temporal.ts
-            task_queue=queue,
-            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-        )
+
+        async def start(x: RewardRequest) -> str:
+            return await client.execute_workflow(
+                RewardWorkflow.run,
+                x,
+                id=f"reward-{x.orgId}-{x.ruleId}-{x.subject}{suffix}",  # as apps/api/temporal.ts
+                task_queue=queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            )
+
+        if isinstance(r, list):
+            return await asyncio.gather(*(start(x) for x in r))
+        return await start(r)
+
+
+async def invitee(pool: asyncpg.Pool, org_id: str, verified: bool = True) -> str:
+    """A member who joined through an accepted invitation, as Better Auth leaves it."""
+    user_id = await new_user(pool, org_id, verified=verified)
+    await accept(pool, org_id, user_id)
+    return user_id
+
+
+async def accept(pool: asyncpg.Pool, org_id: str, user_id: str) -> None:
+    await pool.execute(
+        "insert into invitation (id, organization_id, email, role, status, expires_at,"
+        " inviter_id) select $1, $2, email, 'member', 'accepted', now(), id from \"user\""
+        " where id = $3",
+        str(uuid.uuid4()),
+        org_id,
+        user_id,
+    )
 
 
 async def grants(pool: asyncpg.Pool, org_id: str) -> list[asyncpg.Record]:
@@ -94,12 +124,11 @@ async def test_profile_reward_once_when_complete(pool: asyncpg.Pool) -> None:
     assert g["expires_at"].year >= datetime.now(UTC).year  # 12 months from now
 
 
-async def test_invite_reward_needs_a_verified_member_and_respects_the_cap(
-    pool: asyncpg.Pool,
-) -> None:
+async def test_invite_reward_guards(pool: asyncpg.Pool) -> None:
     org_id = await new_org(pool)
-    unverified = await new_user(pool, org_id, verified=False)
+    unverified = await invitee(pool, org_id, verified=False)
     left = await new_user(pool)  # accepted, then left before the hold ended
+    await accept(pool, org_id, left)
     assert await run(pool, RewardRequest(org_id, "team-invite", unverified, unverified)) == (
         "not eligible"
     )
@@ -107,22 +136,47 @@ async def test_invite_reward_needs_a_verified_member_and_respects_the_cap(
     api = Api(
         body={"via": "balance_credit", "reward": RULES["team-invite"]["reward"], "ref": "cb_1"}
     )
-    for _ in range(RULES["team-invite"]["capPerOrg"] + 1):
-        member = await new_user(pool, org_id)
-        await run(pool, RewardRequest(org_id, "team-invite", member, member), api)
-    rows = await grants(pool, org_id)
-    assert len(rows) == RULES["team-invite"]["capPerOrg"]  # the one over the cap got nothing
-    assert {(g["via"], g["provider_ref"]) for g in rows} == {("balance_credit", "cb_1")}
+    member = await invitee(pool, org_id)
+    r = RewardRequest(org_id, "team-invite", member, member)
+    assert await run(pool, r, api) == "balance_credit"
+    # Temporal forgot the id (retention): a new run for the same subject still gets nothing.
+    assert await run(pool, r, api, suffix="-again") == "not eligible"
+    # The same account invited by another org (farming): its second accepted invitation.
+    other = await new_org(pool)
+    await pool.execute(
+        "insert into member (id, organization_id, user_id, role, created_at)"
+        " values ($1, $2, $3, 'member', now())",
+        str(uuid.uuid4()),
+        other,
+        member,
+    )
+    await accept(pool, other, member)
+    assert await run(pool, RewardRequest(other, "team-invite", member, member), api) == (
+        "not eligible"
+    )
     sent = api.requests[0]
     assert sent.headers["authorization"] == "Bearer t0ken"
-    assert json.loads(sent.content)["key"].startswith(f"reward-{org_id}-team-invite-")
+    assert json.loads(sent.content)["key"] == f"reward-{org_id}-team-invite-{member}"
+    [g] = await grants(pool, org_id)
+    assert (g["status"], g["via"], g["provider_ref"]) == ("applied", "balance_credit", "cb_1")
+
+
+async def test_cap_holds_under_concurrent_grants(pool: asyncpg.Pool) -> None:
+    org_id = await new_org(pool)
+    cap = RULES["team-invite"]["capPerOrg"]
+    members = [await invitee(pool, org_id) for _ in range(cap + 3)]
+    results = await run(
+        pool, [RewardRequest(org_id, "team-invite", m, m) for m in members], configured=False
+    )
+    assert sorted(results).count("not eligible") == 3
+    assert len(await grants(pool, org_id)) == cap
 
 
 async def test_money_reward_goes_to_operators_when_it_cannot_be_applied(
     pool: asyncpg.Pool,
 ) -> None:
     org_id = await new_org(pool)
-    a, b = await new_user(pool, org_id), await new_user(pool, org_id)
+    a, b = await invitee(pool, org_id), await invitee(pool, org_id)
     assert await run(pool, RewardRequest(org_id, "team-invite", a, a), Api(status=401)) == "manual"
     assert await run(pool, RewardRequest(org_id, "team-invite", b, b), configured=False) == "manual"
     rows = await grants(pool, org_id)
@@ -130,6 +184,7 @@ async def test_money_reward_goes_to_operators_when_it_cannot_be_applied(
         ("pending_manual", "reward.pending_manual")
     ] * 2
     assert json.loads(rows[0]["reward"]) == RULES["team-invite"]["reward"]
+    assert rows[0]["idempotency_key"] == f"reward-{org_id}-team-invite-{a}"  # shown to operators
 
 
 async def test_llm_spend_bonus_counts_until_it_expires(pool: asyncpg.Pool) -> None:
@@ -139,36 +194,43 @@ async def test_llm_spend_bonus_counts_until_it_expires(pool: asyncpg.Pool) -> No
         for subject, expires in (("a", timedelta(days=1)), ("b", timedelta(seconds=-1))):
             await conn.execute(
                 "insert into reward_grants (org_id, rule_id, subject, via, status, reward,"
-                " expires_at) values ($1, 'r', $2, 'entitlement', 'applied', $3::jsonb,"
-                " now() + $4::interval)",
+                " idempotency_key, expires_at) values ($1, 'r', $2, 'entitlement', 'applied',"
+                " $3::jsonb, $2, now() + $4::interval)",
                 org_id,
                 subject,
                 json.dumps(
-                    {"kind": "entitlement", "key": "llmSpendMonthly", "delta": 2, "months": 1}
+                    {
+                        "kind": "entitlement",
+                        "key": "llmSpendMonthly",
+                        "delta": 2,
+                        "months": 1,
+                        "currency": "USD",
+                    }
                 ),
                 expires,
             )
         b = await llm_budget(conn, PLANS, org_id, "USD", datetime.now(UTC))
+        eur = await llm_budget(conn, PLANS, org_id, "EUR", datetime.now(UTC))
     assert b.limit == Decimal(1) + Decimal(2)  # free plan's limit + the unexpired reward
+    assert eur.limit == Decimal(1)  # only in the reward's currency
 
 
-async def test_referral_fraud_guards(pool: asyncpg.Pool) -> None:
-    async def org(domain: str, customer: str | None = None) -> str:
+async def test_referral_guards(pool: asyncpg.Pool) -> None:
+    async def org(domain: str, status: str | None = "active") -> str:
         org_id = await new_org(pool)
         await new_user(pool, org_id, email=f"{uuid.uuid4()}@{domain}")
-        if customer:
+        if status:
             async with pool.acquire() as conn, conn.transaction():
                 await conn.execute("select set_config('app.org_id', $1, true)", org_id)
                 await conn.execute(
                     "insert into subscriptions (org_id, plan_id, status, contour, provider,"
-                    " currency, customer_id)"
-                    " values ($1, 'pro', 'active', 'en', 'stripe', 'USD', $2)",
+                    " currency, customer_id) values ($1, 'pro', $2, 'en', 'stripe', 'USD', $1)",
                     org_id,
-                    customer,
+                    status,
                 )
         return org_id
 
-    async def referral(referrer: str, referred: str, block: bool = True) -> str:
+    async def referral(referrer: str, referred: str, block: bool = False) -> str:
         http = httpx2.AsyncClient(transport=httpx2.MockTransport(Api().handle))
         acts = RewardActivities(pool, RULES, http, "", "", block_same_domain=block)
         queue = f"test-{uuid.uuid4()}"
@@ -179,19 +241,18 @@ async def test_referral_fraud_guards(pool: asyncpg.Pool) -> None:
             client,
             task_queue=queue,
             workflows=[RewardWorkflow],
-            activities=[acts.eligible, acts.apply, acts.record],
+            activities=[acts.reserve, acts.apply, acts.record],
         ):
             return await client.execute_workflow(
                 RewardWorkflow.run,
                 RewardRequest(referrer, "referral", referred, f"org:{referred}"),
-                id=f"reward-{referrer}-referral-{referred}-{uuid.uuid4()}",
+                id=f"reward-{referrer}-referral-{referred}",
                 task_queue=queue,
             )
 
-    a = await org("a.example.com", "cus_same")
+    a = await org("a.example.com", status=None)  # a free referrer
     assert await referral(a, a) == "not eligible"  # self-referral
-    assert await referral(a, await org("b.example.com", "cus_same")) == "not eligible"  # customer
-    same_domain = await org("a.example.com", "cus_other")
-    assert await referral(a, same_domain) == "not eligible"
-    assert await referral(a, await org("a.example.com"), block=False) == "manual"  # no API link
-    assert await referral(a, await org("c.example.com", "cus_c")) == "manual"
+    assert await referral(a, await org("b.example.com", "canceled")) == "not eligible"  # refunded
+    assert await referral(a, await org("a.example.com"), block=True) == "not eligible"
+    assert await referral(a, await org("a.example.com")) == "manual"  # guard off; no API link
+    assert await referral(a, await org("c.example.com")) == "manual"

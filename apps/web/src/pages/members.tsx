@@ -34,6 +34,9 @@ const must = async <T,>(p: Promise<{ data: T; error: { message?: string } | null
 export function MembersPage() {
   const { data: org, isPending, refetch } = authClient.useActiveOrganization();
   const [inviting, setInviting] = useState(false);
+  // UI hint only; Better Auth refuses invites and revokes from plain members.
+  const { data: me } = authClient.useActiveMember();
+  const canManage = me?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const revoke = useMutation({
     mutationFn: (invitationId: string) =>
       must(authClient.organization.cancelInvitation({ invitationId })),
@@ -48,9 +51,11 @@ export function MembersPage() {
         title="Members"
         description="People in this organization and open invitations."
         actions={
-          <Button onClick={() => setInviting(true)}>
-            <MailPlus className="size-4" /> Invite
-          </Button>
+          canManage && (
+            <Button onClick={() => setInviting(true)}>
+              <MailPlus className="size-4" /> Invite
+            </Button>
+          )
         }
       />
       <InviteDialog
@@ -102,14 +107,16 @@ export function MembersPage() {
                     Expires {formatDate(new Date(i.expiresAt).toISOString())}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Revoke invitation for ${i.email}`}
-                      onClick={() => revoke.mutate(i.id)}
-                    >
-                      <X className="size-4" /> Revoke
-                    </Button>
+                    {canManage && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Revoke invitation for ${i.email}`}
+                        onClick={() => revoke.mutate(i.id)}
+                      >
+                        <X className="size-4" /> Revoke
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

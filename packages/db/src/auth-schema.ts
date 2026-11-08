@@ -91,6 +91,8 @@ export const organization = pgTable('organization', {
   limitOverrides: jsonb('limit_overrides').$type<{ seats?: number; projects?: number }>(),
   /** This org's own referral code (`?ref=`), created with its first referral link. */
   referralCode: text('referral_code').unique(),
+  /** Dub Partners' link for this org, created once (DUB_API_KEY, docs/growth.md). */
+  referralLink: text('referral_link'),
   /** Org that referred this one (docs/growth.md), or `dub` when Dub Partners attributed it. */
   referredBy: text('referred_by'),
 });

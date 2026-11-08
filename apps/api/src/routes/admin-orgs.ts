@@ -4,6 +4,7 @@ import {
   member,
   organization,
   projects,
+  rewardGrants,
   subscriptions,
   type Tx,
   user,
@@ -95,6 +96,10 @@ const safeUrl = (raw: string) => {
 };
 
 /** Organizations: list, detail, suspend/unsuspend, limits (docs/admin.md). */
+/** A pending_manual grant is resolved by an `operator.reward.applied` audit row. */
+const unresolved = sql`not exists (select 1 from ${auditLog} where ${auditLog.action} =
+  'operator.reward.applied' and ${auditLog.target} = ${rewardGrants.id}::text)`;
+
 export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
   const tags = ['admin'];
   const op = { preHandler: requireOperator, schema: { tags, hide: true } };
@@ -238,6 +243,17 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
         eventTypes: z.array(z.string()),
       }),
     ),
+    /** Rewards waiting for an operator (docs/growth.md); `key` finds the provider object. */
+    pendingRewards: z.array(
+      z.object({
+        id: z.string(),
+        ruleId: z.string(),
+        reward: z.record(z.string(), z.unknown()),
+        key: z.string(),
+        providerRef: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    ),
     audit: z.array(
       z.object({
         id: z.string(),
@@ -297,6 +313,12 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
           .where(eq(auditLog.orgId, id))
           .orderBy(desc(auditLog.createdAt))
           .limit(50);
+        const pending = await tx
+          .select()
+          .from(rewardGrants)
+          .where(
+            and(eq(rewardGrants.orgId, id), eq(rewardGrants.status, 'pending_manual'), unresolved),
+          );
         let dashboardUrl: string | null = null;
         try {
           dashboardUrl = sub ? providerFor(sub.contour).dashboardUrl(sub) : null;
@@ -357,6 +379,14 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
             consecutiveFailures: h.consecutiveFailures,
             eventTypes: h.eventTypes,
           })),
+          pendingRewards: pending.map((g) => ({
+            id: g.id,
+            ruleId: g.ruleId,
+            reward: g.reward,
+            key: g.idempotencyKey,
+            providerRef: g.providerRef,
+            createdAt: iso(g.createdAt)!,
+          })),
           audit: events.map(({ row, actorEmail }) => ({
             id: row.id,
             action: row.action,
@@ -372,6 +402,39 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
       // Looking at an organization's data is recorded in its own audit log.
       await withOrg(db, id, (tx) => audit(tx, req, id, 'org.viewed', id, null));
       return detail;
+    },
+  );
+
+  // A pending reward applied by hand (credit note, invoice line): reward_grants keeps the row,
+  // this audit row with the reference resolves it.
+  app.post(
+    '/orgs/:id/rewards/:grantId/applied',
+    {
+      ...op,
+      schema: {
+        ...op.schema,
+        params: z.object({ id: z.string().min(1).max(100), grantId: z.uuid() }),
+        body: WithReason,
+        response: { 204: z.null(), 404: ErrorBody },
+      },
+    },
+    async (req, reply) => {
+      const { id, grantId } = req.params;
+      await withOrg(db, id, async (tx) => {
+        const [g] = await tx
+          .select({ id: rewardGrants.id })
+          .from(rewardGrants)
+          .where(
+            and(
+              eq(rewardGrants.id, grantId),
+              eq(rewardGrants.status, 'pending_manual'),
+              unresolved,
+            ),
+          );
+        if (!g) throw httpError(404, 'not found');
+        await audit(tx, req, id, 'reward.applied', g.id, req.body.reason);
+      });
+      return reply.code(204).send(null);
     },
   );
 

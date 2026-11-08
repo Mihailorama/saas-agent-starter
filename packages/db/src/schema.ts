@@ -391,11 +391,12 @@ export const privacyRequests = pgTable(
 );
 
 /**
- * One reward granted to an organization (docs/growth.md, rules in config/rewards.json), written by
- * the worker's RewardWorkflow. Append-only like ai_calls (packages/db/src/migrate.ts): the unique
- * key makes a rule count a subject once. `reward` is what was given (the rule's reward or its
- * fallback); `via` how; `pending_manual` rows wait for an operator, who resolves them with an
- * `operator.reward.applied` audit row (docs/admin.md), never by rewriting this one.
+ * One reward of an organization (docs/growth.md, rules in config/rewards.json), written by the
+ * worker's RewardWorkflow. The unique key makes a rule count a subject once, ever. The row is
+ * reserved first (under an advisory lock, so the per-org cap holds), then settled: the app role may
+ * update only `status`, `via`, `reward`, `provider_ref` and `expires_at`, never delete
+ * (packages/db/src/migrate.ts). `pending_manual` rows wait for an operator, who resolves them with
+ * an `operator.reward.applied` audit row (docs/admin.md).
  */
 export const rewardGrants = pgTable(
   'reward_grants',
@@ -405,12 +406,13 @@ export const rewardGrants = pgTable(
     ruleId: text('rule_id').notNull(),
     /** What the rule counts once: the invited user's id, the org's own id, the referred org's id. */
     subject: text('subject').notNull(),
-    via: text('via', {
-      enum: ['entitlement', 'credit_grant', 'balance_credit', 'coupon', 'manual'],
-    }).notNull(),
-    status: text('status', { enum: ['applied', 'pending_manual'] }).notNull(),
+    status: text('status', { enum: ['reserved', 'applied', 'pending_manual'] }).notNull(),
+    /** How it was given, once settled. */
+    via: text('via', { enum: ['entitlement', 'balance_credit', 'coupon', 'manual'] }),
     reward: jsonb('reward').$type<Record<string, unknown>>().notNull(),
-    /** The provider's object (credit grant, balance transaction, subscription) when it applied it. */
+    /** The workflow id, also the provider's idempotency key: find the provider object by it. */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /** The provider's object (balance transaction, subscription) when it applied it. */
     providerRef: text('provider_ref'),
     /** Entitlement rewards count in entitlements() until then. */
     expiresAt: timestamp('expires_at', { withTimezone: true }),
@@ -420,9 +422,9 @@ export const rewardGrants = pgTable(
     unique().on(t.orgId, t.ruleId, t.subject),
     check(
       'reward_grants_via',
-      sql`${t.via} in ('entitlement', 'credit_grant', 'balance_credit', 'coupon', 'manual')`,
+      sql`${t.via} in ('entitlement', 'balance_credit', 'coupon', 'manual')`,
     ),
-    check('reward_grants_status', sql`${t.status} in ('applied', 'pending_manual')`),
+    check('reward_grants_status', sql`${t.status} in ('reserved', 'applied', 'pending_manual')`),
     tenantIsolation(),
   ],
 );

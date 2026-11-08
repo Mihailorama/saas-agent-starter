@@ -1,7 +1,7 @@
 // Referrals (docs/growth.md): link, attribution at sign-up, self-referral, checkout discount, the
 // invoice.paid conversion and the referrer's reward; Dub Partners with a mocked fetch.
 import { randomUUID } from 'node:crypto';
-import { organization, user } from '@app/db';
+import { organization, subscriptions, user, withOrg } from '@app/db';
 import { WorkflowNotFoundError } from '@temporalio/client';
 import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
@@ -110,7 +110,7 @@ describe('native referrals (Stripe promotion codes)', () => {
       port: url.port,
       protocol: 'http',
     });
-    const invoice = (amount: number) => ({
+    const invoice = (amount: number, reason = 'subscription_create', customer = 'cus_b') => ({
       id: `evt_${randomUUID()}`,
       object: 'event',
       type: 'invoice.paid',
@@ -121,6 +121,8 @@ describe('native referrals (Stripe promotion codes)', () => {
           object: 'invoice',
           amount_paid: amount,
           currency: 'usd',
+          billing_reason: reason,
+          customer,
           parent: { subscription_details: { metadata: { orgId: b, referrerOrgId: a } } },
         },
       },
@@ -138,12 +140,34 @@ describe('native referrals (Stripe promotion codes)', () => {
       });
     };
     expect((await events(invoice(0))).map((e) => e.type)).toEqual(['payment.succeeded']); // free
+    // Only the first invoice converts; renewals are plain payments.
+    const renewal = await events(invoice(2900, 'subscription_cycle'));
+    expect(renewal.map((e) => e.type)).toEqual(['payment.succeeded']);
     const paid = await events(invoice(2900));
     expect(paid.map((e) => e.type)).toEqual(['payment.succeeded', 'referral.converted']);
     for (const e of paid) await onReferralEvent(e);
     expect(
       await workflowExists(rewardWorkflowId({ orgId: a, ruleId: 'referral', subject: b })),
     ).toBe(true);
+
+    // Same payer: a paying referrer whose saved card is the referred customer's (stripe-mock
+    // returns the same card for every customer) gets nothing.
+    const c = await createOrg(await signUp());
+    await withOrg(db, a, (tx) =>
+      tx.insert(subscriptions).values({
+        orgId: a,
+        planId: 'pro',
+        status: 'active',
+        contour: 'en',
+        provider: 'stripe',
+        currency: 'USD',
+        customerId: 'cus_a',
+      }),
+    );
+    for (const e of paid) await onReferralEvent({ ...e, orgId: c });
+    expect(
+      await workflowExists(rewardWorkflowId({ orgId: a, ruleId: 'referral', subject: c })),
+    ).toBe(false);
   });
 
   it('refuses self-referral and malformed codes', async () => {
@@ -155,6 +179,15 @@ describe('native referrals (Stripe promotion codes)', () => {
     const second = await createOrg(owner); // a member of the referring org
     expect(await referredBy(second)).toBeNull();
     const bad = await signUp('<script>');
+    expect((await db.select().from(user).where(eq(user.id, bad.id)))[0]?.referralCode).toBeNull();
+    // Only the sign-up sets it: update-user cannot.
+    await app.inject({
+      method: 'POST',
+      url: '/api/auth/update-user',
+      remoteAddress: ip(),
+      headers: { origin, cookie: bad.cookie },
+      payload: { referralCode: code },
+    });
     expect((await db.select().from(user).where(eq(user.id, bad.id)))[0]?.referralCode).toBeNull();
   });
 });
@@ -178,6 +211,9 @@ describe('Dub Partners (DUB_API_KEY)', () => {
       url: 'https://api.dub.co/partners',
       body: { tenantId: org },
     });
+    const enrolled = calls.length;
+    expect((await getReferral(owner)).json().link).toBe('https://refer.example.com/acme');
+    expect(calls.length).toBe(enrolled); // kept in the row: Dub is not asked on every view
 
     const referred = await signUp();
     await db.update(user).set({ referralCode: 'dub_click_1' }).where(eq(user.id, referred.id));
@@ -204,5 +240,27 @@ describe('Dub Partners (DUB_API_KEY)', () => {
       url: 'https://api.dub.co/track/sale',
       body: { customerExternalId: b, amount: 2900, currency: 'usd', invoiceId: 'in_1' },
     });
+  });
+
+  it('a Dub outage fails neither the referral page nor the billing webhook', async () => {
+    flags('referrals');
+    env.DUB_API_KEY = 'dub_test';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('down', { status: 503 }));
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    expect((await getReferral(owner)).json()).toMatchObject({ via: 'dub', link: null });
+    await db.update(organization).set({ referredBy: 'dub' }).where(eq(organization.id, org));
+    await expect(
+      onReferralEvent({
+        provider: 'stripe',
+        contour: 'en',
+        eventId: 'evt_2',
+        type: 'payment.succeeded',
+        orgId: org,
+        occurredAt: new Date().toISOString(),
+        amount: 2900,
+        currency: 'USD',
+      }),
+    ).resolves.toBeUndefined();
   });
 });

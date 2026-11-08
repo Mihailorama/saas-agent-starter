@@ -80,6 +80,14 @@ type OrgDetail = {
     consecutiveFailures: number;
     eventTypes: string[];
   }[];
+  pendingRewards: {
+    id: string;
+    ruleId: string;
+    reward: Record<string, unknown>;
+    key: string;
+    providerRef: string | null;
+    createdAt: string;
+  }[];
   audit: {
     id: string;
     action: string;
@@ -99,67 +107,6 @@ const Empty = ({ cols, text }: { cols: number; text: string }) => (
     </TableCell>
   </TableRow>
 );
-
-type PendingReward = {
-  id: string;
-  orgId: string;
-  orgName: string;
-  ruleId: string;
-  reward: Record<string, unknown>;
-  createdAt: string;
-};
-
-/** Rewards the billing provider could not apply (docs/growth.md): apply each by hand, then mark it. */
-function PendingRewards() {
-  const queryClient = useQueryClient();
-  const pending = useQuery({
-    queryKey: ['admin', 'rewards'],
-    queryFn: () => api<PendingReward[]>('/api/admin/rewards/pending'),
-  });
-  if (!pending.data?.length) return null;
-  return (
-    <Section
-      title="Rewards to apply"
-      description="Organizations without a payment provider (manual contracts) or where it failed. Apply each as a credit note or invoice line, then mark it applied."
-    >
-      <Table>
-        <TableBody>
-          {pending.data.map((r) => (
-            <TableRow key={r.id}>
-              <TableCell>
-                <Link to="/admin/orgs/$orgId" params={{ orgId: r.orgId }} className="underline">
-                  {r.orgName}
-                </Link>
-              </TableCell>
-              <TableCell>{r.ruleId}</TableCell>
-              <TableCell className="font-mono text-xs">{JSON.stringify(r.reward)}</TableCell>
-              <TableCell>{dateTime(r.createdAt)}</TableCell>
-              <TableCell className="text-right">
-                <ReasonDialog
-                  trigger={
-                    <Button size="sm" variant="outline">
-                      Mark applied
-                    </Button>
-                  }
-                  title="Mark the reward applied"
-                  description="Say how it was applied (credit note or invoice reference). It is recorded in the organization's audit log."
-                  confirm="Mark applied"
-                  onConfirm={async (reason) => {
-                    await api(`/api/admin/rewards/${r.id}/applied`, {
-                      method: 'POST',
-                      json: { orgId: r.orgId, reason },
-                    });
-                    await queryClient.invalidateQueries({ queryKey: ['admin', 'rewards'] });
-                  }}
-                />
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </Section>
-  );
-}
 
 export function AdminOrgsPage() {
   const [filters, setFilters] = useState({ q: '', plan: '', status: '', createdFrom: '' });
@@ -184,7 +131,6 @@ export function AdminOrgsPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Organizations</h1>
-      <PendingRewards />
       <div className="grid gap-3 sm:grid-cols-4">
         <div className="space-y-1">
           <Label htmlFor="f-q">Search</Label>
@@ -637,6 +583,48 @@ export function AdminOrgPage() {
           </Table>
         </Section>
       </div>
+
+      {o.pendingRewards.length > 0 && (
+        <Section
+          title="Rewards to apply"
+          description="The billing provider could not apply these (manual contract, provider failing). Check the provider for the idempotency key first: it may have applied it already. Then apply it as a credit note or invoice line and mark it."
+        >
+          <Table>
+            <TableBody>
+              {o.pendingRewards.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell>{r.ruleId}</TableCell>
+                  <TableCell className="font-mono text-xs">{JSON.stringify(r.reward)}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {r.key}
+                    {r.providerRef && ` (${r.providerRef})`}
+                  </TableCell>
+                  <TableCell>{dateTime(r.createdAt)}</TableCell>
+                  <TableCell className="text-right">
+                    <ReasonDialog
+                      trigger={
+                        <Button size="sm" variant="outline">
+                          Mark applied
+                        </Button>
+                      }
+                      title="Mark the reward applied"
+                      description="The credit note or invoice reference; it goes to the organization's audit log."
+                      confirm="Mark applied"
+                      onConfirm={async (reason) => {
+                        await api(`/api/admin/orgs/${o.id}/rewards/${r.id}/applied`, {
+                          method: 'POST',
+                          json: { reason },
+                        });
+                        await refresh();
+                      }}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Section>
+      )}
 
       <Section
         title="Recent audit events"

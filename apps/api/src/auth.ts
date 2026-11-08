@@ -105,7 +105,13 @@ export const auth = betterAuth({
           if (user.emailVerified) await personSync(user.id);
         },
       },
-      update: { before: async (user) => assertAllowedEmail(user.email) },
+      update: {
+        // The referral is set at sign-up only: update-user cannot change it (docs/growth.md).
+        before: async (user) => {
+          assertAllowedEmail(user.email);
+          return { data: { ...user, referralCode: undefined } };
+        },
+      },
     },
   },
   emailAndPassword: {

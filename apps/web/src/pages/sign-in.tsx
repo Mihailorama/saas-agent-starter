@@ -68,18 +68,12 @@ const copy: Record<Mode, { title: string; description: string; submit: string }>
   },
 };
 
-/** Referral the visitor arrived with (`?ref=<code>`, or Dub's `?dub_id=`; docs/growth.md), kept
- * for this tab only (no cookie) and sent with the sign-up. */
-function referral() {
+/** Referral the visitor arrived with (`?ref=<code>`, or Dub's `?dub_id=`; docs/growth.md). It
+ * stays in the URL, nothing is stored in the browser, and goes with the sign-up request only. */
+const referral = () => {
   const params = new URLSearchParams(window.location.search);
-  const value = params.get('ref') ?? params.get('dub_id');
-  try {
-    if (value) sessionStorage.setItem('referral', value);
-    return sessionStorage.getItem('referral') ?? undefined;
-  } catch {
-    return value ?? undefined;
-  }
-}
+  return params.get('ref') ?? params.get('dub_id') ?? undefined;
+};
 
 export function SignInPage() {
   const navigate = useNavigate();
