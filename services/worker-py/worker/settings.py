@@ -174,3 +174,6 @@ GA4_SERVICE_ACCOUNT_JSON = os.environ.get("GA4_SERVICE_ACCOUNT_JSON", "")
 
 # Billing (docs/billing.md): plans and limits, shared with the API.
 PLANS_FILE = Path(os.environ.get("PLANS_FILE", _ROOT / "config" / "plans.json"))
+# Usage reporting to Stripe Meters (worker/usage.py); the same key as the API's. Empty: off.
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_API_URL = os.environ.get("STRIPE_API_URL") or None

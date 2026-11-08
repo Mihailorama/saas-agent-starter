@@ -9,6 +9,7 @@ import {
   numeric,
   pgPolicy,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -231,6 +232,12 @@ export const subscriptions = pgTable(
     currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
     currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
     cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+    /** Purchased seats of a per_seat price: the seat limit (docs/billing.md "Per seat"). */
+    seats: integer('seats'),
+    /** Contract reference (order form, PO) of an invoiced contract, set by an operator. */
+    contractRef: text('contract_ref'),
+    /** Usage is reported to the provider's meters up to this hour (worker/usage.py). */
+    usageReportedUntil: timestamp('usage_reported_until', { withTimezone: true }),
     /** Admin-raised LLM spend limits per currency, capped by the plan's llmSpendMax. */
     llmSpendLimits: jsonb('llm_spend_limits').$type<Record<string, number>>(),
     /** Time of the newest provider event applied; older (replayed) events are ignored. */
@@ -244,6 +251,22 @@ export const subscriptions = pgTable(
     ),
     tenantIsolation(),
   ],
+);
+
+/**
+ * API-key requests per org and hour, the source of the `api_calls` meter (docs/billing.md
+ * "Usage-based"). The worker reports each closed hour once to the provider; not a usage ledger
+ * (the provider rates and invoices). Written only while the `billing-usage` flag is on.
+ */
+export const usageCounters = pgTable(
+  'usage_counters',
+  {
+    orgId: orgId(),
+    meter: text('meter').notNull(),
+    hour: timestamp('hour', { withTimezone: true }).notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.meter, t.hour] }), tenantIsolation()],
 );
 
 /**

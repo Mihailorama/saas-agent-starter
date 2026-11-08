@@ -62,8 +62,9 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md),
                       onboarding.ts = checklist item ids + conditions, GET /api/onboarding (docs/onboarding.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
-  src/billing/        plans config, entitlements() + requireEntitlement, payment providers
-                      (Stripe) behind one interface (docs/billing.md)
+  src/billing/        plans config (any pricing model), entitlements() + requireEntitlement,
+                      payment providers (Stripe, manual contracts) behind one interface,
+                      money.ts = currency minor units (docs/billing.md)
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -105,7 +106,8 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
                       GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
 config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
-                    plans.json (plans, limits, prices per currency, billing contours),
+                    plans.json (plans, limits, priced components per currency, billing
+                    contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
                     flags.json (feature flag catalog),
@@ -132,7 +134,8 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
                     deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract),
                     check-flags.mjs, flags.mjs (flags:sync),
-                    eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs
+                    eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs,
+                    vault.mjs (secrets vault for humans and agents over the `bw` CLI)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path, lite Telegram bot
@@ -141,6 +144,7 @@ docs/admin.md       operator console: who is an operator, actions, audit, impers
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/onboarding.md  setup checklist (item ids for rewards rules) and product tour: add a step or item
 docs/mcp.md         external MCP tools: connect a server, the reference server, the tool loop
+docs/secrets.md     secrets vault: Vaultwarden install or Bitwarden connect, agent rules, vault -> SOPS
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 docs/security.md    sign-up protection (disposable email), bot-check follow-up
 ```
@@ -204,6 +208,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   booking on self-hosted Cal.diy (MIT, `booking` profile, image built by CI from a pinned upstream
   commit; Cal.com Cloud connects the same way). Sync is one Temporal workflow per source event,
   cross-links in Twenty custom fields, no own CRM tables (ADR 0026).
+- Secrets vault: Vaultwarden (AGPL-3.0, unmodified, `vault` profile, data in our Postgres) or any
+  Bitwarden you connect, used through the official `bw` CLI (GPL-3.0, installed by the developer)
+  and `scripts/vault.mjs`; SOPS files stay the deploy path; no own vault code (ADR 0029).
 
 ## Where code goes (TS vs Python vs Rust)
 
@@ -526,6 +533,31 @@ Details: docs/releases.md.
   (never closes it); a bare mention gets nothing.
 - Never create tags or releases by hand; merging the release-please PR does it.
 
+## Secrets for agents
+
+Details: docs/secrets.md, ADR 0029.
+
+- Secrets live in the team vault (Vaultwarden or Bitwarden), one item per `<service>/<env>`, one
+  field per value. The wrapper logs in as a dedicated agent account that sees only dev/staging
+  collections. Never paste secrets into chat, `.env`, `.env.example`, git, issues, logs or files,
+  and never ask a human to paste one into chat: ask them to `put` it into the vault.
+- Without approval (allow-listed): `node scripts/vault.mjs status` and `lock`. Everything else
+  asks the human each time, and that is intended: `get` reveals a value, `run` executes a command
+  with it, `put`/`replace` write the shared vault, `unlock` needs the master password.
+- Read: `node scripts/vault.mjs run <item> <field> <ENV_VAR> -- <command>` (preferred: the value
+  never reaches you), or `node scripts/vault.mjs get <item> <field> --stdout | <consumer>` in the
+  same command. Never a bare `get`, never `echo`/`cat` of a value, never `bw get`/`bw list`.
+- Save every credential you create or receive at once:
+  `<command that prints it> | node scripts/vault.mjs put <item> <field>` (stdin only, never argv).
+  `put` refuses to overwrite; `replace` is for a human-approved rotation. `/save-secret` has the
+  steps. Then use it from the vault, not from your context.
+- Locked or logged out (`vault.mjs status` exit 2): stop and ask the human to run
+  `node scripts/vault.mjs unlock` in their terminal. Never search files, env, shell history, other
+  tools or `~/.config/agent-vault/` for the credential, and never ask for the master password.
+  Deny rules are not a security boundary: these rules are.
+- Production env files: vault -> `sops set --value-stdin` -> `pnpm run deploy` (docs/secrets.md
+  "Vault to deploy"), run by a human. The `bw` CLI is GPL-3.0: never add it as a code dependency.
+
 ## Security rules
 
 - Tenant tables: always `orgId()` + `tenantIsolation()`, always accessed via `withTenant`
@@ -547,7 +579,7 @@ Details: docs/releases.md.
   `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
   go upstream (issue or PR); until a release lands, work around it in our own code.
 - No real secrets, client names or private data in the repo, ever. Example values use
-  `example.com` and `local-dev-*`.
+  `example.com` and `local-dev-*`. Real secrets go to the vault ("Secrets for agents").
 
 ## Never
 

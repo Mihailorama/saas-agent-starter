@@ -1,5 +1,12 @@
 # Known limitations / backlog
 
+- **Vault: CI runs no real `bw` round trip** (docs/secrets.md, ADR 0029). The `vault` CI job only
+  checks Vaultwarden (alive over TLS, admin off, signups closed); `scripts/vault.test.mjs` uses a
+  fake `bw`. The real round trip (invite, register, `unlock`, `put`, `replace`, `get`, `run`, `lock` with
+  `@bitwarden/cli` 2026.10.1, agent profile) passed by hand on 2026-11-08, with registration done by a
+  throwaway script (Bitwarden client crypto) because `bw` cannot register. Fix: pin `@bitwarden/cli`
+  in that job via `npm exec`, register a test user over `/identity/accounts/register/finish`, run
+  the wrapper. Catches a change in the `bw` item JSON or its HTTPS rules.
 - **Onboarding: tour "seen" and checklist "dismissed" are per browser** (docs/onboarding.md,
   `apps/web/src/lib/onboarding.ts`). They live in `localStorage` to avoid a table and a migration,
   so a user on a second device sees the tour once more and the card again. If that bothers users:
@@ -44,6 +51,9 @@
   worker/billing.py `check_llm_usage`); the API's billing response and the web page only show the
   money limit. Add a usage block next to `llmSpend`, and an alert on
   `billing_llm_usage_blocked_total` like `LlmSpendLimitHit`.
+- **Billing: prepaid credit packs** (docs/billing.md "Pricing models"). Next PR
+  (`billing-credits`): a `credits` price model, top-up checkout, Stripe credit grants after
+  payment, balance check in the gateway.
 - **llm-cli limits are per process** (services/llm-cli/src/pool.ts): run one replica. If one is not
   enough, move the per-subscription counters and cooldowns to Redis.
 - **vLLM CPU path not verified end to end.** On the dev host (AVX2 only, load ~25) the

@@ -21,7 +21,7 @@ from temporalio.workflow import ParentClosePolicy
 with workflow.unsafe.imports_passed_through():
     import worker.settings as settings
     from worker.activities import Activities, ProjectCreated
-    from worker.billing import BillingActivities, BillingEvent
+    from worker.billing import BillingActivities, BillingEvent, ContractPeriod
     from worker.crm import CrmActivities, CrmEvent
     from worker.mail import SendEmail, send_email
     from worker.privacy import (
@@ -36,6 +36,7 @@ with workflow.unsafe.imports_passed_through():
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
     from worker.telegram import TelegramActivities, TelegramChat, TelegramUpdate
     from worker.tracker import TrackerActivities, TrackerItem
+    from worker.usage import UsageActivities
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
 
 
@@ -201,27 +202,70 @@ RETENTION_SCHEDULE_ID = "privacy-retention"
 async def ensure_maintenance_schedule(
     client: Client, task_queue: str, schedule_id: str = MAINTENANCE_SCHEDULE_ID
 ) -> None:
-    await ensure_daily_schedule(client, WebhookMaintenanceWorkflow.run, task_queue, schedule_id)
+    await ensure_schedule(client, WebhookMaintenanceWorkflow.run, task_queue, schedule_id)
 
 
 async def ensure_retention_schedule(
     client: Client, task_queue: str, schedule_id: str = RETENTION_SCHEDULE_ID
 ) -> None:
-    await ensure_daily_schedule(client, PrivacyRetentionWorkflow.run, task_queue, schedule_id)
+    await ensure_schedule(client, PrivacyRetentionWorkflow.run, task_queue, schedule_id)
 
 
-async def ensure_daily_schedule(
-    client: Client, run: Any, task_queue: str, schedule_id: str
+async def ensure_schedule(
+    client: Client,
+    run: Any,
+    task_queue: str,
+    schedule_id: str,
+    every: timedelta = timedelta(days=1),
 ) -> None:
-    """Creates a daily schedule once; later worker starts leave it as it is (edit or pause it
-    in the Temporal UI). Settings are read by the activities at run time."""
+    """Creates a schedule (daily by default) once; later worker starts leave it as it is (edit
+    or pause it in the Temporal UI). Settings are read by the activities at run time."""
     schedule = Schedule(
         action=ScheduleActionStartWorkflow(run, id=schedule_id, task_queue=task_queue),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(days=1))]),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=every)]),
         policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
     )
     with contextlib.suppress(ScheduleAlreadyRunningError):
         await client.create_schedule(schedule_id, schedule)
+
+
+USAGE_SCHEDULE_ID = "billing-usage-report"
+
+
+async def ensure_usage_schedule(client: Client, task_queue: str) -> None:
+    await ensure_schedule(
+        client, UsageReportWorkflow.run, task_queue, USAGE_SCHEDULE_ID, timedelta(minutes=15)
+    )
+
+
+@workflow.defn(name="UsageReportWorkflow")
+class UsageReportWorkflow:
+    """Every 15 minutes (Temporal Schedule `billing-usage-report`): usage to the provider's
+    meters (worker/usage.py), one activity per org with its own retries. A failed org is picked
+    up from its own mark by the next run; the others go on."""
+
+    @workflow.run
+    async def run(self) -> dict[str, int]:
+        orgs = await workflow.execute_activity_method(
+            UsageActivities.usage_orgs,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+        results = await asyncio.gather(
+            *(
+                workflow.execute_activity_method(
+                    UsageActivities.report_org_usage,
+                    org,
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+                for org in orgs
+            ),
+            return_exceptions=True,
+        )
+        failed = sum(isinstance(r, BaseException) for r in results)
+        events = sum(r for r in results if isinstance(r, int))
+        return {"orgs": len(orgs), "events": events, "failed": failed}
 
 
 @workflow.defn(name="SendEmailWorkflow")
@@ -276,6 +320,24 @@ class BillingEventWorkflow:
                 parent_close_policy=ParentClosePolicy.ABANDON,
             )
         return applied
+
+
+@workflow.defn(name="ContractPeriodWorkflow")
+class ContractPeriodWorkflow:
+    """A durable timer to the end of a manual contract's period, then `end_contract_period`.
+    Started by the operator console with id `billing-contract-<org>-<period end ms>`."""
+
+    @workflow.run
+    async def run(self, p: ContractPeriod) -> str:
+        wait = datetime.fromisoformat(p.periodEnd) - workflow.now()
+        if wait > timedelta(0):
+            await workflow.sleep(wait)
+        return await workflow.execute_activity_method(
+            BillingActivities.end_contract_period,
+            p,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+        )
 
 
 @workflow.defn(name="CrmSyncWorkflow")
