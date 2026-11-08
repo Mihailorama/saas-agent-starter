@@ -15,7 +15,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from tests.conftest import new_org
-from tests.test_billing import call, in_org, spend, subscribe
+from tests.test_billing import call, fake, in_org, spend, subscribe
 from worker import settings
 from worker.ai import AllowedModel, Gateway
 from worker.ai import Price as ModelPrice
@@ -119,7 +119,7 @@ async def test_pay_as_you_go_warns_over_the_plan_limit_and_stops_at_own_cap(
                 frozenset({"project.summary"}), ModelPrice(Decimal("0.001"), Decimal(0), "USD")
             )
         },
-        providers={"fake": _fake},
+        providers={"fake": fake},
         retention_days=1,
         plans=PLANS,
     )
@@ -134,9 +134,3 @@ async def test_pay_as_you_go_warns_over_the_plan_limit_and_stops_at_own_cap(
     await in_org(pool, org, "update subscriptions set llm_spend_limits = null")
     with pytest.raises(SpendLimitExceeded):  # flag off: the plan's limit stops calls as before
         await call(gateway, org)
-
-
-async def _fake(model: str, messages: Any, max_tokens: int) -> Any:
-    from worker.ai import Completion
-
-    return Completion("ok", model, 10, 0, "fake")

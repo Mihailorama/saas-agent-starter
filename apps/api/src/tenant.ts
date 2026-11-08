@@ -33,6 +33,8 @@ export const SCOPES = {
   'ai_calls:read': 'admin',
   'webhooks:read': 'admin',
   'webhooks:write': 'admin',
+  'mcp_servers:read': 'admin',
+  'mcp_servers:write': 'admin',
 } as const satisfies Record<string, Role>;
 export type Scope = keyof typeof SCOPES;
 export const scopes = Object.keys(SCOPES) as Scope[];

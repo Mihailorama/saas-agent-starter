@@ -1,5 +1,11 @@
 # Known limitations / backlog
 
+- **MCP tools: admins type tool names; no "test connection"** (docs/mcp.md "Not covered"). The
+  API never connects out. Fix: a small Temporal workflow (`ListMcpToolsWorkflow`) the settings
+  page starts, returning the server's tool names through the SSRF pin; offer them as checkboxes.
+- **MCP tools: no OAuth servers, no a11y/e2e coverage of the settings page** (flag off in e2e,
+  like AI providers). Fix: OAuth via the SDK's client auth provider with tokens stored like the
+  auth header; e2e with `VITE_FLAGS_ON=mcp-tools` on the consent build or a third dev server.
 - **MCP: OAuth 2.1 sign-in for hosted connectors** (docs/mcp.md, ADR 0027). `/mcp` accepts only
   organization API keys as a bearer header; ChatGPT connectors and claude.ai custom connectors
   expect OAuth 2.1 (RFC 9728 protected resource metadata, PKCE, client registration). Better Auth

@@ -481,6 +481,18 @@ async def test_key_rotation_reencrypts_old_secrets(pool: asyncpg.Pool) -> None:
     endpoint_id = await new_endpoint(
         pool, org_id, "https://hooks.example.com/in", previous_secret=OLD_SECRET
     )
+    server_id = str(uuid.uuid4())
+    key_id, key = next(iter(KEYS.items()))
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+        await conn.execute(
+            "insert into mcp_servers (id, org_id, name, url, purposes, allowed_tools,"
+            " auth_header, auth_secret)"
+            " values ($1, $2, 'x', 'https://mcp.example.com', '{}', '{}', 'X-Key', $3)",
+            server_id,
+            org_id,
+            encrypt_secret("Bearer t", f"{org_id}/{server_id}", key_id, key),
+        )
     rotated = {"next": parse_keys("next:a-new-key-that-is-at-least-32-chars-long")["next"], **KEYS}
     moved = await WebhookActivities(pool, encryption_keys=rotated).reencrypt_webhook_secrets()
     assert moved >= 1
@@ -495,6 +507,10 @@ async def test_key_rotation_reencrypts_old_secrets(pool: asyncpg.Pool) -> None:
     assert decrypt_secret(row["secret"], endpoint_id, only_new) == SECRET
     assert decrypt_secret(row["previous_secret"], endpoint_id, only_new) == OLD_SECRET
     assert SECRET not in row["secret"] and SECRET.removeprefix("whsec_") not in row["secret"]
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+        stored = await conn.fetchval("select auth_secret from mcp_servers where id = $1", server_id)
+    assert decrypt_secret(stored, f"{org_id}/{server_id}", only_new) == "Bearer t"
 
 
 async def test_maintenance_schedule_is_created_once(client: Client) -> None:

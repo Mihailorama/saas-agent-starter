@@ -199,7 +199,9 @@ def plane_to_fake(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def llm(triage: dict[str, str] | str, duplicate: str = "0"):
-    async def provider(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+    async def provider(
+        model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+    ) -> Completion:
         system = messages[0].content
         assert "a@example.com" in messages[1].content or "duplicate" in system  # gets the text
         assert "never customer text" not in messages[1].content
