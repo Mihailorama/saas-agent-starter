@@ -260,3 +260,13 @@
   (docs/support.md "Live smoke run": `python -m worker.tracker smoke`) against the `STARTERDEMO`
   test project (Cloud and self-hosted CE) and check labels, Intake placement, the release
   comment's author check (`users/me`) and the return-path notes. Needs a Plane token.
+- **Bot check on sign-up (captcha), not wired yet** (docs/security.md "Sign-up protection",
+  2026-11-08). Disposable addresses are refused; scripted sign-ups with real-looking addresses
+  are only rate-limited. Better Auth's `captcha` plugin (`better-auth/plugins`) supports Cloudflare
+  Turnstile, reCAPTCHA, hCaptcha, CaptchaFox and Vercel BotID, server side in a few lines; it needs
+  the provider widget on `apps/web/src/pages/sign-in.tsx` (header `x-captcha-response`) and the
+  provider's origins in the web CSP. Plan: default off, env-only "connect" (`CAPTCHA_PROVIDER`,
+  `CAPTCHA_SECRET_KEY`, `VITE_CAPTCHA_SITE_KEY`) for Turnstile/hCaptcha. Self-hosted "install"
+  path: ALTCHA (MIT, proof of work) has no Better Auth provider; it would be a small own
+  `hooks.before` verifying the ALTCHA payload with its library, check its license and
+  maintenance first.

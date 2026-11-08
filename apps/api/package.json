@@ -41,6 +41,7 @@
     "fastify-type-provider-zod": "^7.0.0",
     "import-in-the-middle": "^3.5.3",
     "ioredis": "^6.0.0",
+    "mailchecker": "^6.0.21",
     "posthog-node": "^5.63.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

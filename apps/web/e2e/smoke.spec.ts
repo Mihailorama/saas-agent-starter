@@ -15,6 +15,16 @@ async function signUp(page: Page, email: string) {
   await page.goto(await mailedLink(email, /Confirm/));
 }
 
+test('sign-up refuses a disposable email address with a clear message', async ({ page }) => {
+  await page.goto('/sign-in');
+  await page.getByRole('button', { name: 'Create an account' }).click();
+  await page.getByLabel('Name').fill('Ada Lovelace');
+  await page.getByLabel('Email').fill(`${randomUUID()}@mailinator.com`);
+  await page.getByLabel('Password').fill('correct-horse-battery');
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByText('This email address cannot be used')).toBeVisible();
+});
+
 test('sign up, create an organization and a project', async ({ page }) => {
   // On-prem default: no request leaves our own hosts (analytics sinks are env-gated).
   const hosts = new Set<string>();
