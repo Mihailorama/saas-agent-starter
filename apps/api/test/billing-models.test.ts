@@ -51,7 +51,7 @@ const started: string[] = [];
 let op: User;
 beforeAll(async () => {
   op = await signUp(opEmail);
-  const { totpURI } = (await call(op, 'POST', '/api/auth/two-factor/enable')).json();
+  const { totpURI } = (await call(op, 'POST', '/api/auth/two-factor/enable', {})).json();
   const code = (OTPAuth.URI.parse(totpURI) as OTPAuth.TOTP).generate();
   const verified = await call(op, 'POST', '/api/auth/two-factor/verify-totp', { code });
   const jar = new Map(op.cookie.split('; ').map((c) => c.split('=', 2) as [string, string]));
