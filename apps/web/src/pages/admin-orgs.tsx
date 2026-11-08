@@ -84,6 +84,7 @@ type OrgDetail = {
   }[];
   pendingRewards: {
     id: string;
+    status: 'pending_manual' | 'reserved';
     ruleId: string;
     reward: Record<string, unknown>;
     key: string;
@@ -677,13 +678,16 @@ export function AdminOrgPage() {
       {o.pendingRewards.length > 0 && (
         <Section
           title="Rewards to apply"
-          description="The billing provider could not apply these (manual contract, provider failing). Check the provider for the idempotency key first: it may have applied it already. Then apply it as a credit note or invoice line and mark it."
+          description="Not applied by the billing provider (manual contract, provider failing), or reserved for over an hour by a stuck workflow. Check the provider for the idempotency key first: it may have applied it already. Then apply it as a credit note or invoice line and mark it, or release a stuck reservation."
         >
           <Table>
             <TableBody>
               {o.pendingRewards.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.ruleId}</TableCell>
+                  <TableCell>
+                    {r.ruleId}
+                    {r.status === 'reserved' && <Badge variant="outline">stuck</Badge>}
+                  </TableCell>
                   <TableCell className="font-mono text-xs">{JSON.stringify(r.reward)}</TableCell>
                   <TableCell className="font-mono text-xs">
                     {r.key}
@@ -708,6 +712,25 @@ export function AdminOrgPage() {
                         await refresh();
                       }}
                     />
+                    {r.status === 'reserved' && (
+                      <ReasonDialog
+                        trigger={
+                          <Button size="sm" variant="ghost">
+                            Release
+                          </Button>
+                        }
+                        title="Release the reservation"
+                        description="Nothing is applied; the reservation stops counting against the rule's cap. The reason goes to the organization's audit log."
+                        confirm="Release"
+                        onConfirm={async (reason) => {
+                          await api(`/api/admin/orgs/${o.id}/rewards/${r.id}/release`, {
+                            method: 'POST',
+                            json: { reason },
+                          });
+                          await refresh();
+                        }}
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

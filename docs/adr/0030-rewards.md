@@ -51,9 +51,8 @@ Free organizations have no provider customer. Usage: [docs/growth.md](../growth.
 
 ## Consequences
 
-- `invitation.accepted` counts an account once across all organizations (its first accepted
-  invitation); deleting an organization deletes its invitations, which reopens that account.
-  Keep free fallbacks non-monetary.
+- `invitation.accepted` counts an account once across all organizations (`invite_reward_org_id`
+  on the user, set once). Keep free fallbacks non-monetary.
 - Money amounts use billing's minor-unit map (`money.ts`): the schema checks the digits, the
   provider call converts with `toMinor`.
 - If the API link fails after the provider applied a reward, the grant is `pending_manual`;

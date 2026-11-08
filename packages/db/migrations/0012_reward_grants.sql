@@ -12,9 +12,10 @@ CREATE TABLE "reward_grants" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "reward_grants_org_id_rule_id_subject_unique" UNIQUE("org_id","rule_id","subject"),
 	CONSTRAINT "reward_grants_via" CHECK ("reward_grants"."via" in ('entitlement', 'balance_credit', 'coupon', 'manual')),
-	CONSTRAINT "reward_grants_status" CHECK ("reward_grants"."status" in ('reserved', 'applied', 'pending_manual'))
+	CONSTRAINT "reward_grants_status" CHECK ("reward_grants"."status" in ('reserved', 'applied', 'pending_manual', 'released'))
 );
 --> statement-breakpoint
 ALTER TABLE "reward_grants" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "user" ADD COLUMN "invite_reward_org_id" text;--> statement-breakpoint
 ALTER TABLE "reward_grants" ADD CONSTRAINT "reward_grants_org_id_organization_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE POLICY "tenant_isolation" ON "reward_grants" AS PERMISSIVE FOR ALL TO public USING (org_id = current_setting('app.org_id', true)) WITH CHECK (org_id = current_setting('app.org_id', true));

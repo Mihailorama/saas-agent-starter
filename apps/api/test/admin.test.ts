@@ -499,5 +499,27 @@ describe('rewards waiting for operators (docs/growth.md)', () => {
       target: g!.id,
       reason: 'credit note CN-1',
     });
+
+    // A reservation stuck for over an hour shows too, and can be released (frees the cap).
+    const [stuck] = await withOrg(db, org.id, (tx) =>
+      tx
+        .insert(rewardGrants)
+        .values({
+          orgId: org.id,
+          ruleId: 'team-invite',
+          subject: randomUUID(),
+          status: 'reserved',
+          reward: { kind: 'balance_credit', amount: '5.00', currency: 'USD' },
+          idempotencyKey: 'reward-stuck',
+          createdAt: new Date(Date.now() - 2 * 3600_000),
+        })
+        .returning(),
+    );
+    expect(await pending()).toContain('reward-stuck');
+    const release = () =>
+      post(op, `/api/admin/orgs/${org.id}/rewards/${stuck!.id}/release`, { reason: 'stuck' });
+    expect((await release()).statusCode).toBe(204);
+    expect(await pending()).not.toContain('reward-stuck');
+    expect((await release()).statusCode).toBe(404);
   });
 });

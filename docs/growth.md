@@ -66,11 +66,14 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
    under an advisory lock on (org, rule): no row yet for this subject (so the reward is never paid
    twice, also after Temporal's retention forgot the workflow id), cap not reached, organization
    not suspended, and per trigger: the invited user is still a member, has a verified email, and
-   this is the account's **first accepted invitation anywhere** (one account cannot be re-invited
-   by org after org); or the profile is still complete.
+   the account has **never counted for another organization** (`user.invite_reward_org_id`, set
+   once, kept when memberships or invitations change); or the profile is still complete.
 3. Entitlements apply on our side. Money and coupons go to the API, which owns the billing
    provider: `POST /internal/rewards/apply` with `INTERNAL_API_TOKEN`, keyed by the workflow id,
-   which is also the provider's idempotency key.
+   which is also the provider's idempotency key. The provider's object id is stored on the row as
+   soon as the API answers, so a re-run settles with it instead of calling the provider again; a
+   reservation older than a day without it goes to operators (the provider's idempotency key may
+   have expired, a second call could credit twice).
 4. The row is settled (`applied` or `pending_manual`) with an audit row (`reward.applied` or
    `reward.pending_manual`). Metric `rewards.granted` (labels `rule`, `via`).
 
@@ -93,7 +96,9 @@ silently dropped: operators see each pending grant on the organization's console
 idempotency key and provider reference. **Check the provider for that key first** (look the request with
 that idempotency key up in the provider's request logs): when the API timed out after the provider
 succeeded, the credit exists already. Otherwise apply it as a credit note or invoice line, then mark
-it applied (an `operator.reward.applied` audit row with the reference).
+it applied (an `operator.reward.applied` audit row with the reference). Reservations stuck for
+over an hour (a workflow that never finished) show there too: mark them applied, or release them
+(status `released`, no longer counted against the cap).
 
 ## Add a rule
 

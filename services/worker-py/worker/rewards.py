@@ -45,6 +45,14 @@ class Applied:
     ref: str | None = None
 
 
+@dataclass(frozen=True)
+class Reservation:
+    """A reserved grant: the rule's reward and, if an earlier run applied it, how."""
+
+    reward: dict[str, Any]
+    applied: Applied | None = None
+
+
 def load_rules(path: Path) -> dict[str, dict[str, Any]]:
     """config/rewards.json by rule id (the API validates its schema, apps/api/test)."""
     return {r["id"]: r for r in json.loads(path.read_text())["rules"]}
@@ -63,12 +71,15 @@ class RewardActivities:
         self.api_url, self.api_token = api_url.rstrip("/"), api_token
 
     @activity.defn(name="reward_reserve")
-    async def reserve(self, r: RewardRequest) -> dict[str, Any] | None:
-        """Reserves the grant if the conditions hold now, else None: the rule's reward.
+    async def reserve(self, r: RewardRequest) -> Reservation | None:
+        """Reserves the grant if the conditions hold now, else None. `applied` is set when an
+        earlier run got that far: settle it, do not apply again.
 
         One transaction under an advisory lock on (org, rule), so concurrent workflows of one org
-        never pass the cap together. A subject gets a rule once, ever (also after Temporal forgot
-        the workflow id); a retry of this same workflow finds its own reservation.
+        never pass the cap together. A subject gets a rule once, ever. A reservation found again
+        (a retry, or a re-run after Temporal forgot the id) is settled with the provider object
+        stored by `apply`; one older than a day without it goes to operators, since the provider's
+        idempotency key may have expired and a second call could credit twice.
         """
         rule = self.rules.get(r.ruleId)
         if rule is None:
@@ -81,20 +92,38 @@ class RewardActivities:
                 "select pg_advisory_xact_lock(hashtext($1))", f"reward:{r.orgId}:{r.ruleId}"
             )
             mine = await conn.fetchrow(
-                "select status, idempotency_key from reward_grants where rule_id = $1"
-                " and subject = $2",
+                "select status, via, reward, provider_ref, idempotency_key,"
+                " created_at < now() - interval '1 day' as stale"
+                " from reward_grants where rule_id = $1 and subject = $2",
                 r.ruleId,
                 r.subject,
             )
             if mine is not None:
-                own = mine["status"] == "reserved" and mine["idempotency_key"] == key
-                return rule["reward"] if own else None
+                if mine["status"] != "reserved" or mine["idempotency_key"] != key:
+                    return None
+                if mine["via"] is not None:  # applied, not settled yet
+                    done = Applied(mine["via"], json.loads(mine["reward"]), mine["provider_ref"])
+                    return Reservation(rule["reward"], done)
+                if mine["stale"]:
+                    return Reservation(rule["reward"], Applied("manual", rule["reward"]))
+                return Reservation(rule["reward"])
             ok = await self._conditions(conn, r, rule)
             if ok:
                 count: int = await conn.fetchval(
-                    "select count(*) from reward_grants where rule_id = $1", r.ruleId
+                    "select count(*) from reward_grants where rule_id = $1"
+                    " and status <> 'released'",
+                    r.ruleId,
                 )
                 ok = count < rule["capPerOrg"]
+            if ok and rule["trigger"] == "invitation.accepted":
+                # Abuse guard: an account counts for one organization, ever (keyed by user id;
+                # kept when memberships or invitations change).
+                ok = r.orgId == await conn.fetchval(
+                    'update "user" set invite_reward_org_id = coalesce(invite_reward_org_id, $1)'
+                    " where id = $2 returning invite_reward_org_id",
+                    r.orgId,
+                    r.userId,
+                )
             if ok:
                 await conn.execute(
                     "insert into reward_grants (org_id, rule_id, subject, status, reward,"
@@ -108,7 +137,7 @@ class RewardActivities:
         if not ok:
             log.info("reward %s for org %s: not eligible", r.ruleId, r.orgId)
             return None
-        return rule["reward"]
+        return Reservation(rule["reward"])
 
     async def _conditions(self, conn: Any, r: RewardRequest, rule: dict[str, Any]) -> bool:
         org = await conn.fetchrow(
@@ -117,14 +146,11 @@ class RewardActivities:
         if org is None or org["suspended_at"] is not None:
             return False
         if rule["trigger"] == "invitation.accepted":
-            # Abuse guard: a verified account, still a member after the hold, and its first
-            # accepted invitation anywhere: one account cannot be re-invited by org after org.
+            # Abuse guard: a verified account, still a member after the hold.
             return bool(
                 await conn.fetchval(
                     'select 1 from member m join "user" u on u.id = m.user_id'
-                    " where m.organization_id = $1 and m.user_id = $2 and u.email_verified"
-                    " and (select count(*) from invitation i where lower(i.email) = lower(u.email)"
-                    " and i.status = 'accepted') = 1",
+                    " where m.organization_id = $1 and m.user_id = $2 and u.email_verified",
                     r.orgId,
                     r.userId,
                 )
@@ -153,7 +179,20 @@ class RewardActivities:
             raise ApplicationError(f"API refused the reward: {res.status_code}", non_retryable=True)
         res.raise_for_status()  # 5xx: retried by the workflow's policy
         body: dict[str, Any] = res.json()
-        return Applied(body["via"], body["reward"], body["ref"])
+        done = Applied(body["via"], body["reward"], body["ref"])
+        # Stored at once: a re-run settles with it instead of calling the provider again.
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute("select set_config('app.org_id', $1, true)", r.orgId)
+            await conn.execute(
+                "update reward_grants set via = $3, reward = $4::jsonb, provider_ref = $5"
+                " where rule_id = $1 and subject = $2 and status = 'reserved'",
+                r.ruleId,
+                r.subject,
+                done.via,
+                json.dumps(done.reward),
+                done.ref,
+            )
+        return done
 
     @activity.defn(name="reward_record")
     async def record(self, r: RewardRequest, a: Applied) -> bool:

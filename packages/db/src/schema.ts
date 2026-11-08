@@ -420,7 +420,8 @@ export const privacyRequests = pgTable(
  * reserved first (under an advisory lock, so the per-org cap holds), then settled: the app role may
  * update only `status`, `via`, `reward`, `provider_ref` and `expires_at`, never delete
  * (packages/db/src/migrate.ts). `pending_manual` rows wait for an operator, who resolves them with
- * an `operator.reward.applied` audit row (docs/admin.md).
+ * an `operator.reward.applied` audit row (docs/admin.md); an operator may `release` a stuck
+ * reservation (it then no longer counts against the cap).
  */
 export const rewardGrants = pgTable(
   'reward_grants',
@@ -430,7 +431,9 @@ export const rewardGrants = pgTable(
     ruleId: text('rule_id').notNull(),
     /** What the rule counts once: the invited user's id, the org's own id, the referred org's id. */
     subject: text('subject').notNull(),
-    status: text('status', { enum: ['reserved', 'applied', 'pending_manual'] }).notNull(),
+    status: text('status', {
+      enum: ['reserved', 'applied', 'pending_manual', 'released'],
+    }).notNull(),
     /** How it was given, once settled. */
     via: text('via', { enum: ['entitlement', 'balance_credit', 'coupon', 'manual'] }),
     reward: jsonb('reward').$type<Record<string, unknown>>().notNull(),
@@ -448,7 +451,10 @@ export const rewardGrants = pgTable(
       'reward_grants_via',
       sql`${t.via} in ('entitlement', 'balance_credit', 'coupon', 'manual')`,
     ),
-    check('reward_grants_status', sql`${t.status} in ('reserved', 'applied', 'pending_manual')`),
+    check(
+      'reward_grants_status',
+      sql`${t.status} in ('reserved', 'applied', 'pending_manual', 'released')`,
+    ),
     tenantIsolation(),
   ],
 );

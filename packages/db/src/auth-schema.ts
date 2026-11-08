@@ -24,6 +24,8 @@ export const user = pgTable('user', {
   banned: boolean('banned').default(false),
   banReason: text('ban_reason'),
   banExpires: timestamp('ban_expires'),
+  /** Organization whose invitation reward this account counted for, once ever (docs/growth.md). */
+  inviteRewardOrgId: text('invite_reward_org_id'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
