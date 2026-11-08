@@ -33,6 +33,7 @@ from worker.mcp import McpConfig
 from worker.posthog import PostHogAi
 from worker.privacy import PrivacyActivities, configured_tools
 from worker.providers import load_providers, providers_from_config
+from worker.rewards import RewardActivities, load_rules
 from worker.s3 import S3
 from worker.support import Chatwoot, SupportActivities
 from worker.telegram import Bot, TelegramActivities
@@ -49,6 +50,7 @@ from worker.workflows import (
     DataExportWorkflow,
     PrivacyRetentionWorkflow,
     ProjectCreatedWorkflow,
+    RewardWorkflow,
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
@@ -251,6 +253,13 @@ async def main() -> None:
         files=files,
         booking_url=settings.BOOKING_PUBLIC_URL,
     )
+    rewards = RewardActivities(
+        pool,
+        load_rules(settings.REWARDS_FILE),
+        http,
+        settings.API_INTERNAL_URL,
+        settings.INTERNAL_API_TOKEN,
+    )
     if chatwoot and triage_model and ai:
         await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio
     stop = asyncio.Event()
@@ -275,6 +284,7 @@ async def main() -> None:
             DataDeletionWorkflow,
             PrivacyRetentionWorkflow,
             UsageReportWorkflow,
+            RewardWorkflow,
         ],
         activities=[
             activities.fingerprint_project,
@@ -285,6 +295,9 @@ async def main() -> None:
             usage.report_org_usage,
             credit_grants.grant_credits,
             credit_grants.record_grant_failure,
+            rewards.reserve,
+            rewards.apply,
+            rewards.record,
             crm.sync,
             support.triage,
             support.issue_closed,

@@ -4,6 +4,7 @@ import {
   member,
   organization,
   projects,
+  rewardGrants,
   subscriptions,
   type Tx,
   user,
@@ -106,6 +107,13 @@ const contractPlans = Object.entries(plans.plans).flatMap(([id, p]) => {
   const currencies = Object.keys(p.prices).filter((cur) => contractOf(id, cur));
   return currencies.length ? [{ id, name: p.name, currencies }] : [];
 });
+
+/** Rewards for operators: pending_manual ones not yet resolved by an `operator.reward.applied`
+ * audit row, and reservations stuck for over an hour (docs/growth.md). */
+const waiting = sql`((${rewardGrants.status} = 'pending_manual' and not exists (select 1 from
+  ${auditLog} where ${auditLog.action} = 'operator.reward.applied'
+  and ${auditLog.target} = ${rewardGrants.id}::text))
+  or (${rewardGrants.status} = 'reserved' and ${rewardGrants.createdAt} < now() - interval '1 hour'))`;
 
 /** Organizations: list, detail, suspend/unsuspend, limits, contracts (docs/admin.md). */
 export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
@@ -256,6 +264,19 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
         eventTypes: z.array(z.string()),
       }),
     ),
+    /** Rewards waiting for an operator (docs/growth.md): pending_manual, or reserved for over an
+     * hour (a stuck workflow); `key` finds the provider object. */
+    pendingRewards: z.array(
+      z.object({
+        id: z.string(),
+        status: z.enum(['pending_manual', 'reserved']),
+        ruleId: z.string(),
+        reward: z.record(z.string(), z.unknown()),
+        key: z.string(),
+        providerRef: z.string().nullable(),
+        createdAt: z.string(),
+      }),
+    ),
     audit: z.array(
       z.object({
         id: z.string(),
@@ -315,6 +336,10 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
           .where(eq(auditLog.orgId, id))
           .orderBy(desc(auditLog.createdAt))
           .limit(50);
+        const pending = await tx
+          .select()
+          .from(rewardGrants)
+          .where(and(eq(rewardGrants.orgId, id), waiting));
         let dashboardUrl: string | null = null;
         try {
           dashboardUrl = sub ? providerOf(sub).dashboardUrl(sub) : null;
@@ -377,6 +402,15 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
             consecutiveFailures: h.consecutiveFailures,
             eventTypes: h.eventTypes,
           })),
+          pendingRewards: pending.map((g) => ({
+            id: g.id,
+            status: g.status as 'pending_manual' | 'reserved',
+            ruleId: g.ruleId,
+            reward: g.reward,
+            key: g.idempotencyKey,
+            providerRef: g.providerRef,
+            createdAt: iso(g.createdAt)!,
+          })),
           audit: events.map(({ row, actorEmail }) => ({
             id: row.id,
             action: row.action,
@@ -394,6 +428,48 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
       return detail;
     },
   );
+
+  // A waiting reward applied by hand (credit note, invoice line), or a stuck reservation released
+  // (it stops counting against the cap). The audit row carries the reference.
+  for (const [path, action] of [
+    ['applied', 'reward.applied'],
+    ['release', 'reward.released'],
+  ] as const) {
+    app.post(
+      `/orgs/:id/rewards/:grantId/${path}`,
+      {
+        ...op,
+        schema: {
+          ...op.schema,
+          params: z.object({ id: z.string().min(1).max(100), grantId: z.uuid() }),
+          body: WithReason,
+          response: { 204: z.null(), 404: ErrorBody },
+        },
+      },
+      async (req, reply) => {
+        const { id, grantId } = req.params;
+        await withOrg(db, id, async (tx) => {
+          const [g] = await tx
+            .select({ id: rewardGrants.id, status: rewardGrants.status })
+            .from(rewardGrants)
+            .where(and(eq(rewardGrants.id, grantId), waiting));
+          if (!g || (path === 'release' && g.status !== 'reserved')) {
+            throw httpError(404, 'not found');
+          }
+          if (g.status === 'reserved') {
+            await tx
+              .update(rewardGrants)
+              .set(
+                path === 'release' ? { status: 'released' } : { status: 'applied', via: 'manual' },
+              )
+              .where(eq(rewardGrants.id, g.id));
+          }
+          await audit(tx, req, id, action, g.id, req.body.reason);
+        });
+        return reply.code(204).send(null);
+      },
+    );
+  }
 
   // Suspend: members get 403 "organization suspended" on every tenant route and cannot enter it;
   // its API keys get the same answer. Nothing is deleted; unsuspend restores everything.

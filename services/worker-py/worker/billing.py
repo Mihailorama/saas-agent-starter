@@ -256,6 +256,15 @@ async def llm_budget(
     own = None
     if plan.llm_limit_raise and currency in raised and currency in plan.llm_spend_max:
         limit = own = min(Decimal(str(raised[currency])), plan.llm_spend_max[currency])
+    if limit is not None:  # entitlement rewards (docs/growth.md), as entitlements() in the API
+        bonus: Decimal = await conn.fetchval(
+            "select coalesce(sum((reward->>'delta')::numeric), 0) from reward_grants"
+            " where via = 'entitlement' and reward->>'key' = 'llmSpendMonthly'"
+            " and reward->>'currency' = $1 and expires_at > $2",
+            currency,
+            now,
+        )
+        limit += bonus
     prices = plan.prices.get(sub["currency"], []) if sub and plans.paid(sub, now) else []
     payg = any(p.model == "metered" and p.meter in LLM_METERS for p in prices)
     cap = own if own is not None else plan.llm_spend_max.get(currency)

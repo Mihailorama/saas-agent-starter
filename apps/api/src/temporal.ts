@@ -242,3 +242,22 @@ export async function signalPrivacyCancel(requestId: string) {
     .getHandle(privacyWorkflowId({ kind: 'deletion', requestId }))
     .signal('cancel');
 }
+
+/**
+ * Contract with services/worker-py (worker/rewards.py, RewardRequest): one rule for one subject
+ * (docs/growth.md). The id makes a rule reward a subject at most once, whoever triggers it again.
+ */
+export type RewardRequest = {
+  orgId: string;
+  ruleId: string;
+  /** What the rule counts once: invited user id, the org id, the referred org id. */
+  subject: string;
+  /** User whose action triggered it (invitation: the new member, checked again after the hold). */
+  userId: string | null;
+  /** From config/rewards.json: the worker waits this long, then checks the conditions. */
+  holdDays: number;
+};
+export const rewardWorkflowId = (r: Pick<RewardRequest, 'orgId' | 'ruleId' | 'subject'>) =>
+  `reward-${r.orgId}-${r.ruleId}-${r.subject}`;
+export const startReward = (r: RewardRequest) =>
+  startOnce('RewardWorkflow', rewardWorkflowId(r), r);

@@ -1,5 +1,5 @@
-import { aiCalls, organization, subscriptions, type Tx, withOrg } from '@app/db';
-import { and, eq, gte, lt, sum } from 'drizzle-orm';
+import { aiCalls, organization, rewardGrants, subscriptions, type Tx, withOrg } from '@app/db';
+import { and, eq, gt, gte, lt, sum } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db.ts';
 import { type Limit, type Plan, type PriceModel, planById, plans } from './plans.ts';
@@ -57,12 +57,18 @@ export const limitOf = (plan: Plan, name: Limit, overrides: LimitOverrides) => {
     : Math.min(o, plan.limitsMax?.[name] ?? plan.limits[name]);
 };
 
+/** Unexpired entitlement rewards (reward_grants, docs/growth.md), summed per key. */
+/** `llmSpendMonthly:<currency>` for spend rewards (one cost currency each). */
+export type RewardBonus = Partial<Record<Limit | `llmSpendMonthly:${string}`, number>>;
+
 export function entitlementsOf(
   sub: Subscription | null,
   now = new Date(),
   overrides: LimitOverrides = null,
+  bonus: RewardBonus = {},
 ): Entitlements {
   const [planId, plan] = planById(paid(sub, now) ? sub.planId : null);
+  const extra = (k: keyof RewardBonus) => bonus[k] ?? 0;
   const prices = sub && paid(sub, now) ? (plan.prices[sub.currency] ?? []) : [];
   const models = prices.map((c) => c.model);
   const raisedOf = (currency: string) => {
@@ -78,12 +84,18 @@ export function entitlementsOf(
     subscription: sub,
     period: billingPeriod(sub, now),
     limits: {
-      seats: overrides?.seats === undefined && seats ? seats : limitOf(plan, 'seats', overrides),
-      projects: limitOf(plan, 'projects', overrides),
+      seats:
+        (overrides?.seats === undefined && seats ? seats : limitOf(plan, 'seats', overrides)) +
+        extra('seats'),
+      projects: limitOf(plan, 'projects', overrides) + extra('projects'),
     },
     models,
     features: plan.features,
-    llmSpendLimit: (currency) => raisedOf(currency) ?? plan.limits.llmSpendMonthly[currency],
+    // Rewards add only in their currency (worker/billing.py does the same).
+    llmSpendLimit: (currency) => {
+      const limit = raisedOf(currency) ?? plan.limits.llmSpendMonthly[currency];
+      return limit === undefined ? undefined : limit + extra(`llmSpendMonthly:${currency}`);
+    },
     payg: prices.some(
       (c) => c.model === 'metered' && (c.meter === 'llm_cost_micros' || c.meter === 'llm_tokens'),
     ),
@@ -99,7 +111,19 @@ export async function entitlements(orgId: string, tx?: Tx): Promise<Entitlements
       .select({ overrides: organization.limitOverrides })
       .from(organization)
       .where(eq(organization.id, orgId));
-    return entitlementsOf(sub ?? null, new Date(), org?.overrides ?? null);
+    const now = new Date();
+    const grants = await t
+      .select({ reward: rewardGrants.reward })
+      .from(rewardGrants)
+      .where(and(eq(rewardGrants.via, 'entitlement'), gt(rewardGrants.expiresAt, now)));
+    const bonus: RewardBonus = {};
+    for (const { reward } of grants) {
+      const key = (
+        reward.key === 'llmSpendMonthly' ? `llmSpendMonthly:${reward.currency}` : reward.key
+      ) as keyof RewardBonus;
+      bonus[key] = (bonus[key] ?? 0) + Number(reward.delta);
+    }
+    return entitlementsOf(sub ?? null, now, org?.overrides ?? null, bonus);
   };
   return tx ? read(tx) : withOrg(db, orgId, read);
 }

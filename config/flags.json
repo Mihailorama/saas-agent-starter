@@ -37,6 +37,12 @@
       "default": false,
       "expires": "2027-05-31"
     },
+    "rewards": {
+      "description": "Rewards from config/rewards.json: inviting teammates and completing the organization profile (docs/growth.md). Off: no reward workflow starts; rewards already granted stay.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "mcp-server": {
       "description": "MCP endpoint (/mcp) where customers' AI agents use the product with an organization API key.",
       "owner": "@mihailorama",

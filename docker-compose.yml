@@ -203,6 +203,8 @@ services:
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # Rewards (docs/growth.md): the worker calls /internal/rewards with it.
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-local-dev-internal-api-token-change-me}
       # Service desk webhooks + widget identity (docs/support.md); empty = endpoint off.
       CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:-}
       CHATWOOT_HMAC_TOKEN: ${CHATWOOT_HMAC_TOKEN:-}
@@ -252,6 +254,9 @@ services:
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
       AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}
+      # Rewards (docs/growth.md): money rewards are applied by the API's billing provider.
+      API_INTERNAL_URL: http://api:3000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-local-dev-internal-api-token-change-me}
       # Providers (docs/llm-providers.md, `providers` in config/ai-models.json). CLI subscriptions
       # via the llm-cli container; API keys, aggregators, custom and local endpoints via LiteLLM.
       LLM_CLI_URL: ${LLM_CLI_URL:-http://llm-cli:8080}

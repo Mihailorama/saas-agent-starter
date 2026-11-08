@@ -32,6 +32,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Users,
   Webhook,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
@@ -445,6 +446,7 @@ export function Shell() {
           {
             label: 'Settings',
             items: [
+              { label: 'Members', icon: Users, to: '/settings/members' as const },
               { label: 'API keys', icon: KeyRound, to: '/settings/api-keys' as const },
               { label: 'Webhooks', icon: Webhook, to: '/settings/webhooks' as const },
               ...(byoProviders

@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { toMinor } from './money.ts';
 import { componentByProviderPriceId, type PriceComponent } from './plans.ts';
 import { type BillingEvent, type BillingProvider, WebhookRejected } from './provider.ts';
 
@@ -143,6 +144,35 @@ export function stripeProvider(opts: {
       const base = `https://dashboard.stripe.com${opts.secretKey.startsWith('sk_test_') ? '/test' : ''}`;
       if (sub.providerSubscriptionId) return `${base}/subscriptions/${sub.providerSubscriptionId}`;
       return sub.customerId ? `${base}/customers/${sub.customerId}` : null;
+    },
+
+    // Rewards (docs/growth.md). The balance pays the next invoices (flat, per-seat and metered
+    // alike); a coupon joins the subscription's discounts. Each call carries an idempotency key.
+
+    async applyCredit(sub, c) {
+      if (!sub.customerId) throw new Error('no Stripe customer');
+      const txn = await stripe.customers.createBalanceTransaction(
+        sub.customerId,
+        {
+          amount: -toMinor(c.amount, c.currency), // negative = a credit
+          currency: c.currency.toLowerCase(),
+          description: c.description,
+        },
+        { idempotencyKey: c.key },
+      );
+      return txn.id;
+    },
+
+    async applyCoupon(sub, c) {
+      if (!sub.providerSubscriptionId) throw new Error('no Stripe subscription');
+      const current = await stripe.subscriptions.retrieve(sub.providerSubscriptionId);
+      const keep = current.discounts.map((d) => ({ discount: typeof d === 'string' ? d : d.id }));
+      const s = await stripe.subscriptions.update(
+        sub.providerSubscriptionId,
+        { discounts: [...keep, { coupon: c.couponId }] },
+        { idempotencyKey: c.key },
+      );
+      return s.id;
     },
 
     async webhook(req) {

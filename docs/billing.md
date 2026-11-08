@@ -23,6 +23,8 @@ Design and alternatives: [ADR 0019](adr/0019-billing.md), pricing models
   `stripe.ts`, `manual.ts` (contracts invoiced outside
   any provider), `registry.ts` (contour -> configured provider).
   Routes: `apps/api/src/routes/billing.ts`.
+- Rewards (docs/growth.md) add to the limits (`entitlements()`, the worker's spend check) and are
+  applied through the provider (`invoicing`, `applyCredit`, `applyCoupon`).
 - `services/worker-py/worker/billing.py`: the LLM spend check used by `Gateway.call_llm`,
   and applying provider events to `subscriptions`.
 
@@ -316,7 +318,10 @@ Nothing in the interface is Stripe-shaped.
    example sender address ranges, and re-reading the object from its API and trusting only the
    re-read copy). Throw `WebhookRejected` when verification fails. `dashboardUrl` links the
    subscription (or customer) in the provider's own dashboard for operators (docs/admin.md), or
-   `null`.
+   `null`. For rewards (docs/growth.md): `invoicing` (`provider`, or `external` for invoices
+   issued outside any PSP: rewards go to operators) and, if it can, `applyCredit` (a balance credit
+   for the next invoices) and `applyCoupon` (a discount added to the subscription's), idempotent
+   per key.
 2. **Wiring**: env vars in `apps/api/src/env.ts` (no real values in `.env.example`), a branch
    in `registry.ts`, its id in the contract `provider` enum (`plans.ts`) if it takes contracts, a contour in `config/plans.json` with its currencies, prices per currency
    (`providerPriceId: null` if the provider takes the amount with each payment).

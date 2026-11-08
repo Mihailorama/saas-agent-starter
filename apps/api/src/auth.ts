@@ -8,6 +8,7 @@ import { admin, genericOAuth, organization, twoFactor } from 'better-auth/plugin
 import { z } from 'zod';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
+import { triggerRewards } from './billing/rewards.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
@@ -133,6 +134,24 @@ export const auth = betterAuth({
             orgId: organization.id,
             userId: user.id,
           }),
+        // Rewards (docs/growth.md): both run after Better Auth committed the change. The worker
+        // re-checks the conditions (verified, still a member after holdDays; profile complete).
+        afterAcceptInvitation: async ({ member, user, organization }) => {
+          await triggerRewards('invitation.accepted', {
+            orgId: organization.id,
+            subject: member.userId,
+            userId: user.id,
+          });
+        },
+        afterUpdateOrganization: async ({ organization, user }) => {
+          if (!organization) return;
+          await triggerRewards('org.profile_completed', {
+            orgId: organization.id,
+            subject: organization.id,
+            userId: user.id,
+            metadata: organization.metadata,
+          });
+        },
       },
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>

@@ -415,6 +415,51 @@ export const privacyRequests = pgTable(
 );
 
 /**
+ * One reward of an organization (docs/growth.md, rules in config/rewards.json), written by the
+ * worker's RewardWorkflow. The unique key makes a rule count a subject once, ever. The row is
+ * reserved first (under an advisory lock, so the per-org cap holds), then settled: the app role may
+ * update only `status`, `via`, `reward`, `provider_ref` and `expires_at`, never delete
+ * (packages/db/src/migrate.ts). `pending_manual` rows wait for an operator, who resolves them with
+ * an `operator.reward.applied` audit row (docs/admin.md); an operator may `release` a stuck
+ * reservation (it then no longer counts against the cap).
+ */
+export const rewardGrants = pgTable(
+  'reward_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    ruleId: text('rule_id').notNull(),
+    /** What the rule counts once: the invited user's id, the org's own id, the referred org's id. */
+    subject: text('subject').notNull(),
+    status: text('status', {
+      enum: ['reserved', 'applied', 'pending_manual', 'released'],
+    }).notNull(),
+    /** How it was given, once settled. */
+    via: text('via', { enum: ['entitlement', 'balance_credit', 'coupon', 'manual'] }),
+    reward: jsonb('reward').$type<Record<string, unknown>>().notNull(),
+    /** The workflow id, also the provider's idempotency key: find the provider object by it. */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /** The provider's object (balance transaction, subscription) when it applied it. */
+    providerRef: text('provider_ref'),
+    /** Entitlement rewards count in entitlements() until then. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.orgId, t.ruleId, t.subject),
+    check(
+      'reward_grants_via',
+      sql`${t.via} in ('entitlement', 'balance_credit', 'coupon', 'manual')`,
+    ),
+    check(
+      'reward_grants_status',
+      sql`${t.status} in ('reserved', 'applied', 'pending_manual', 'released')`,
+    ),
+    tenantIsolation(),
+  ],
+);
+
+/**
  * Lite Telegram support (docs/support.md "Lite: Telegram only"): which forum topic of the support
  * group belongs to which Telegram user, and the app user they linked with the Help menu's deep
  * link. Not tenant-scoped: a Telegram user is not an organization's data. Messages are not stored

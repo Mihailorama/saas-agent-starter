@@ -8,7 +8,8 @@ import type { PriceComponent } from './plans.ts';
  */
 export interface BillingProvider {
   readonly id: string;
-  /** Who sends invoices: the provider, or someone outside it (`manual` contracts). */
+  /** Who sends invoices: the provider, or someone outside it (`manual` contracts). Rewards for
+   * `external` orgs wait for operators (docs/growth.md). */
   readonly invoicing: 'provider' | 'external';
   /** Hosted payment page for the first period of `planId`; returns where to send the browser. */
   checkout?(input: CheckoutInput): Promise<{ url: string }>;
@@ -24,7 +25,21 @@ export interface BillingProvider {
   webhook(req: WebhookRequest): Promise<BillingEvent[]>;
   /** The subscription in the provider's own dashboard, for operators (docs/admin.md). */
   dashboardUrl(sub: Subscription): string | null;
+  /** Optional (rewards, docs/growth.md): credits money to the customer's balance, used by its
+   * next invoices (metered ones too); returns the provider object's id. */
+  applyCredit?(sub: Subscription, credit: Credit): Promise<string>;
+  /** Optional (rewards): adds a coupon to the subscription, keeping its other discounts. */
+  applyCoupon?(sub: Subscription, coupon: { couponId: string; key: string }): Promise<string>;
 }
+
+export type Credit = {
+  /** Decimal string in major units ("5.00"; money.ts converts), in `currency` (the customer's). */
+  amount: string;
+  currency: string;
+  description: string;
+  /** Idempotency key: the same key never credits twice (also across retries). */
+  key: string;
+};
 
 export type CheckoutInput = {
   orgId: string;
