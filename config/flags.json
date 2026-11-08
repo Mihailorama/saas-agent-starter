@@ -6,6 +6,12 @@
       "owner": "@mihailorama",
       "default": false,
       "expires": "2027-03-31"
+    },
+    "mcp-server": {
+      "description": "MCP endpoint (/mcp) where customers' AI agents use the product with an organization API key.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
     }
   }
 }

@@ -2,7 +2,8 @@
 
 Every app built on this template exposes its API to customers with **organization API keys**
 and notifies them with **outbound webhooks**. Design and alternatives:
-[ADR 0018](adr/0018-public-api-webhooks.md).
+[ADR 0018](adr/0018-public-api-webhooks.md). The same keys work for AI agents over MCP at
+`/mcp` ([docs/mcp.md](mcp.md)).
 
 ## Authentication
 

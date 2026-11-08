@@ -26,6 +26,7 @@ import { aiProviderRoutes } from './routes/ai-providers.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
 import { hookRoutes } from './routes/hooks.ts';
+import { mcpRoutes } from './routes/mcp.ts';
 import { privacyRoutes } from './routes/privacy.ts';
 import { projectRoutes } from './routes/projects.ts';
 import { securityRoutes } from './routes/security.ts';
@@ -231,6 +232,7 @@ export async function buildApp() {
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(impersonationRoutes, { prefix: '/api/impersonation' });
   await app.register(privacyRoutes, { prefix: '/api/privacy' });
+  await app.register(mcpRoutes);
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.
   app.get('/api/openapi.json', { schema: { hide: true } }, async () => app.swagger());

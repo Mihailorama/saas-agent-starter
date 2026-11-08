@@ -55,7 +55,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       hooks.ts = PostHog alerts (-> S3 + TrackerItemWorkflow),
                       support.ts = Chatwoot/Plane/GitHub hooks,
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
-                      privacy.ts = data export/deletion requests (docs/privacy.md)
+                      privacy.ts = data export/deletion requests (docs/privacy.md),
+                      mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md)
@@ -175,6 +176,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
 - Chatwoot CE (MIT, `-ce` image only) as the service desk; backlog items, alerts and feedback in
   Plane (Intake, official Python SDK `plane-sdk`), GitHub Issues (plain REST) optional, one
   tracker client in the worker; triage is a Temporal workflow, no own ticket table (ADR 0013).
+- MCP server: official TypeScript SDK v2 (`@modelcontextprotocol/server`, Apache-2.0), Streamable
+  HTTP at `/mcp`, stateless, organization API keys as bearer; tools wrap the REST routes (ADR 0026).
 - Web API types generated from the API's OpenAPI document (`openapi-typescript`), calls through
   `openapi-fetch`; no hand-written response types (`apps/web/src/lib/api.ts`).
 
@@ -223,19 +226,31 @@ without a default go into a later release's migration marked `-- contract: <reas
   Never start deliveries yourself. Payload changes follow the versioning rule in
   docs/public-api.md.
 
-## Recipe: add a background workflow
+## Recipe: expose a tool over MCP
 
-1. Python: in `services/worker-py/worker/`, add `@activity.defn` methods (idempotent:
+Details: docs/mcp.md, ADR 0026. A tool is a REST route that already accepts API keys
+(`access('<scope>')`); never put logic, queries or authorization in the tool itself.
+
+1. In `apps/api/src/routes/mcp.ts`, inside the `scopes.has('<scope>')` block of the route's scope,
+   `mcp.registerTool('<verb>_<noun>', { description, inputSchema, outputSchema, annotations },
+   (input) => rest(req, '<tool>', '<METHOD>', '<url>', input))`. Reuse the route's exported Zod
+   schemas (an array result is wrapped as `{ <noun>s: [...] }`, see `rest`); mark reads
+   `readOnlyHint: true`.
+2. Test in `apps/api/test/mcp.test.ts`: listed only with the scope, a call that works, and a
+   cross-org id that comes back "Not Found".
+3. Add the tool to the table in docs/mcp.md.
+
+4. Python: in `services/worker-py/worker/`, add `@activity.defn` methods (idempotent:
    check-then-write in one transaction, `set_config('app.org_id', ...)` before tenant
    queries) and a `@workflow.defn(name="...")` class with explicit timeouts and a
    `RetryPolicy`. Register both in `worker/__main__.py`.
-2. TS: add a typed starter next to `startProjectCreated` in `apps/api/src/temporal.ts`.
+5. TS: add a typed starter next to `startProjectCreated` in `apps/api/src/temporal.ts`.
    Use a deterministic workflow id derived from the entity id plus
    `workflowIdReusePolicy: 'REJECT_DUPLICATE'` so retries never run it twice.
    Start it after the DB transaction commits.
-3. Tests: a pytest in `tests/test_workflow.py` style (real Temporal, unique task queue)
+6. Tests: a pytest in `tests/test_workflow.py` style (real Temporal, unique task queue)
    that checks the end result and that a duplicate start is rejected.
-4. The argument dataclass in Python and the TS type are the contract; change both together.
+7. The argument dataclass in Python and the TS type are the contract; change both together.
 
 ## Recipe: add an AI purpose (example: `project.summary`)
 

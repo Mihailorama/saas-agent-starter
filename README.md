@@ -23,6 +23,8 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 - **Public API**: organization API keys with scopes (Better Auth API key plugin), per-key
   rate limits, OpenAPI; outbound webhooks signed per Standard Webhooks, retried by Temporal,
   with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).
+- **MCP server**: customers' AI agents (Claude, ChatGPT, Gemini, Cursor) use the product at
+  `/mcp` with an API key; tools wrap the REST routes, behind a flag ([docs/mcp.md](docs/mcp.md)).
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
 - **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and
