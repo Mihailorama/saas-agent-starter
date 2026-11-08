@@ -11,8 +11,9 @@ import {
   requireEntitlement,
   type Subscription,
 } from '../billing/entitlements.ts';
-import { contour, minorUnits, type Price, plans, subscribable } from '../billing/plans.ts';
-import { NotSupported, ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
+import { fromMinor } from '../billing/money.ts';
+import { contour, type Price, plans, subscribable } from '../billing/plans.ts';
+import { ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
 import { contourOfProvider, providerFor, providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { env } from '../env.ts';
@@ -97,20 +98,23 @@ const basePrice = (price: Price | undefined) =>
   price?.flatMap((c) => (c.model === 'flat' || c.model === 'per_seat' ? [c] : []))[0];
 /** Whether the contour's provider sells these components through its checkout. */
 function sellable(contourId: string, price: Price | undefined) {
-  if (!price || !subscribable(price).length) return false; // free, contract or packs only
+  // Free, packs only or a contract: not a self-serve subscription.
+  if (!price?.length || !subscribable(price).length) return false;
+  const rest = price.filter((c) => !subscribable([c]).length);
   try {
-    const caps = providerFor(contourId).capabilities();
-    return caps.checkout && price.every((c) => caps.priceModels.includes(c.model));
+    const provider = providerFor(contourId);
+    // Credit packs are bought on top (topUp); anything else (a contract) goes through sales.
+    const packs = rest.every((c) => c.model === 'credits') && (!rest.length || !!provider.topUp);
+    return provider.checkout !== undefined && packs;
   } catch {
     return false; // provider not configured here
   }
 }
 
 function selfService(sub: Subscription | null) {
-  if (!sub) return { portal: false, cancel: false };
   try {
-    const caps = providerOf(sub).capabilities();
-    return { portal: caps.portal, cancel: caps.cancel };
+    const p = sub && providerOf(sub);
+    return { portal: !!p?.portal, cancel: !!p?.cancel };
   } catch {
     return { portal: false, cancel: false };
   }
@@ -135,7 +139,7 @@ async function creditsOf(log: FastifyBaseLogger, e: Entitlements, spent: Record<
   try {
     const minor = await providerOf(found.sub).creditBalance?.(found.sub);
     if (minor !== undefined) {
-      balance = Math.max(0, minor / 10 ** minorUnits(currency) - (spent[currency] ?? 0));
+      balance = Math.max(0, fromMinor(minor, currency) - (spent[currency] ?? 0));
     }
   } catch (err) {
     log.warn({ err }, 'credit balance unavailable'); // the page still renders
@@ -149,7 +153,6 @@ async function viaProvider<T>(log: FastifyBaseLogger, fn: () => Promise<T>): Pro
     return await fn();
   } catch (err) {
     if (err instanceof ProviderNotConfigured) throw httpError(503, 'billing is not configured');
-    if (err instanceof NotSupported) throw httpError(409, err.message);
     if ((err as { statusCode?: number }).statusCode) throw err;
     log.error({ err }, 'payment provider call failed');
     throw httpError(502, 'payment provider error');
@@ -261,7 +264,7 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
         .from(member)
         .where(eq(member.organizationId, req.tenant.orgId));
       const result = await viaProvider(req.log, () =>
-        providerFor(contourId).checkout({
+        providerFor(contourId).checkout!({
           orgId: req.tenant.orgId,
           planId: req.body.planId,
           planName: plan.name,
@@ -313,7 +316,11 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
     { ...admin, schema: { tags, response: { 200: Url, 404: ErrorBody } } },
     async (req) => {
       const sub = await withOrg(db, req.tenant.orgId, currentSubscription);
-      const url = sub && (await viaProvider(req.log, () => providerOf(sub).portal(sub, returnUrl)));
+      const provider = sub && providerOf(sub);
+      const url =
+        sub &&
+        provider?.portal &&
+        (await viaProvider(req.log, () => provider.portal!(sub, returnUrl)));
       if (!url) throw httpError(404, 'no billing portal for this subscription');
       return { url };
     },
@@ -327,7 +334,9 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!sub || (sub.status !== 'active' && sub.status !== 'past_due')) {
         throw httpError(409, 'no active subscription');
       }
-      await viaProvider(req.log, () => providerOf(sub).cancel(sub));
+      const provider = providerOf(sub);
+      if (!provider.cancel) throw httpError(409, 'this subscription ends by its contract');
+      await viaProvider(req.log, () => provider.cancel!(sub));
       await withTenant(req, (tx) =>
         tx
           .update(subscriptions)

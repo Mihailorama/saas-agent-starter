@@ -33,7 +33,7 @@ class FakeMeters:
         self.events: list[tuple[str, str, int, str]] = []
         self.failing = failing
 
-    async def report(
+    async def report_usage(
         self, customer_id: str, meter: str, value: int, identifier: str, at: datetime
     ) -> None:
         if customer_id in self.failing:
@@ -156,10 +156,12 @@ async def test_stripe_meter_events_against_stripe_mock() -> None:
     url = os.environ.get("STRIPE_API_URL", "http://localhost:12111")
     async with httpx2.AsyncClient(timeout=10) as http:
         meters = StripeMeters(http, "sk_test_123", url)
-        await meters.report("cus_1", "llm_cost_micros", 5, "llm_cost_micros:x", datetime.now(UTC))
+        await meters.report_usage(
+            "cus_1", "llm_cost_micros", 5, "llm_cost_micros:x", datetime.now(UTC)
+        )
         bad = StripeMeters(http, "sk_test_123", f"{url}/missing")
         with pytest.raises(RuntimeError, match="Stripe meter event failed: 404"):
-            await bad.report("cus_1", "llm_tokens", 1, "llm_tokens:x", datetime.now(UTC))
+            await bad.report_usage("cus_1", "llm_tokens", 1, "llm_tokens:x", datetime.now(UTC))
 
 
 async def test_pay_as_you_go_warns_over_the_plan_limit_and_stops_at_a_cap(

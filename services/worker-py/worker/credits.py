@@ -13,7 +13,6 @@
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from typing import Protocol
 
 import asyncpg
@@ -21,7 +20,15 @@ import httpx2
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from worker.billing import BillingEvent, Plans, SpendLimitExceeded, audit_once, llm_budget
+from worker.billing import (
+    BillingEvent,
+    Plans,
+    SpendLimitExceeded,
+    audit_once,
+    from_minor,
+    llm_budget,
+    to_minor,
+)
 from worker.flags import is_enabled
 
 log = logging.getLogger(__name__)
@@ -29,21 +36,15 @@ log = logging.getLogger(__name__)
 GRANT_ATTEMPTS = 20  # with backoff up to 5 minutes: about 1.5 hours, inside Stripe's 24-hour key
 FRESH, STALE = 30.0, 600.0  # seconds a balance is reused; and used while the provider is down
 balance_cache: dict[str, tuple[float, int]] = {}  # org -> (read at, minor units)
-# Decimal places of a currency's minor unit (ISO 4217); 2 unless listed. Twin in plans.ts.
-MINOR_UNITS = {"JPY": 0, "KRW": 0, "VND": 0, "CLP": 0, "ISK": 0}
-MINOR_UNITS |= {"KWD": 3, "BHD": 3, "JOD": 3, "OMR": 3, "TND": 3}
-
-
-def to_minor(amount: str, currency: str) -> int:
-    return int(Decimal(amount).scaleb(MINOR_UNITS.get(currency, 2)))
 
 
 class Credits(Protocol):
-    """A provider's prepaid credit (Stripe: StripeCredits); the API has the rest of the adapter."""
+    """A provider's prepaid credit (Stripe: StripeCredits): `creditBalance` and `grantCredits`
+    of the provider surface; the API has the rest of the adapter."""
 
-    async def balance(self, customer_id: str, currency: str) -> int: ...
+    async def credit_balance(self, customer_id: str, currency: str) -> int: ...
 
-    async def grant(
+    async def grant_credits(
         self, customer_id: str, currency: str, amount: int, expires: datetime | None, key: str
     ) -> None: ...
 
@@ -55,7 +56,7 @@ class StripeCredits:
         self.http, self.key = http, secret_key
         self.base = f"{(api_url or 'https://api.stripe.com').rstrip('/')}/v1/billing"
 
-    async def balance(self, customer_id: str, currency: str) -> int:
+    async def credit_balance(self, customer_id: str, currency: str) -> int:
         res = await self.http.get(
             f"{self.base}/credit_balance_summary",
             auth=(self.key, ""),
@@ -73,7 +74,7 @@ class StripeCredits:
             and str(m["currency"]).upper() == currency
         )
 
-    async def grant(
+    async def grant_credits(
         self, customer_id: str, currency: str, amount: int, expires: datetime | None, key: str
     ) -> None:
         data = {
@@ -134,7 +135,7 @@ async def check_credit_balance(
     balance = await _balance(credits[sub["provider"]], org_id, sub["customer_id"], currency)
     if balance is None:
         return  # provider down and nothing known yet: usage is billed, do not stop the product
-    left = Decimal(balance).scaleb(-MINOR_UNITS.get(currency, 2)) - spent
+    left = from_minor(balance, currency) - spent
     if left <= 0:
         log.warning("org %s: prepaid credit used up, call refused", org_id)
         raise SpendLimitExceeded("prepaid credit is used up; buy a credit pack on the billing page")
@@ -146,7 +147,7 @@ async def _balance(adapter: Credits, org_id: str, customer: str, currency: str) 
     if cached and t - cached[0] < FRESH:
         return cached[1]
     try:
-        value = await adapter.balance(customer, currency)
+        value = await adapter.credit_balance(customer, currency)
     except Exception:
         log.warning("org %s: credit balance unavailable, using the last known", org_id)
         return cached[1] if cached and t - cached[0] < STALE else None
@@ -188,7 +189,7 @@ class CreditActivities:
         days = pack.expires_days
         expires = datetime.fromisoformat(e.occurredAt) + timedelta(days=days) if days else None
         try:
-            await adapter.grant(
+            await adapter.grant_credits(
                 e.customerId,
                 currency,
                 to_minor(pack.amount, currency),

@@ -19,7 +19,8 @@ Design and alternatives: [ADR 0019](adr/0019-billing.md), pricing models
   invoices, receipts and payment history stay in the provider (Stripe: its customer portal).
 - `apps/api/src/billing/`: `plans.ts` (config), `entitlements.ts` (`entitlements(orgId)`,
   `requireEntitlement`, `llmSpend`), `provider.ts` (the provider interface, its
-  `capabilities()` and normalized events), `stripe.ts`, `manual.ts` (contracts invoiced outside
+  optional methods and normalized events), `money.ts` (`minorUnits`, `toMinor`, `fromMinor`),
+  `stripe.ts`, `manual.ts` (contracts invoiced outside
   any provider), `registry.ts` (contour -> configured provider).
   Routes: `apps/api/src/routes/billing.ts`.
 - `services/worker-py/worker/billing.py`: the LLM spend check used by `Gateway.call_llm`,
@@ -34,15 +35,17 @@ tiers, proration, taxes and invoices. There is no rating engine here. A price ob
 `model` (the format before) is read as `flat`, so older files keep working. Every model below is
 in the test fixture `apps/api/test/fixtures/plans.json`.
 
-| `model`    | Fields                                               | Sold by                                      |
-| ---------- | ---------------------------------------------------- | -------------------------------------------- |
-| `flat`     | `amount`, `interval`, `providerPriceId`              | checkout                                     |
-| `per_seat` | `amount` per seat, `interval`, `providerPriceId`     | checkout, quantity = members                 |
-| `metered`  | `meter`, `interval`, `providerPriceId`               | checkout, no quantity                        |
-| `contract` | `provider` (`manual` or `stripe`), `providerPriceId` | the operator console or the Stripe dashboard |
+| `model`    | Fields                                                                          | Sold by                                      |
+| ---------- | ------------------------------------------------------------------------------- | -------------------------------------------- |
+| `flat`     | `amount`, `interval`, `providerPriceId`                                         | checkout                                     |
+| `per_seat` | `amount` per seat, `interval`, `providerPriceId`                                | checkout, quantity = members                 |
+| `metered`  | `meter`, `interval`, `providerPriceId`                                          | checkout, no quantity                        |
+| `credits`  | `meter`, `pack: {credits, amount}`, `expiresDays`, `providerPriceId` (one-time) | "Buy credits" on the billing page            |
+| `contract` | `provider` (`manual` or `stripe`), `providerPriceId`                            | the operator console or the Stripe dashboard |
 
 Rules (checked when the file is read): at most one `flat` or `per_seat` component; a `contract`
-stands alone; amounts have exactly the currency's minor-unit decimals (`"29.00"`, JPY `"3000"`,
+stands alone; `credits` need a `metered` component on the same meter (credit grants apply to
+metered prices only); amounts have exactly the currency's minor-unit decimals (`"29.00"`, JPY `"3000"`,
 KWD `"9.500"`). Meters: `llm_cost_micros` (AI cost in millionths of the cost currency),
 `llm_tokens`, `api_calls` (requests with an organization API key).
 
@@ -50,7 +53,7 @@ KWD `"9.500"`). Meters: `llm_cost_micros` (AI cost in millionths of the cost cur
 quantity is the seat limit; the others use the plan's limits. The billing page shows the base
 price, "per seat", "+ usage", "Pay as you go" or "Contact us" from the same data; a plan gets an
 "Upgrade" button only where the contour's provider sells all its components through checkout
-(`capabilities()`).
+(the provider has `checkout`).
 
 ### Flat
 
@@ -101,6 +104,34 @@ organization in the API and the worker alike:
 An array: `flat` (or `per_seat`) plus `metered`. Included usage is a free first tier of the
 metered price, set up in the provider.
 
+### Prepaid credits
+
+`metered` plus `{"model": "credits", "meter": "llm_cost_micros", "pack": {"credits": 1000,
+"amount": "10.00"}, "expiresDays": 365, "providerPriceId": "price_..."}` (a one-time price): the
+subscription carries the metered price (checkout subscribes to it), and the customer buys packs
+on top. Behind the flag `billing-credits` (default off):
+
+- **Top-up**: "Buy N credits" on the billing page (`POST /api/billing/credits/checkout`, admins)
+  opens a one-time Stripe Checkout for the pack, for the org's Stripe customer (`topUp`).
+  `pack.credits` is the number shown; the grant is `pack.amount`.
+- **Grant after payment**: `checkout.session.completed` (or `.async_payment_succeeded`) with
+  `payment_status: paid` becomes `credits.purchased`, with the Checkout Session id as event id.
+  `BillingEventWorkflow` then runs `grant_credits` in the worker: it checks the audit trail
+  (`billing.credits.granted` for that session means done), then creates a Stripe
+  [credit grant](https://docs.stripe.com/billing/subscriptions/usage-based/billing-credits) of
+  the plan's pack value (never the amount paid, which includes tax and discounts; category
+  `paid`, metered prices, expiring after `expiresDays`) with the idempotency key
+  `credits-<session id>`. Up to 20 attempts, inside Stripe's 24-hour key window. A pack that
+  cannot be granted (no plan, pack, provider key or customer) or still fails on the last attempt
+  raises (Sentry) and writes `billing.credits.grant_failed`: grant it by hand in the dashboard.
+- **Balance check**: Stripe applies credit only when it finalizes an invoice, so before a priced
+  AI call the gateway compares the provider's available balance with this period's spend from
+  `ai_calls` (the same sum as the spend limit) and refuses the call with `SpendLimitExceeded`
+  when nothing is left. The balance is read at most every 30 s per org; while Stripe is down the
+  last one read in the past 10 minutes is used, and with none the call goes ahead (the usage is
+  billed anyway). The billing page shows the same remainder. No local ledger: the balance is
+  Stripe's.
+
 ### Contract
 
 Negotiated terms for one customer, on a plan with a `contract` price. Customers see "Contact us"
@@ -126,11 +157,13 @@ instead of a checkout. Seats and projects beyond the plan: "Adjust limits" in th
 
 ## Provider capabilities
 
-`BillingProvider.capabilities()` says what a provider does, so routes and pages ask instead of
-assuming: `{ checkout, portal, cancel, priceModels }`. Stripe: all three,
-`flat`/`per_seat`/`metered`/`contract`. `manual`: `contract` only, nothing self-serve. A
-subscription is served by the provider it was made with (`subscriptions.provider`), so a
-`manual` contract can sit in a Stripe contour. New fields come with their first consumer.
+What a provider can do is which optional methods its adapter has (`checkout`, `portal`,
+`cancel`, `topUp`, `creditBalance`, and in the worker `report_usage` / `credit_balance` /
+`grant_credits`, the `reportUsage` / `creditBalance` / `grantCredits` of the surface); routes and the billing page check for them instead
+of assuming Stripe's feature set. One field says who sends invoices: `invoicing: 'provider'`
+(Stripe) or `'external'` (`manual`: no checkout, portal or cancel). A subscription is served by
+the provider it was made with (`subscriptions.provider`), so a `manual` contract can sit in a
+Stripe contour.
 
 ## Connect vs install
 
@@ -145,7 +178,8 @@ that stops being enough:
   billing (connect; follow-up).
 
 Each is another provider adapter behind the same interface, plus a meter adapter in the worker
-(`Meters` in `worker/usage.py`: `report(customer, meter, value, identifier, at)`).
+(`Meters` in `worker/usage.py`: `report_usage(customer, meter, value, identifier, at)`, the
+`reportUsage` of the provider surface).
 
 ## Entitlements
 
@@ -235,7 +269,8 @@ LLM spend in the currencies of your models.
    adapter maps the price id back to the plan.
 3. Add a webhook endpoint `https://<your app>/api/billing/webhooks/stripe` with the events
    `customer.subscription.created`, `customer.subscription.updated`,
-   `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`.
+   `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`, and for credit
+   packs `checkout.session.completed`, `checkout.session.async_payment_succeeded`.
 4. Env (API; forwarded by `compose.prod.yaml`, set in `deploy/env/<env>.enc.env`):
    `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (the endpoint's signing secret);
    leave `STRIPE_API_URL` empty. Signatures are checked with the SDK's `constructEventAsync`.
@@ -263,9 +298,9 @@ No real provider keys anywhere, including CI.
 A provider is one file implementing `BillingProvider` (`apps/api/src/billing/provider.ts`).
 Nothing in the interface is Stripe-shaped.
 
-1. **Adapter**: `capabilities()` (above), `checkout` (hosted payment page for the first period
+1. **Adapter**: `invoicing`, `checkout` (optional: hosted payment page for the first period
    with the plan's components as line items; put `orgId` and `planId` into metadata the provider
-   echoes back), `portal` (a hosted self-service page, or `null`),
+   echoes back), optional `portal` (a hosted self-service page, or `null`),
    `cancel` (stop renewing at period end), `webhook` (verify, then map to `BillingEvent`s with a
    stable `eventId` so redeliveries are deduplicated). Verify webhooks with the provider's
    documented mechanism: a signature if it signs, otherwise what it documents instead (for

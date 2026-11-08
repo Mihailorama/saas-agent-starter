@@ -38,7 +38,7 @@ _SUB = (
 class Meters(Protocol):
     """A provider's usage meters (Stripe: StripeMeters); the API has the rest of the adapter."""
 
-    async def report(
+    async def report_usage(
         self, customer_id: str, meter: str, value: int, identifier: str, at: datetime
     ) -> None: ...
 
@@ -51,7 +51,7 @@ class StripeMeters:
         self.http, self.key = http, secret_key
         self.url = f"{(api_url or 'https://api.stripe.com').rstrip('/')}/v1/billing/meter_events"
 
-    async def report(
+    async def report_usage(
         self, customer_id: str, meter: str, value: int, identifier: str, at: datetime
     ) -> None:
         res = await self.http.post(
@@ -117,7 +117,7 @@ class UsageActivities:
                 self.pool, org_id, lambda c, h=hour: self._hour(c, org_id, sub, h)
             )
             for e in events:  # in sequence: Stripe takes one event per customer and meter
-                await meters.report(sub["customer_id"], e.meter, e.value, e.identifier, hour)
+                await meters.report_usage(sub["customer_id"], e.meter, e.value, e.identifier, hour)
             hour += HOUR
             await _in_org(
                 self.pool,
