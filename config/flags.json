@@ -36,6 +36,12 @@
       "owner": "@mihailorama",
       "default": false,
       "expires": "2027-05-31"
+    },
+    "onboarding": {
+      "description": "Onboarding checklist on the projects page and the first-visit product tour (docs/onboarding.md).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
     }
   }
 }

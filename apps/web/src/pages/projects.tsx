@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { OnboardingChecklist } from '@/components/onboarding-checklist';
 import { ConfirmDialog } from '@/components/patterns/confirm-dialog';
 import { DataTable, RowActions, sortable } from '@/components/patterns/data-table';
 import { PageContainer, PageHeader } from '@/components/patterns/page-header';
@@ -61,6 +62,7 @@ function NewProjectDialog({
     onSuccess: (project) => {
       track('project_created', { has_description: Boolean(project.description) });
       queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['onboarding'] });
       toast.success(`Created ${project.name}`);
       form.reset();
       onOpenChange(false);
@@ -214,8 +216,9 @@ export function ProjectsPage() {
       <PageHeader
         title="Projects"
         description="Everything your organization is working on."
-        actions={newProject}
+        actions={<div data-tour="new-project">{newProject}</div>}
       />
+      <OnboardingChecklist onNewProject={() => setCreating(true)} />
       <DataTable
         query={projects}
         columns={columns}
