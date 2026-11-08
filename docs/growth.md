@@ -17,7 +17,8 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
   the limits; the worker's LLM spend check does the same (`worker/billing.py`).
 - `services/worker-py/worker/rewards.py` + `RewardWorkflow` (`worker/workflows.py`): hold timer,
   conditions, cap, apply, record.
-- Web: `/settings/members` (list members, invite by email, revoke pending invitations; admins).
+- Web: `/settings/members` (list members, invite by email with the shared `InviteDialog` of the
+  onboarding checklist, revoke pending invitations; admins).
   Operators: "Rewards to apply" on `/admin` (docs/admin.md).
 
 ## A rule
@@ -38,7 +39,8 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
   - `invitation.accepted`: Better Auth's `afterAcceptInvitation` hook. Subject: the new member.
   - `org.profile_completed`: Better Auth's `afterUpdateOrganization` hook, when the organization's
     metadata has every key of the rule's `requiredMetadata`, all non-empty. The shipped rule uses
-    `size` and `website`, the keys the onboarding "company details" dialog writes. Code that writes
+    `size` and `website`, the keys the onboarding "company details" dialog writes and the API
+    validates (`OrgMetadata`, apps/api/src/auth.ts); a test keeps `requiredMetadata` within them. Code that writes
     organization metadata elsewhere (an onboarding flow) calls `triggerRewards('org.profile_completed',
     { orgId, subject: orgId, userId, metadata })` after its commit. Subject: the organization.
   - `referral.converted`: reserved for referrals.

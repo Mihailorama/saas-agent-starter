@@ -196,6 +196,26 @@
       "pii": false,
       "props": { "source": "string" }
     },
+    "onboarding_tour_started": {
+      "description": "The product tour on the projects page started (docs/onboarding.md). `manual` is true when restarted from the user menu.",
+      "pii": false,
+      "props": { "manual": "boolean" }
+    },
+    "onboarding_tour_completed": {
+      "description": "The product tour was closed on its last step.",
+      "pii": false,
+      "props": {}
+    },
+    "onboarding_tour_dismissed": {
+      "description": "The product tour was closed before its last step. `step` is the 0-based step it was closed on.",
+      "pii": false,
+      "props": { "step": "number" }
+    },
+    "onboarding_checklist_dismissed": {
+      "description": "The onboarding checklist card was dismissed. `done` is how many items were done.",
+      "pii": false,
+      "props": { "done": "number" }
+    },
     "support_opened": {
       "description": "The Help menu opened the support widget (docs/support.md). `kind` is what the user picked: question, bug or feature_request.",
       "pii": false,

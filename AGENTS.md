@@ -44,6 +44,7 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
   src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP), passkey and API key plugins
+  src/signup-guard.ts disposable / allow / deny email domains on every address write (docs/security.md)
   src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
   src/tenant.ts       requireRole() / access(scope) + withTenant(): RBAC, org 2FA policy, API key
                       scopes, RLS transaction, audit log, webhook events started after commit
@@ -59,7 +60,8 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       privacy.ts = data export/deletion requests (docs/privacy.md),
                       mcp-servers.ts = the org's external MCP servers (docs/mcp.md),
                       rewards.ts = /internal/rewards (worker -> billing provider, INTERNAL_API_TOKEN),
-                      mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md)
+                      mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md),
+                      onboarding.ts = checklist item ids + conditions, GET /api/onboarding (docs/onboarding.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
                       (Stripe) behind one interface (docs/billing.md); rewards.ts = reward rules,
@@ -76,6 +78,8 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   src/components/ui/  shadcn/ui components (copied source; edit freely)
   src/components/patterns/  app shell, page header, data table, states, confirm dialog,
                       settings section, command palette (docs/ui.md)
+  src/components/onboarding-checklist.tsx, src/lib/onboarding.ts  setup checklist card and
+                      product tour (driver.js, tours as data on `data-tour`), docs/onboarding.md
   src/dev/            UI gallery + reference screens at /dev/ui (dev builds only)
   e2e/                Playwright smoke, axe a11y on every page; visual.spec.ts (own config)
 apps/site           Astro static marketing site + blog (docs/marketing.md): reuses web's index.css
@@ -137,8 +141,10 @@ docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
 docs/growth.md      rewards: rules, triggers, behaviour per pricing model, operators' pending list
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
+docs/onboarding.md  setup checklist (item ids for rewards rules) and product tour: add a step or item
 docs/mcp.md         external MCP tools: connect a server, the reference server, the tool loop
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
+docs/security.md    sign-up protection (disposable email), bot-check follow-up
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
@@ -260,6 +266,14 @@ Details: docs/mcp.md, ADR 0027. A tool is a REST route that already accepts API 
 2. Test in `apps/api/test/mcp.test.ts`: listed only with the scope, a call that works, and a
    cross-org id that comes back "Not Found".
 3. Add the tool to the table in docs/mcp.md.
+
+## Recipe: add an onboarding checklist item or tour step
+
+Details: docs/onboarding.md. Item: add the id and its minimum role to `ONBOARDING_ITEMS` and its
+condition (existing data only, no new table) in `apps/api/src/routes/onboarding.ts`, its copy and
+action in `ITEMS` of `apps/web/src/components/onboarding-checklist.tsx`, a case in
+`apps/api/test/onboarding.test.ts` and a row in docs/onboarding.md; never rename an id. Tour step:
+put `data-tour="<id>"` on the element and add the step to `TOUR` in `apps/web/src/lib/onboarding.ts`.
 
 ## Recipe: add a background workflow
 
@@ -518,6 +532,9 @@ Details: docs/releases.md.
 - Never log secrets, tokens, cookies or request bodies; the logger redacts common paths
   and drops query strings.
 - Validate all input with Zod/dataclasses; never build SQL with string concatenation.
+- Every place an email address enters (sign-up, SSO, email change, invitations, any new auth
+  plugin) goes through `assertAllowedEmail` (`apps/api/src/signup-guard.ts`, disposable list from
+  `mailchecker`); never add an own domain list or a runtime download (docs/security.md).
 - New dependencies must pass `pnpm check:licenses` (allowlist in `scripts/license-check.mjs` and
   `deny.toml`): permissive licenses plus MPL-2.0 (file-level copyleft, no obligations on our
   code while unmodified). GPL/LGPL/AGPL/EUPL/SSPL/BUSL and other copyleft or source-available
