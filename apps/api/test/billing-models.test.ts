@@ -20,6 +20,7 @@ const { closeTemporal, temporal } = await import('../src/temporal.ts');
 const { parsePlans, plans } = await import('../src/billing/plans.ts');
 const { entitlementsOf } = await import('../src/billing/entitlements.ts');
 const { lineItems, stripeProvider } = await import('../src/billing/stripe.ts');
+const { fromMinor, minorUnits, toMinor } = await import('../src/billing/money.ts');
 const { default: Stripe } = await import('stripe');
 
 const app = await buildApp();
@@ -120,6 +121,16 @@ describe('price models in config', () => {
     expect(() => parsePlans(at('JPY', '30.00'))).toThrow(/JPY amounts have 0 decimals/);
     expect(() => parsePlans(at('KWD', '9.500'))).not.toThrow();
     expect(() => parsePlans(at('USD', '9.5'))).toThrow(/USD amounts have 2 decimals/);
+  });
+
+  it('converts amounts to and from minor units per currency', () => {
+    expect([minorUnits('USD'), minorUnits('jpy'), minorUnits('KWD')]).toEqual([2, 0, 3]);
+    expect([toMinor('29.00', 'USD'), toMinor('3000', 'JPY'), toMinor('9.500', 'KWD')]).toEqual([
+      2900, 3000, 9500,
+    ]);
+    expect([fromMinor(2900, 'USD'), fromMinor(3000, 'JPY'), fromMinor(9500, 'KWD')]).toEqual([
+      29, 3000, 9.5,
+    ]);
   });
 
   it('refuses shapes a provider cannot sell', () => {

@@ -113,7 +113,7 @@ async function stopRenewal(req: FastifyRequest) {
   try {
     // A manual contract has nothing to stop with a provider: the flag below ends it.
     const provider = providerOf(sub);
-    if (provider.capabilities().cancel) await provider.cancel(sub);
+    await provider.cancel?.(sub);
   } catch (err) {
     req.log.error({ err }, 'payment provider cancel failed');
     throw httpError(502, 'could not cancel the subscription, try again later');

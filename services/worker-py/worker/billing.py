@@ -45,6 +45,24 @@ usage_blocked = meter.create_counter(
     description="Unmetered AI calls refused because the calls/tokens limit was reached",
 )
 
+# Currency minor units (ISO 4217 exponent): JPY 0, KWD 3, else 2. Twin of billing/money.ts (API).
+_EXPONENT = {"JPY": 0, "KRW": 0, "VND": 0, "CLP": 0, "ISK": 0}
+_EXPONENT |= {"KWD": 3, "BHD": 3, "JOD": 3, "OMR": 3, "TND": 3}
+
+
+def minor_units(currency: str) -> int:
+    return _EXPONENT.get(currency.upper(), 2)
+
+
+def to_minor(amount: str | Decimal, currency: str) -> int:
+    """ "29.00" USD -> 2900; "3000" JPY -> 3000 (rounded to the nearest minor unit)."""
+    return int(Decimal(amount).scaleb(minor_units(currency)).to_integral_value())
+
+
+def from_minor(minor: int, currency: str) -> Decimal:
+    return Decimal(minor).scaleb(-minor_units(currency))
+
+
 WARN_RATIO = Decimal("0.8")  # same as LLM_WARN_RATIO in apps/api/src/routes/billing.ts
 PAID = frozenset({"active", "past_due"})
 
