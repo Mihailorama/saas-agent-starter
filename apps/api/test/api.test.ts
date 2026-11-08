@@ -197,6 +197,55 @@ describe('sign-in with an e-mail code', () => {
     expect(['OTP_EXPIRED', 'INVALID_OTP']).toContain(expired.json().code);
   });
 
+  it('resends the same code while it is valid (nobody can replace a pending code)', async () => {
+    const email = `${randomUUID()}@example.com`;
+    expect((await sendCode(email)).statusCode).toBe(200);
+    // A second request (server-side: the 30 s cooldown is the HTTP route's) mails the same code.
+    await auth.api.sendVerificationOTP({ body: { email, type: 'sign-in' } });
+    let texts: string[] = [];
+    for (let i = 0; i < 100 && texts.length < 2; i++) {
+      const query = new URLSearchParams({ query: `to:${email}` });
+      const { messages } = await (await fetch(`${mailpit}/api/v1/search?${query}`)).json();
+      if (messages.length >= 2) {
+        texts = await Promise.all(
+          messages.map(
+            async (m: { ID: string }) =>
+              (await (await fetch(`${mailpit}/api/v1/message/${m.ID}`)).json()).Text,
+          ),
+        );
+      } else await new Promise((r) => setTimeout(r, 100));
+    }
+    const codes = texts.map((t) => t.match(/\b\d{6}\b/)?.[0]);
+    expect(codes).toHaveLength(2);
+    expect(codes[0]).toBe(codes[1]);
+    expect((await enter(email, codes[0]!)).statusCode).toBe(200);
+  });
+
+  it('stops mailing codes to an address after 10 wrong codes in an hour', async () => {
+    const email = `${randomUUID()}@example.com`;
+    const rows = () =>
+      db
+        .select()
+        .from(verification)
+        .where(eq(verification.identifier, `sign-in-otp-${email}`));
+    for (let i = 0; i < 10; i++) expect((await enter(email, '000000')).statusCode).toBe(400);
+    await db.delete(verification).where(eq(verification.identifier, `sign-in-otp-${email}`));
+    // The same neutral answer as always, but no code is created and nothing is mailed.
+    const capped = await sendCode(email);
+    expect(capped.statusCode).toBe(200);
+    expect(capped.json()).toEqual({ success: true });
+    expect(await rows()).toHaveLength(0);
+    // Other addresses are not affected.
+    const other = `${randomUUID()}@example.com`;
+    expect((await sendCode(other)).statusCode).toBe(200);
+    expect(
+      await db
+        .select()
+        .from(verification)
+        .where(eq(verification.identifier, `sign-in-otp-${other}`)),
+    ).toHaveLength(1);
+  });
+
   it('mails one code per address per 30 s (resend cooldown)', async () => {
     const email = `${randomUUID()}@example.com`;
     expect((await sendCode(email)).statusCode).toBe(200);

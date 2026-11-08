@@ -19,16 +19,20 @@ SSO stay as the other ways in, TOTP as the second factor.
   after the first sign-in).
 - **Codes**: 6 digits, 5 minutes, 3 wrong tries then the code is dead (`TOO_MANY_ATTEMPTS`), one
   use, stored encrypted with `BETTER_AUTH_SECRET` (`storeOTP: 'encrypted'`: a hash of a 6-digit
-  code is no protection against a database reader). Asking again replaces the code.
+  code is no protection against a database reader). Asking again resends the same code with a
+  new expiry (`resendStrategy: 'reuse'`) until its 3 tries are used, so nobody can replace a
+  victim's pending code and guesses count against one code.
+- **Failure cap**: wrong codes are counted per address (Redis, keyed by a SHA-256 of the
+  address; `app.ts`). After 10 in an hour or 20 in a day no new code is mailed to that address
+  until the window ends; the request still answers `{ success: true }` (no enumeration) and
+  the API logs a warning with the hash only. The 3 tries of a code already sent still count.
 - **Resend cooldown**: one code per address per 30 seconds, whoever asks (Redis key in
-  `apps/api/src/app.ts`; `429`), on top of the 10/min per IP limit. Because each request
-  replaces the address's code, the cooldown also bounds how often someone else can invalidate
-  it. A successful code sign-in ends the cooldown, so signing out and in again needs no wait.
+  `apps/api/src/app.ts`; `429`), on top of the 10/min per IP limit. A code sign-in that sets a
+  session ends the cooldown (not a 2FA challenge), so signing out and in again needs no wait.
   Disposable addresses get no code and no mail (`assertAllowedEmail`, docs/security.md).
 - **Mail**: our existing path (`renderEmail` EN/RU, `SendEmailWorkflow`, ADR 0014), kinds
   `sign-in-code` and `verify-email`. Only these two OTP types are mailed: the plugin's
-  password-reset and change-email codes are never sent, so those endpoints have nothing to
-  accept. The code is never logged (pino redacts `*.otp`; Better Auth bodies are not logged).
+  password-reset and change-email codes are never sent, and their endpoints answer 404. The code is never logged (pino redacts `*.otp`; Better Auth bodies are not logged).
 - **Email verification** uses codes too (`overrideDefaultEmailVerification`): any Better Auth
   path that verifies an address mails a code for `/api/auth/email-otp/verify-email`. That
   endpoint only verifies, it does not sign in (`autoSignInAfterVerification` is off), so it can
@@ -36,8 +40,10 @@ SSO stay as the other ways in, TOTP as the second factor.
 - **Email + password is off** (`emailAndPassword: { enabled: false }`), and its UI, reset page,
   reset mail, `REQUIRE_EMAIL_VERIFICATION` and the operator's "resend verification" action are
   deleted: turning passwords back on would need all of them, so it is not a one-line switch.
-  Accounts from before this change keep their password row; the security page still asks it
-  when they change 2FA, and they sign in by code.
+  Migration `0014_drop_passwords` (a marked contract step) deletes every stored password hash,
+  so accounts from before this change sign in by code and no 2FA change asks for a password
+  they may have forgotten. Enrolling, disabling TOTP and new backup codes need a sign-in at most
+  10 minutes old instead (mfa.ts re-auth; "Sign in again" on the security page).
 - **TOTP after a code**: Better Auth 1.7.18's `twoFactor` plugin challenges only password,
   username and phone sign-ins. `auth.ts` runs the plugin's own after-hook on
   `/sign-in/email-otp` too, so an account with TOTP gets `{ twoFactorRedirect: true }` and no
@@ -64,8 +70,10 @@ SSO stay as the other ways in, TOTP as the second factor.
 
 - Mail delivery is now on the sign-in path: an SMTP outage blocks sign-in by code (passkeys and
   SSO still work). The worker retries delivery for up to an hour, longer than a code lives.
-- 6 digits with 3 tries per code and one code per 30 s per address: an attacker who can request
-  codes for a victim's address gets at most 6 guesses a minute, about 0.9% a day of continuous
-  trying. The 10/min per IP limit and the mails the victim receives are the other brakes.
-- The plugin's other OTP endpoints (password reset, change email) stay mounted but inert.
+- Guessing: the failure cap allows at most 20 wrong codes per address a day (plus the up to 3
+  tries of a code sent just before the cap), against 10^6 possible codes: about 0.002% a day,
+  0.06% over a month of continuous trying. The mails the victim receives are a further signal.
+- The cap is also a lockout lever: anyone who knows an address can stop code mails to it for up
+  to a day by entering wrong codes. Passkeys and SSO still work; an operator can clear the
+  address's `otp-fail-*` keys in Redis. Accepted for now: the alternative is unbounded guessing.
 - A user cannot set a display name in the app yet (docs/TODO.md).

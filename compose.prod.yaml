@@ -63,7 +63,7 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - TRUST_PROXY=true
+      - TRUST_PROXY=2 # hops in front of the API: Caddy, then the web container's nginx
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${APP_DOMAIN}}

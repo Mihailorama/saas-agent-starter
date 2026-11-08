@@ -139,6 +139,9 @@ export const auth = betterAuth({
       expiresIn: 5 * 60,
       allowedAttempts: 3,
       storeOTP: 'encrypted',
+      // Asking again resends the same code (new expiry) until its tries run out: nobody can
+      // replace someone else's pending code, and guesses count against one code.
+      resendStrategy: 'reuse',
       overrideDefaultEmailVerification: true,
       // Only these two kinds: the password-reset and change-email codes are never mailed, so
       // their endpoints have nothing to accept.

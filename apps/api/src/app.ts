@@ -44,7 +44,12 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export async function buildApp() {
   const app = Fastify({
-    trustProxy: env.TRUST_PROXY,
+    // A hop count trusts that many proxies next to the API (what proxy-addr does for a number;
+    // Fastify's types only take the function form).
+    trustProxy:
+      typeof env.TRUST_PROXY === 'number'
+        ? (_addr: string, hop: number) => hop < (env.TRUST_PROXY as number)
+        : env.TRUST_PROXY,
     requestIdHeader: 'x-request-id',
     genReqId: () => randomUUID(),
     logger: {
@@ -224,17 +229,42 @@ export async function buildApp() {
   authRoute('/api/auth/passkey/verify-authentication', 10, ['POST']);
   authRoute('/api/auth/send-verification-email', 10, ['POST']);
   authRoute('/api/auth/email-otp/*', 10, ['POST']);
-  // Resend cooldown: one code per address per 30 s, whoever asks. Each request replaces the
-  // address's code, so this also stops others from invalidating a code faster than that. A
-  // Redis key of its own: the rate-limit plugin runs only one limiter per request.
-  const cooldownKey = (body: unknown) =>
-    `otp-cooldown:${createHash('sha256')
+  // The plugin's password-reset and change-email endpoints: nothing here uses them (ADR 0033).
+  for (const url of [
+    '/api/auth/email-otp/request-password-reset',
+    '/api/auth/forget-password/email-otp',
+    '/api/auth/email-otp/reset-password',
+    '/api/auth/email-otp/request-email-change',
+    '/api/auth/email-otp/change-email',
+  ]) {
+    app.all(url, { schema: { hide: true } }, async (_req, reply) =>
+      reply.code(404).send({ error: 'not found' }),
+    );
+  }
+  // Email codes per address (ADR 0033), in Redis keyed by a hash of the address (never the
+  // address itself). The rate-limit plugin runs only one limiter per request, hence own keys.
+  const addressHash = (body: unknown) =>
+    createHash('sha256')
       .update(String((body as { email?: unknown })?.email ?? '').toLowerCase())
-      .digest('base64url')}`;
-  // A code that signed in ends the cooldown: signing out and in again needs no wait.
+      .digest('base64url');
+  // Wrong codes per address: past these, no new code is mailed until the window ends.
+  const FAILURE_CAPS = [
+    { key: 'otp-fail-h', seconds: 3600, max: 10 },
+    { key: 'otp-fail-d', seconds: 86_400, max: 20 },
+  ];
   app.addHook('onResponse', async (req, reply) => {
-    if (req.url === '/api/auth/sign-in/email-otp' && reply.statusCode === 200) {
-      await redis.del(cooldownKey(req.body));
+    if (req.url !== '/api/auth/sign-in/email-otp') return;
+    const hash = addressHash(req.body);
+    if (reply.statusCode === 400 || reply.statusCode === 403) {
+      const tx = redis.multi();
+      for (const c of FAILURE_CAPS)
+        tx.incr(`${c.key}:${hash}`).expire(`${c.key}:${hash}`, c.seconds, 'NX');
+      await tx.exec();
+    }
+    // A code that signed in (a session cookie, not a 2FA challenge) ends the resend cooldown.
+    const cookies = [reply.getHeader('set-cookie') ?? []].flat().map(String);
+    if (reply.statusCode === 200 && cookies.some((c) => /session_token=[^;]/.test(c))) {
+      await redis.del(`otp-cooldown:${hash}`);
     }
   });
   app.post(
@@ -243,7 +273,14 @@ export async function buildApp() {
       schema: { hide: true },
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
       preHandler: async (req, reply) => {
-        if (!(await redis.set(cooldownKey(req.body), '1', 'EX', 30, 'NX'))) {
+        const hash = addressHash(req.body);
+        const counts = await redis.mget(FAILURE_CAPS.map((c) => `${c.key}:${hash}`));
+        if (FAILURE_CAPS.some((c, i) => Number(counts[i] ?? 0) >= c.max)) {
+          req.log.warn({ address: hash }, 'email code: failure cap reached, no code sent');
+          return reply.send({ success: true }); // Better Auth's answer: nothing to enumerate
+        }
+        // Resend cooldown: one code per address per 30 s, whoever asks.
+        if (!(await redis.set(`otp-cooldown:${hash}`, '1', 'EX', 30, 'NX'))) {
           return reply.code(429).send({ error: 'wait 30 seconds before asking for another code' });
         }
       },

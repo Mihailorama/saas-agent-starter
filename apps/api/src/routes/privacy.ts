@@ -85,7 +85,7 @@ async function requireUser(req: FastifyRequest, reply: FastifyReply) {
   };
 }
 
-/** Deletion needs a recent sign-in (password + 2FA, or passkey), like other sensitive changes. */
+/** Deletion needs a recent sign-in (email code + 2FA, or passkey), like other sensitive changes. */
 async function requireFresh(req: FastifyRequest) {
   const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
   // A "view as user" session is brand new but not the user's sign-in (also refused in app.ts).

@@ -39,8 +39,13 @@ const schema = z
     AI_CONTENT_BUCKET: z.string().default('ai-calls'),
     S3_ACCESS_KEY_ID: z.string().min(1),
     S3_SECRET_ACCESS_KEY: z.string().min(1),
-    /** Set to true behind a reverse proxy so req.ip comes from X-Forwarded-For. */
-    TRUST_PROXY: z.stringbool().default(false),
+    /** Behind reverse proxies req.ip comes from X-Forwarded-For: the number of proxy hops in
+     * front of the API (production: 2, Caddy then the web container's nginx), or `true` to trust
+     * every hop. Off by default: clients could make up their IP. */
+    TRUST_PROXY: z
+      .string()
+      .default('false')
+      .transform((v) => (/^\d+$/.test(v) ? Number(v) : v === 'true')),
     BETTER_AUTH_SECRET: z.string().min(32),
     /** Public origin users reach the app on (web origin; /api is proxied there). */
     BETTER_AUTH_URL: z.url(),

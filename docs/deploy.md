@@ -279,6 +279,12 @@ taken, missing sidecar stops the deploy, `--skip-backup` logged).
 Settings a release renames or removes; apply them to `deploy/env/<env>.enc.env` (and `.env`)
 before deploying that release.
 
+- Passwordless sign-in release (ADR 0033): `REQUIRE_EMAIL_VERIFICATION` is gone (drop it). Its
+  migration `0014_drop_passwords` deletes every stored password hash: existing users sign in with
+  an email code from then on (same address, same account, 2FA and passkeys kept). Tell your users
+  before the deploy. `TRUST_PROXY` now also takes a hop count; `compose.prod.yaml` sets `2`
+  (Caddy, then the web container's nginx).
+
 - LiteLLM gateway release (ADR 0024): `OPENAI_BASE_URL` / `OPENAI_API_KEY` for a self-hosted or
   in-country endpoint become `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY` (provider
   `openai_compatible`; `OPENAI_API_KEY` now means the OpenAI API itself). The worker refuses to

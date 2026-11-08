@@ -39,10 +39,10 @@ our own tables, not from another service.
   the submitted code belongs to and claims it with one conditional `UPDATE` on
   `two_factor.last_totp_step` before the plugin verifies: a code at or below the last accepted
   step gets `401 INVALID_CODE`, also for concurrent requests.
-- **Sensitive changes need a recent sign-in** ("sudo mode", `apps/api/src/mfa.ts`): disabling
-  2FA, regenerating backup codes and deleting a passkey are refused with `SESSION_NOT_FRESH`
-  when the session is older than 10 minutes; the password is asked as well where an account
-  from before ADR 0033 still has one. Registering a passkey needs a session younger than Better Auth's `freshAge` (1 day).
+- **Sensitive changes need a recent sign-in** ("sudo mode", `apps/api/src/mfa.ts`): starting
+  TOTP enrolment, disabling 2FA, regenerating backup codes and deleting a passkey are refused
+  with `SESSION_NOT_FRESH` when the session is older than 10 minutes. No password is asked
+  (ADR 0033: there are none). Registering a passkey needs a session younger than Better Auth's `freshAge` (1 day).
   The web offers "Sign in again" and returns to the security page.
 - **Audit**: 2FA enabled/disabled, backup codes regenerated, passkey added/renamed/deleted go to
   `audit_log` (actions `two_factor.*`, `passkey.*`), one row per organization the user belongs

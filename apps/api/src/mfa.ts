@@ -15,11 +15,14 @@ import { symmetricDecrypt } from 'better-auth/crypto';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { db } from './db.ts';
 
-/** Sensitive changes need a sign-in (password + 2FA, or passkey) at most this old. */
+/** Sensitive changes need a sign-in (email code + 2FA, or passkey) at most this old. */
 export const REAUTH_MAX_AGE_SECONDS = 10 * 60;
 
 // Better Auth path -> audit action; `fresh` = the change also needs a recent sign-in.
 const EVENTS: Record<string, { action: string; fresh?: boolean }> = {
+  // Starting enrolment also needs a recent sign-in: with a stolen session, adding a TOTP the
+  // owner does not have would lock them out. No password is asked (ADR 0033).
+  '/two-factor/enable': { action: 'two_factor.setup_started', fresh: true },
   '/two-factor/verify-totp': { action: 'two_factor.enabled' }, // only when it completes enrolment
   '/two-factor/disable': { action: 'two_factor.disabled', fresh: true },
   '/two-factor/generate-backup-codes': {
