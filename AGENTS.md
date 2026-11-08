@@ -177,7 +177,7 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   Plane (Intake, official Python SDK `plane-sdk`), GitHub Issues (plain REST) optional, one
   tracker client in the worker; triage is a Temporal workflow, no own ticket table (ADR 0013).
 - MCP server: official TypeScript SDK v2 (`@modelcontextprotocol/server`, Apache-2.0), Streamable
-  HTTP at `/mcp`, stateless, organization API keys as bearer; tools wrap the REST routes (ADR 0026).
+  HTTP at `/mcp`, stateless, organization API keys as bearer; tools wrap the REST routes (ADR 0027).
 - Web API types generated from the API's OpenAPI document (`openapi-typescript`), calls through
   `openapi-fetch`; no hand-written response types (`apps/web/src/lib/api.ts`).
 
@@ -228,7 +228,7 @@ without a default go into a later release's migration marked `-- contract: <reas
 
 ## Recipe: expose a tool over MCP
 
-Details: docs/mcp.md, ADR 0026. A tool is a REST route that already accepts API keys
+Details: docs/mcp.md, ADR 0027. A tool is a REST route that already accepts API keys
 (`access('<scope>')`); never put logic, queries or authorization in the tool itself.
 
 1. In `apps/api/src/routes/mcp.ts`, inside the `scopes.has('<scope>')` block of the route's scope,
@@ -240,17 +240,19 @@ Details: docs/mcp.md, ADR 0026. A tool is a REST route that already accepts API 
    cross-org id that comes back "Not Found".
 3. Add the tool to the table in docs/mcp.md.
 
-4. Python: in `services/worker-py/worker/`, add `@activity.defn` methods (idempotent:
+## Recipe: add a background workflow
+
+1. Python: in `services/worker-py/worker/`, add `@activity.defn` methods (idempotent:
    check-then-write in one transaction, `set_config('app.org_id', ...)` before tenant
    queries) and a `@workflow.defn(name="...")` class with explicit timeouts and a
    `RetryPolicy`. Register both in `worker/__main__.py`.
-5. TS: add a typed starter next to `startProjectCreated` in `apps/api/src/temporal.ts`.
+2. TS: add a typed starter next to `startProjectCreated` in `apps/api/src/temporal.ts`.
    Use a deterministic workflow id derived from the entity id plus
    `workflowIdReusePolicy: 'REJECT_DUPLICATE'` so retries never run it twice.
    Start it after the DB transaction commits.
-6. Tests: a pytest in `tests/test_workflow.py` style (real Temporal, unique task queue)
+3. Tests: a pytest in `tests/test_workflow.py` style (real Temporal, unique task queue)
    that checks the end result and that a duplicate start is rejected.
-7. The argument dataclass in Python and the TS type are the contract; change both together.
+4. The argument dataclass in Python and the TS type are the contract; change both together.
 
 ## Recipe: add an AI purpose (example: `project.summary`)
 

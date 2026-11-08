@@ -3,7 +3,7 @@
 Customers' AI agents (Claude, ChatGPT, Gemini, Cursor, any MCP client) use the product through
 the [Model Context Protocol](https://modelcontextprotocol.io). The endpoint is
 `https://<app domain>/mcp`, authenticated with an **organization API key** (docs/public-api.md).
-It adds a way in; every existing path stays as it is. Design: [ADR 0026](adr/0026-mcp-server.md).
+It adds a way in; every existing path stays as it is. Design: [ADR 0027](adr/0027-mcp-server.md).
 
 ## The two variants
 
@@ -17,7 +17,8 @@ It adds a way in; every existing path stays as it is. Design: [ADR 0026](adr/002
 ### Install: turn it on
 
 The endpoint is in every API build behind the feature flag `mcp-server` (config/flags.json,
-default off). While it is off, `/mcp` answers 404 to everyone.
+default off). While it is off, `/mcp` answers 404 to a valid key; a request without a valid key gets 401
+either way (the key is checked first, so the flag can be rolled out per organization).
 
 - One environment: `FLAGS_ON=mcp-server` (API env; forwarded in compose.prod.yaml).
 - Gradual: `pnpm flags:sync`, then roll it out in PostHog per organization (the flag is evaluated

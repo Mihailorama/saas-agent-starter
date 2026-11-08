@@ -9,7 +9,7 @@ import { bearerToken, type Scope, verifiedKey } from '../tenant.ts';
 import { Id, Project, ProjectInput } from './projects.ts';
 
 /**
- * MCP server for organization API keys (docs/mcp.md, ADR 0026): Streamable HTTP at /mcp,
+ * MCP server for organization API keys (docs/mcp.md, ADR 0027): Streamable HTTP at /mcp,
  * stateless (spec 2026-07-28, plus the SDK's stateless fallback for 2025-era clients), so any
  * replica serves any request. Each tool calls the REST route it mirrors in-process with the
  * caller's key: the same scope check, entitlements, withTenant (RLS), audit row and webhook event.

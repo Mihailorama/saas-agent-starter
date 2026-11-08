@@ -1,4 +1,4 @@
-# 0026. MCP server for organization API keys
+# 0027. MCP server for organization API keys
 
 Status: accepted (owner decision, 2026-11-08: customers' AI agents use the product through MCP;
 library picks after research on 2026-11-08)

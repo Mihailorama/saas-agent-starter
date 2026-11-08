@@ -98,6 +98,12 @@ describe('MCP server', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('flag off: without a valid key it is 401, as with the flag on (key checked first)', async () => {
+    flag(false);
+    expect((await mcpPost({})).statusCode).toBe(401);
+    expect((await mcpPost({ authorization: 'Bearer nope' })).statusCode).toBe(401);
+  });
+
   describe('flag on', () => {
     beforeAll(() => flag(true));
 

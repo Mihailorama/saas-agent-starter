@@ -1,6 +1,6 @@
 # Known limitations / backlog
 
-- **MCP: OAuth 2.1 sign-in for hosted connectors** (docs/mcp.md, ADR 0026). `/mcp` accepts only
+- **MCP: OAuth 2.1 sign-in for hosted connectors** (docs/mcp.md, ADR 0027). `/mcp` accepts only
   organization API keys as a bearer header; ChatGPT connectors and claude.ai custom connectors
   expect OAuth 2.1 (RFC 9728 protected resource metadata, PKCE, client registration). Better Auth
   can cover it: `@better-auth/mcp` (MIT, same 1.7.x line as `better-auth`) turns the app into an
