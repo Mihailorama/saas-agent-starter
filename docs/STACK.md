@@ -36,6 +36,8 @@ observed use; raise it when a service is OOM-killed (`docker compose ps` shows e
 | twenty           | crm           |               650 |        1536 |       0.9% |
 | twenty-worker    | crm           |               792 |        1024 |       0.8% |
 | caldiy           | booking       |               708 |        1024 |          - |
+| vault            | vault         |                44 |         128 |       0.0% |
+| vault-tls        | vault         |                12 |          64 |       0.0% |
 
 Since ADR 0024 the worker imports LiteLLM: measured 2026-11-07, the worker process' RSS after
 importing the gateway is ~194 MiB (~81 MiB without LiteLLM), so its limit is now 512 MiB. The
@@ -76,6 +78,11 @@ this loaded host.
 Booking profile (Cal.diy at the commit pinned in `infra/caldiy/build.sh`, docs/crm.md): measured 2026-11-07 in CI (job `caldiy-image`, GitHub runner) on postgres and mailpit only, one
 minute after the first request: 708 MiB (limit 1 GiB), Postgres ~51 MiB. Idle CPU was not
 measured. The image build needs ~6 GB RAM (Next.js heap), so it runs in CI, not on the server.
+
+Vault profile (Vaultwarden 1.37.5 on the shared Postgres, docs/secrets.md): measured 2026-11-08 on
+a loaded shared host after a smoke test (invite, register, items saved and read through
+`scripts/vault.mjs` and the `bw` CLI): `vault` 44 MiB, `vault-tls` (Caddy) 12 MiB; its database
+adds a few MiB to Postgres. The `bw` CLI runs on the developer machine, not in the stack.
 
 Reproduce: `docker compose --profile observability --profile glitchtip up -d --build`, run a
 few flows, then

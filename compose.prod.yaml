@@ -5,7 +5,8 @@
 # pushed on a `v*` tag, pinned by digest. Optional on-box services are profiles, enabled with
 # COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback),
 # llm-cli (vendor CLI subscriptions, an image you build yourself: docs/llm-providers.md),
-# booking (Cal.diy, image built by CI from a pinned upstream commit, IMAGE_CALDIY).
+# booking (Cal.diy, image built by CI from a pinned upstream commit, IMAGE_CALDIY),
+# vault (Vaultwarden, the secrets vault, docs/secrets.md).
 # Licenses of every image: docs/LICENSES.md.
 
 x-logging: &logging
@@ -26,6 +27,8 @@ services:
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
       CADDY_TLS: ${CADDY_TLS:?set CADDY_TLS to an ACME e-mail or "internal"}
+      # vault site (deploy/Caddyfile): who may reach Vaultwarden's /admin; everyone else gets 403
+      VAULT_ADMIN_IPS: ${VAULT_ADMIN_IPS:-127.0.0.1/32}
     ports:
       - "${PUBLISH_IP:-0.0.0.0}:${HTTP_PORT:-80}:80"
       - "${PUBLISH_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443"
@@ -441,8 +444,53 @@ services:
     depends_on:
       postgres: { condition: service_healthy, required: false }
 
+  # --- profile vault: Vaultwarden (AGPL-3.0, unmodified) as the team's secrets vault for humans
+  # and coding agents (docs/secrets.md). Its database lives on the app's Postgres server (create
+  # role + database `vaultwarden` once, docs/deploy.md), so the backups cover it. Reachable only
+  # through Caddy over TLS: add the vault site in deploy/Caddyfile. No public signups; accounts are
+  # invited from /admin, which is on only while VAULT_ADMIN_TOKEN (an argon2 hash) is set and is
+  # reachable only from VAULT_ADMIN_IPS (Caddy).
+  # Using Bitwarden Cloud or a Vaultwarden you already run: leave the profile off.
+  vault:
+    profiles: [vault]
+    image: vaultwarden/server:1.37.5-alpine@sha256:bbe684a02d6b0db54256ff88eac9754f4519284a7b26314afc241fd7d0918191
+    logging: *logging
+    mem_limit: 128m
+    restart: unless-stopped
+    # Refuses to start with a plain-text admin token: empty (admin off) or an argon2 PHC hash only.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        case "$$ADMIN_TOKEN" in ""|'$$argon2'*) exec /start.sh ;;
+        *) echo "VAULT_ADMIN_TOKEN must be an argon2 hash (docs/secrets.md)" >&2; exit 1 ;; esac
+    environment:
+      - DATABASE_URL=${VAULT_DATABASE_URL:-}
+      - DOMAIN=${VAULT_PUBLIC_URL:-}
+      - ADMIN_TOKEN=${VAULT_ADMIN_TOKEN:-}
+      - SIGNUPS_ALLOWED=false
+      - INVITATIONS_ALLOWED=true
+      - USER_ATTACHMENT_LIMIT=0
+      - ORG_ATTACHMENT_LIMIT=0
+      - SENDS_ALLOWED=false
+      - IP_HEADER=X-Forwarded-For
+      - SMTP_HOST=${VAULT_SMTP_HOST:-}
+      - SMTP_PORT=${VAULT_SMTP_PORT:-587}
+      - SMTP_SECURITY=${VAULT_SMTP_SECURITY:-starttls}
+      - SMTP_USERNAME=${VAULT_SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${VAULT_SMTP_PASSWORD:-}
+      - SMTP_FROM=${VAULT_SMTP_FROM:-}
+    volumes: [vault_data:/data] # RSA signing key + icon cache only; secrets are in Postgres
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:80/alive"]
+      interval: 5s
+      start_period: 30s
+      retries: 12
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
 volumes:
   caddy_data:
   caddy_config:
   pgdata:
   s3data:
+  vault_data:
