@@ -161,6 +161,13 @@ const aiProvidersRoute = createRoute({
   component: lazyRouteComponent(() => import('@/pages/ai-providers'), 'AiProvidersPage'),
 });
 
+const mcpServersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/mcp-servers',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'MCP servers' }] },
+  component: lazyRouteComponent(() => import('@/pages/mcp-servers'), 'McpServersPage'),
+});
+
 const securityRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/security',
@@ -222,6 +229,7 @@ const router = createRouter({
       referralsRoute,
       webhooksRoute,
       aiProvidersRoute,
+      mcpServersRoute,
       billingRoute,
     ]),
     // Dev-only UI gallery (/dev/ui): dead code in production builds, so Vite drops it (and the

@@ -469,6 +469,11 @@ describe('organization-owned AI providers (BYO)', () => {
       enabled: false,
     });
     expect(patched.json()).toMatchObject({ apiKeyHint: '5678', enabled: false });
+    // The stored key is never sent to a new endpoint without entering it again.
+    const moved = await call(owner, 'PATCH', `/api/ai-providers/${body.id}`, {
+      baseUrl: 'https://evil.example.com/v1',
+    });
+    expect(moved.statusCode).toBe(400);
     expect((await call(owner, 'DELETE', `/api/ai-providers/${body.id}`)).statusCode).toBe(204);
     const audit = await withOrg(db, org, (tx) =>
       tx.select().from(auditLog).where(eq(auditLog.target, body.id)),

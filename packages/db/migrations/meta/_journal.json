@@ -61,14 +61,21 @@
     {
       "idx": 8,
       "version": "7",
-      "when": 1794142025448,
-      "tag": "0009_reward_grants",
+      "when": 1794141061982,
+      "tag": "0008_mcp_servers",
       "breakpoints": true
     },
     {
       "idx": 9,
       "version": "7",
-      "when": 1794144559759,
+      "when": 1794148009146,
+      "tag": "0009_reward_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794149074101,
       "tag": "0010_referrals",
       "breakpoints": true
     }

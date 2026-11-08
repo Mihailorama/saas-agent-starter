@@ -13,6 +13,12 @@
       "default": false,
       "expires": "2027-03-31"
     },
+    "mcp-tools": {
+      "description": "Settings page where organization admins connect external MCP servers whose allowed tools AI features may call.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "referrals": {
       "description": "Referral links (settings page, `?ref=` on sign-up) with a first-payment discount for the referred organization and a reward for the referrer (docs/growth.md). With DUB_API_KEY, Dub Partners runs them.",
       "owner": "@mihailorama",

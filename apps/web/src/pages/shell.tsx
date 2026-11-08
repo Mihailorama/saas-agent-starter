@@ -25,6 +25,7 @@ import {
   Lock,
   LogOut,
   MessageCircle,
+  Plug,
   Plus,
   ScrollText,
   ShieldAlert,
@@ -331,6 +332,7 @@ export function Shell() {
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const byoProviders = useFlag('byo-llm-providers');
+  const mcpTools = useFlag('mcp-tools');
   const referrals = useFlag('referrals');
   // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
   const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
@@ -400,6 +402,9 @@ export function Shell() {
               { label: 'Webhooks', icon: Webhook, to: '/settings/webhooks' as const },
               ...(byoProviders
                 ? [{ label: 'AI providers', icon: Cpu, to: '/settings/ai-providers' as const }]
+                : []),
+              ...(mcpTools
+                ? [{ label: 'MCP servers', icon: Plug, to: '/settings/mcp-servers' as const }]
                 : []),
             ],
           },

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Cpu, Plus, Trash2 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { toast } from 'sonner';
+import { SecretField } from '@/components/secret-field';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -122,16 +123,12 @@ function NewProviderDialog({
               />
             </div>
           )}
-          <div className="space-y-2">
-            <Label htmlFor="ai-key">API key{kind === 'custom' ? ' (optional)' : ''}</Label>
-            <Input
-              id="ai-key"
-              name="apiKey"
-              type="password"
-              autoComplete="off"
-              required={kind !== 'custom'}
-            />
-          </div>
+          <SecretField
+            id="ai-key"
+            name="apiKey"
+            label={`API key${kind === 'custom' ? ' (optional)' : ''}`}
+            required={kind !== 'custom'}
+          />
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Model per use</legend>
             {options.data?.purposes.map((p) => (
