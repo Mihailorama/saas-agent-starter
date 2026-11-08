@@ -41,6 +41,9 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await page.getByLabel('Description (optional)').fill('Tabulates polynomial functions.');
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('link', { name: 'Difference Engine' })).toBeVisible();
+  // The `onboarding` flag is off here: no checklist and no tour (e2e/onboarding.spec.ts).
+  await expect(page.getByText('Get set up')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // The owner is an org admin and sees the AI call log (empty: no AI configured in tests).
   await page.getByRole('link', { name: 'AI calls' }).click();

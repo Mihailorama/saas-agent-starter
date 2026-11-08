@@ -7,6 +7,11 @@
   throwaway script (Bitwarden client crypto) because `bw` cannot register. Fix: pin `@bitwarden/cli`
   in that job via `npm exec`, register a test user over `/identity/accounts/register/finish`, run
   the wrapper. Catches a change in the `bw` item JSON or its HTTPS rules.
+- **Onboarding: tour "seen" and checklist "dismissed" are per browser** (docs/onboarding.md,
+  `apps/web/src/lib/onboarding.ts`). They live in `localStorage` to avoid a table and a migration,
+  so a user on a second device sees the tour once more and the card again. If that bothers users:
+  a nullable `user.onboarding_tour_seen_at` column (Better Auth `additionalFields`) set from the
+  tour and read in the session; the checklist dismissal the same way or per organization.
 - **MCP tools: admins type tool names; no "test connection"** (docs/mcp.md "Not covered"). The
   API never connects out. Fix: a small Temporal workflow (`ListMcpToolsWorkflow`) the settings
   page starts, returning the server's tool names through the SSRF pin; offer them as checkboxes.
