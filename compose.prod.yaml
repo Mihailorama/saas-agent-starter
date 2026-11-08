@@ -270,6 +270,7 @@ services:
     environment: # nginx's envsubst needs every variable defined, empty is fine
       S3_PUBLIC_ORIGIN: ${S3_PUBLIC_ORIGIN:-}
       SENTRY_PUBLIC_ORIGIN: ${SENTRY_PUBLIC_ORIGIN:-}
+      # analytics + survey origins (PostHog, Umami, Formbricks); VITE_* are baked in at build time
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
       SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
       BOOKING_ORIGINS: ${BOOKING_ORIGINS:-}

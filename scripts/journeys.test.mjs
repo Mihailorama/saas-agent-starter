@@ -1,7 +1,17 @@
 // node --test 'scripts/*.test.mjs'  (part of pnpm check:ts). Pure parts of journeys.mjs: no network.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { aiSurvey, alert, funnelQuery, insight, umamiFunnel, webhook } from './journeys.mjs';
+import {
+  aiSurvey,
+  alert,
+  checkSurveys,
+  contains,
+  funnelQuery,
+  insight,
+  survey,
+  umamiFunnel,
+  webhook,
+} from './journeys.mjs';
 
 const j = {
   name: 'activation',
@@ -63,4 +73,82 @@ test('journey -> Umami funnel (window in minutes)', () => {
       { type: 'event', value: 'org_created' },
     ],
   });
+});
+
+const nps = {
+  id: 'nps',
+  type: 'nps',
+  question: 'How likely are you to recommend us?',
+  followUp: 'Why?',
+  trigger: { url: '/projects/' },
+  activeForDays: 14,
+  waitDays: 30,
+  repeat: { everyDays: 90, times: 4 },
+  flag: 'nps-survey',
+};
+const csat = {
+  id: 'csat',
+  type: 'csat',
+  question: 'How satisfied are you?',
+  trigger: { event: 'project_created' },
+  flag: 'csat-survey',
+};
+
+test('NPS survey -> 0-10 popover on a URL, recurring, linked flag, active users only', () => {
+  const s = survey(nps, 7);
+  assert.equal(s.type, 'popover');
+  assert.equal(s.linked_flag_id, 7);
+  assert.deepEqual(
+    [s.questions[0].scale, s.questions[0].display, s.questions[1].type],
+    [10, 'number', 'open'],
+  );
+  assert.deepEqual(s.conditions, {
+    url: '/projects/',
+    urlMatchType: 'icontains',
+    seenSurveyWaitPeriodInDays: 30,
+  });
+  assert.equal(s.targeting_flag_filters.groups[0].properties[0].value, '-14d');
+  assert.deepEqual(
+    [s.schedule, s.iteration_count, s.iteration_frequency_days],
+    ['recurring', 4, 90],
+  );
+  assert.ok(s.start_date);
+});
+
+test('CSAT survey -> 1-5 after a catalog event, asked once; update keeps question ids', () => {
+  const s = survey(csat, 8, { questions: [{ id: 'q1' }] });
+  assert.equal(s.questions[0].scale, 5);
+  assert.equal(s.questions[0].id, 'q1');
+  assert.deepEqual(s.conditions.events.values, [{ name: 'project_created' }]);
+  assert.equal(s.schedule, 'once');
+  assert.equal(s.start_date, undefined); // an update must not restart the survey
+  assert.equal(s.targeting_flag_filters, undefined);
+  assert.ok(contains({ ...s, id: 'x', extra: 1 }, s)); // what PostHog returns -> unchanged
+  assert.ok(!contains(s, survey({ ...csat, waitDays: 7 }, 8, { questions: [{ id: 'q1' }] })));
+});
+
+test('survey config errors', () => {
+  const events = { project_created: { pii: false }, signup_completed: { pii: true } };
+  const flags = { 'nps-survey': {}, 'csat-survey': {} };
+  assert.deepEqual(checkSurveys([nps, csat], events, flags), []);
+  assert.deepEqual(
+    checkSurveys(
+      [
+        { ...csat, type: 'stars', trigger: { event: 'signup_completed' }, flag: 'nope' },
+        { ...csat, trigger: {}, repeat: { everyDays: 0, times: 1.5 }, choices: ['a', 'b'] },
+      ],
+      events,
+      flags,
+    ),
+    [
+      'surveys: csat: type must be nps, csat or question',
+      'surveys: csat: trigger event "signup_completed" is pii, so it never reaches PostHog',
+      'surveys: csat: flag "nope" is not in config/flags.json',
+      'surveys: csat: id must be unique, lowercase and dash-separated',
+      'surveys: csat: choices need type question and 2+ options',
+      'surveys: csat: trigger needs an event and/or a url',
+      'surveys: csat: day counts must be whole numbers',
+      'surveys: csat: repeat needs everyDays and times above 0',
+    ],
+  );
 });

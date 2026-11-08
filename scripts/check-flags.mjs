@@ -9,11 +9,19 @@ import { join } from 'node:path';
 // e.g. PostHog's own API inside the wrappers) and definitions are not flag checks.
 const CALL = /(?<![.\w])(isEnabled|useFlag|is_enabled)\(\s*/g;
 
-/** Pure check: `flags` from config/flags.json, `sources` as [path, text] pairs. */
-export function checkFlags(flags, sources, today = new Date().toISOString().slice(0, 10)) {
+/**
+ * Pure check: `flags` from config/flags.json, `sources` as [path, text] pairs, `linked`: flags
+ * that PostHog surveys are linked to (config/journeys.json), which count as used.
+ */
+export function checkFlags(
+  flags,
+  sources,
+  today = new Date().toISOString().slice(0, 10),
+  linked = [],
+) {
   const errors = [];
   const warnings = [];
-  const used = new Set();
+  const used = new Set(linked.filter((n) => Object.hasOwn(flags, n)));
   for (const [name, f] of Object.entries(flags)) {
     if (!/^[a-z][a-z0-9_-]{0,63}$/.test(name)) errors.push(`catalog: bad flag name "${name}"`);
     for (const key of ['description', 'owner']) {
@@ -64,13 +72,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     ...files('apps/api/src', /\.ts$/),
     ...files('services/worker-py/worker', /\.py$/),
   ].map((f) => [f, readFileSync(join(root, f), 'utf8')]);
-  const { errors, warnings, used } = checkFlags(flags, sources);
+  const { surveys = [] } = JSON.parse(readFileSync(join(root, 'config/journeys.json'), 'utf8'));
+  const linked = surveys.map((s) => s.flag);
+  const { errors, warnings, used } = checkFlags(flags, sources, undefined, linked);
   for (const w of warnings) console.warn(`check:flags warning: ${w}`);
   if (errors.length) {
     console.error(`check:flags failed:\n  ${errors.join('\n  ')}`);
     process.exit(1);
   }
   console.log(
-    `check:flags: ${used.size} flags checked in code, ${Object.keys(flags).length} catalogued`,
+    `check:flags: ${used.size} flags checked in code or linked to surveys, ${Object.keys(flags).length} catalogued`,
   );
 }

@@ -12,7 +12,9 @@ for (const file of ['.env', '.env.example']) {
     process.loadEnvFile(new URL(file, root));
   } catch {}
 }
-const { journeys } = JSON.parse(readFileSync(new URL('config/journeys.json', root), 'utf8'));
+const { journeys, surveys = [] } = JSON.parse(
+  readFileSync(new URL('config/journeys.json', root), 'utf8'),
+);
 const e = process.env;
 const TAG = 'journeys-as-code';
 export const names = {
@@ -22,6 +24,7 @@ export const names = {
   aiSurvey: 'AI answer feedback',
   alertHook: 'Journey alerts -> GitHub issues',
   surveyHook: 'User feedback -> GitHub issues',
+  survey: (s) => `Survey: ${s.id}`,
 };
 
 // ---- Desired objects (pure; covered by scripts/journeys.test.mjs) ----
@@ -85,6 +88,102 @@ export const aiSurvey = () => ({
   start_date: new Date().toISOString(),
 });
 
+// Surveys as code (config/journeys.json `surveys`): PostHog popovers linked to a catalog flag.
+const RATINGS = {
+  nps: {
+    display: 'number',
+    scale: 10,
+    lowerBoundLabel: 'Not likely',
+    upperBoundLabel: 'Very likely',
+  },
+  csat: {
+    display: 'emoji',
+    scale: 5,
+    lowerBoundLabel: 'Very dissatisfied',
+    upperBoundLabel: 'Very satisfied',
+  },
+};
+
+/** Survey config -> PostHog survey. `flagId`: the linked flag's PostHog id; `found`: current one. */
+export const survey = (s, flagId, found) => ({
+  name: names.survey(s),
+  description: 'Managed by pnpm journeys:sync (config/journeys.json). Responses stay in PostHog.',
+  type: 'popover',
+  linked_flag_id: flagId,
+  questions: [
+    RATINGS[s.type]
+      ? { type: 'rating', question: s.question, ...RATINGS[s.type] }
+      : s.choices
+        ? { type: 'single_choice', question: s.question, choices: s.choices }
+        : { type: 'open', question: s.question },
+    ...(s.followUp ? [{ type: 'open', question: s.followUp, optional: true }] : []),
+  ].map((q, i) => ({ ...q, id: found?.questions?.[i]?.id })), // keep ids: responses stay joined
+  conditions: {
+    ...(s.trigger.url && { url: s.trigger.url, urlMatchType: 'icontains' }),
+    ...(s.trigger.event && {
+      events: {
+        repeatedActivation: false,
+        values: [{ name: s.trigger.event === 'page_view' ? '$pageview' : s.trigger.event }],
+      },
+    }),
+    seenSurveyWaitPeriodInDays: s.waitDays ?? 0,
+  },
+  // first_seen_at: person property set once by identify() in apps/web/src/lib/analytics.ts.
+  ...(s.activeForDays && {
+    targeting_flag_filters: {
+      groups: [
+        {
+          properties: [
+            {
+              key: 'first_seen_at',
+              type: 'person',
+              operator: 'is_date_before',
+              value: `-${s.activeForDays}d`,
+            },
+          ],
+          rollout_percentage: 100,
+        },
+      ],
+    },
+  }),
+  schedule: s.repeat ? 'recurring' : 'once',
+  iteration_count: s.repeat?.times ?? null,
+  iteration_frequency_days: s.repeat?.everyDays ?? null,
+  ...(!found && { start_date: new Date().toISOString() }),
+});
+
+/** Config errors in `surveys` (run by pnpm check:events). */
+export function checkSurveys(list, events, flags) {
+  const errors = [];
+  const ids = new Set();
+  const whole = (v) => v === undefined || (Number.isInteger(v) && v >= 0);
+  for (const s of list) {
+    const at = `surveys: ${s.id}`;
+    if (!/^[a-z][a-z0-9-]{0,48}$/.test(s.id ?? '') || ids.has(s.id))
+      errors.push(`${at}: id must be unique, lowercase and dash-separated`);
+    ids.add(s.id);
+    if (!['nps', 'csat', 'question'].includes(s.type))
+      errors.push(`${at}: type must be nps, csat or question`);
+    if (typeof s.question !== 'string' || !s.question.trim())
+      errors.push(`${at}: needs a question`);
+    if (s.choices && (s.type !== 'question' || !(s.choices.length >= 2)))
+      errors.push(`${at}: choices need type question and 2+ options`);
+    const { event, url } = s.trigger ?? {};
+    if (!event && !url) errors.push(`${at}: trigger needs an event and/or a url`);
+    if (event && !events[event])
+      errors.push(`${at}: trigger event "${event}" is not in config/events.json`);
+    else if (event && events[event].pii)
+      errors.push(`${at}: trigger event "${event}" is pii, so it never reaches PostHog`);
+    if (![s.activeForDays, s.waitDays, s.repeat?.everyDays, s.repeat?.times].every(whole))
+      errors.push(`${at}: day counts must be whole numbers`);
+    if (s.repeat && !(s.repeat.everyDays > 0 && s.repeat.times > 0))
+      errors.push(`${at}: repeat needs everyDays and times above 0`);
+    if (!Object.hasOwn(flags, s.flag ?? ''))
+      errors.push(`${at}: flag "${s.flag}" is not in config/flags.json`);
+  }
+  return errors;
+}
+
 // Webhook destination (PostHog CDP) that posts the event to our API's /api/hooks/posthog.
 export const webhook = (name, filters) => ({
   name,
@@ -141,7 +240,19 @@ export const posthogReady = () =>
 const umamiBase = () => `${e.UMAMI_URL}/api/websites/${e.UMAMI_WEBSITE_ID || '<website>'}`;
 const umamiReady = () => Boolean(e.UMAMI_URL && e.UMAMI_API_KEY && e.UMAMI_WEBSITE_ID);
 
-/** Finds an object by exact name in a list endpoint, then PATCHes/POSTs or creates it. */
+/** True when every value in `want` is at the same place in `have` (`have` may hold more). */
+export const contains = (have, want) =>
+  want && typeof want === 'object'
+    ? Boolean(have) &&
+      typeof have === 'object' &&
+      (!Array.isArray(want) || want.length === have.length) &&
+      Object.keys(want).every((k) => contains(have[k], want[k]))
+    : have === want || want === undefined;
+
+/**
+ * Finds an object by exact name in a list endpoint, then PATCHes/POSTs it when it differs, or
+ * creates it. `body` may be a function of the found object (undefined when creating).
+ */
 export async function upsert(
   api,
   {
@@ -160,12 +271,18 @@ export async function upsert(
     console.log(`  exists ${name} (left as is: edit it in PostHog)`);
     return found;
   }
+  const want = typeof body === 'function' ? body(found) : body;
   if (found) {
-    const updated = await api(method, update(found.id), body);
-    console.log(`  ${api.dryRun ? 'would update' : 'updated'} ${name}`);
+    const changed = Object.keys(want).filter((k) => !contains(found[k], want[k]));
+    if (!changed.length) {
+      console.log(`  unchanged ${name}`);
+      return found;
+    }
+    const updated = await api(method, update(found.id), want);
+    console.log(`  ${api.dryRun ? 'would update' : 'updated'} ${name}: ${changed.join(', ')}`);
     return { ...found, ...updated };
   }
-  const created = await api('POST', create, body);
+  const created = await api('POST', create, want);
   console.log(`  ${api.dryRun ? 'would create' : 'created'} ${name}`);
   return created;
 }
@@ -215,6 +332,17 @@ async function syncPosthog(dryRun) {
     body: aiSurvey(),
     createOnly: true,
   });
+  for (const s of surveys) {
+    const flags = await api('GET', `/feature_flags/?search=${q(s.flag)}`);
+    const flag = (flags.results ?? []).find((f) => f.key === s.flag);
+    if (!flag && !api.dryRun) throw new Error(`flag ${s.flag} is not in PostHog: pnpm flags:sync`);
+    await upsert(api, {
+      list: `/surveys/?search=${q(names.survey(s))}`,
+      create: '/surveys/',
+      name: names.survey(s),
+      body: (found) => survey(s, flag?.id ?? `<flag ${s.flag}>`, found),
+    });
+  }
   if (e.PUBLIC_API_URL && e.POSTHOG_WEBHOOK_SECRET) {
     const hook = (name, filters) =>
       upsert(api, {

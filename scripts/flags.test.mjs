@@ -74,3 +74,8 @@ test('flags:sync creates new flags at the catalog default rollout', () => {
   assert.equal(newFlag('a', { ...flag, default: true }).filters.groups[0].rollout_percentage, 100);
   assert.equal(newFlag('a', flag).key, 'a');
 });
+
+test('flags linked to surveys count as used', () => {
+  const r = checkFlags({ 'nps-survey': flag }, [], today, ['nps-survey']);
+  assert.deepEqual(r.warnings, []);
+});

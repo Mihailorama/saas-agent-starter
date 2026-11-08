@@ -4,10 +4,13 @@
 // - PostHog, GA4, Yandex Metrika (third parties): load only after the user consents
 //   (vanilla-cookieconsent; opt-out regime only where the deployment says so),
 //   never receive events marked `pii` in config/events.json.
+// - Formbricks (connect your own instance, docs/product-analytics.md#surveys): in-app surveys
+//   for the self-hosted contour; same consent gate, identified by user/org id only.
 // Rage/dead clicks, web vitals and exceptions come from PostHog autocapture, not from here.
 // Catalog, tiers and replacement criteria: docs/product-analytics.md.
 import catalog from '../../../../config/events.json';
 import flags from '../../../../config/flags.json';
+import journeys from '../../../../config/journeys.json';
 
 export type EventName = keyof typeof catalog.events;
 export type Props = Record<string, string | number | boolean>;
@@ -24,6 +27,7 @@ const config = {
   ga4: env.VITE_GA4_ID,
   ym: { id: env.VITE_YM_ID, webvisor: env.VITE_YM_WEBVISOR === 'true' },
   langfuse: { key: env.VITE_LANGFUSE_PUBLIC_KEY, host: env.VITE_LANGFUSE_HOST },
+  formbricks: { envId: env.VITE_FORMBRICKS_ENV_ID, host: env.VITE_FORMBRICKS_API_HOST },
 };
 
 /** A sink maps `page_view` to its native page view and everything else to a custom event. */
@@ -36,7 +40,10 @@ type Win = Window & {
 };
 const w = window as Win;
 
-const analyticsNeedsConsent = Boolean(config.posthog.key || config.ga4 || config.ym.id);
+const formbricksOn = Boolean(config.formbricks.envId && config.formbricks.host);
+const analyticsNeedsConsent = Boolean(
+  config.posthog.key || config.ga4 || config.ym.id || formbricksOn,
+);
 /** The booking embed (lib/booking.ts) loads a third party into the page: ask first, when it can
  * show at all: configured, and its `booking` flag not off for everyone (same order as lib/flags). */
 const listed = (names: string | undefined) =>
@@ -74,6 +81,17 @@ let posthogLoaded: (ph: typeof import('posthog-js').default) => void = () => {};
 export const posthogReady = new Promise<typeof import('posthog-js').default>((resolve) => {
   posthogLoaded = resolve;
 });
+
+/** Who is signed in (internal ids only), applied to PostHog and Formbricks once they load. */
+let who: { userId: string; orgId?: string } | undefined;
+let formbricks: typeof import('@formbricks/js').default | undefined;
+function applyIdentity() {
+  if (!who) return;
+  // first_seen_at: survey targeting "active for N days" (config/journeys.json activeForDays).
+  posthog?.identify(who.userId, undefined, { first_seen_at: new Date().toISOString() });
+  void formbricks?.setUserId(who.userId); // contact targeting: Formbricks Enterprise
+  if (who.orgId) void formbricks?.setAttribute('orgId', who.orgId);
+}
 
 function loadScript(src: string, attrs: Record<string, string> = {}, onload?: () => void) {
   const s = Object.assign(document.createElement('script'), { src, async: true, onload });
@@ -118,8 +136,26 @@ async function posthogSink(): Promise<Sink> {
   });
   ph.register({ release: config.release });
   posthog = ph;
+  applyIdentity();
   posthogLoaded(ph);
   return (name, props) => ph.capture(name === 'page_view' ? '$pageview' : name, props);
+}
+
+/** Survey trigger events in config/journeys.json, sent as Formbricks actions of the same key. */
+const surveyTriggers = new Set<string>(
+  journeys.surveys.map((s) => (s.trigger as { event?: string }).event ?? ''),
+);
+async function formbricksSink(): Promise<Sink> {
+  const { default: fb } = await import('@formbricks/js');
+  // VITE_FORMBRICKS_ENV_ID holds the Workspace ID. Not awaited: the SDK queues calls until its
+  // script from the Formbricks host has loaded, and a failed load must not stop the other sinks.
+  void fb.setup({ workspaceId: config.formbricks.envId!, appUrl: config.formbricks.host! });
+  formbricks = fb;
+  applyIdentity();
+  return (name) => {
+    if (name === 'page_view') void fb.registerRouteChange();
+    else if (surveyTriggers.has(name)) void fb.track(name);
+  };
 }
 
 function ga4Sink(): Sink {
@@ -174,6 +210,7 @@ async function startThirdParty() {
   if (config.ga4) thirdParty.push(ga4Sink());
   if (config.ym.id) thirdParty.push(ymSink());
   if (config.posthog.key) thirdParty.push(await posthogSink());
+  if (formbricksOn) thirdParty.push(await formbricksSink());
   if (lastRoute) for (const send of thirdParty) send('page_view', { route: lastRoute });
 }
 
@@ -318,10 +355,12 @@ export function gaClientId(): Promise<string | undefined> {
   });
 }
 
-/** Ties later events to the signed-in user (internal id only) in PostHog. */
-export function identify(userId: string | undefined) {
-  if (userId) posthog?.identify(userId);
-  else posthog?.reset();
+/** Ties later events and surveys to the signed-in user and org (internal ids only). */
+export function identify(userId: string | undefined, orgId?: string) {
+  who = userId ? { userId, orgId } : undefined;
+  if (who) return applyIdentity();
+  posthog?.reset();
+  void formbricks?.logout();
 }
 
 /**

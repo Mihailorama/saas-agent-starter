@@ -20,6 +20,7 @@ holds only the contract (what we track, which journeys matter) and the glue. Dec
 | Report                 | `pnpm journeys:report [--json]`                             | Prints current funnel numbers for agents and humans                          |
 | Alert to issue         | `POST /api/hooks/posthog` (`apps/api/src/routes/hooks.ts`)  | PostHog webhook -> Plane work item `cjm-regression` / `from-users`           |
 | AI-answer thumbs       | `aiFeedback()` in `analytics.ts`, buttons on the AI summary | PostHog AI observability survey + Langfuse score on the LLM call's trace     |
+| Surveys (NPS, CSAT)    | `surveys` in `config/journeys.json` ([below](#surveys))     | PostHog popovers linked to a catalog flag; Formbricks when self-hosted       |
 | Agent access           | `.mcp.json.example`                                         | PostHog MCP and Umami MCP for coding agents                                  |
 
 Rage clicks, dead clicks, web vitals and JS exceptions are not our code: PostHog autocaptures
@@ -182,6 +183,75 @@ tokens, cost, latency and custom properties
 ([privacy mode](https://posthog.com/docs/ai-observability/privacy-mode)). Use it if the worker
 ever sends generations, in line with ADR 0008 (content stays in our S3 only).
 
+## Surveys
+
+In-app surveys (NPS, CSAT, one-question micro-surveys) are config, like journeys: the `surveys`
+block of `config/journeys.json`. Responses stay in the survey tool; there is no survey or
+response table of ours.
+
+|            | PostHog Cloud (default)                                                                 | Formbricks (connect your own, self-hosted contour)                                                   |
+| ---------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Defined in | `config/journeys.json`, synced by `pnpm journeys:sync`                                  | the Formbricks UI (sync covers PostHog only)                                                         |
+| Shown by   | `posthog-js` (already loaded after consent)                                             | `@formbricks/js` 5.1.0 (MIT), loaded after consent                                                   |
+| Triggers   | catalog event and/or URL, wait period, re-ask schedule, linked flag                     | Formbricks actions: our survey trigger events are sent as actions with the same key, plus page views |
+| Identity   | PostHog person = user id, `first_seen_at` set once                                      | `setUserId(user id)`, attribute `orgId`; never email or name                                         |
+| Responses  | PostHog Surveys (results, insights, replays), deleted with the person (docs/privacy.md) | Formbricks                                                                                           |
+| Env        | `POSTHOG_*` (sync), `VITE_POSTHOG_*` (web)                                              | `VITE_FORMBRICKS_ENV_ID`, `VITE_FORMBRICKS_API_HOST` (web build)                                     |
+
+Each entry: `id`, `type` (`nps` 0-10 numbers, `csat` 1-5 emoji, `question` single choice with
+`choices` or open text without), `question`, optional `followUp` (open text after the rating),
+`trigger` (`event` from `config/events.json`, not `pii`, and/or `url`, matched as a substring),
+`activeForDays` (only people first seen that many days ago or earlier), `waitDays` (skip people
+who saw any survey in the last N days), `repeat` (`{ everyDays, times }`; absent = ask once) and
+`flag`. Shipped: `nps` (project pages, active 14+ days, every 90 days, flag `nps-survey`) and
+`csat-project` (after `project_created`, once, flag `csat-survey`). Both flags default off.
+
+PostHog mapping, per survey `Survey: <id>`: a `popover`, `linked_flag_id` of the catalog flag (so
+it shows only where the flag is on; create the flag first with `pnpm flags:sync`),
+`conditions.url` (`icontains`), `conditions.events` (`page_view` = `$pageview`),
+`conditions.seenSurveyWaitPeriodInDays`, `schedule` `once`/`recurring` with
+`iteration_frequency_days` and `iteration_count`, and for `activeForDays` a
+`targeting_flag_filters` group on the person property `first_seen_at` (`is_date_before -Nd`).
+`identify()` sets `first_seen_at` with `$set_once`, so people who signed in before this shipped
+count from their first visit after it. Sync compares each field with what PostHog has, PATCHes
+only the changed ones (printed by name, also with `--dry-run`) and keeps question ids, so
+responses stay joined to their question.
+
+Add a survey:
+
+1. Add the entry to `surveys` and a flag (`"default": false`, owner, expiry) to
+   `config/flags.json`; `pnpm check:events` validates the entry, `pnpm check:flags` counts the
+   linked flag as used.
+2. `pnpm flags:sync`, then `pnpm journeys:sync --dry-run` to see the plan, then
+   `pnpm journeys:sync`.
+3. Roll out with the flag in PostHog (internal users, then a percentage), like any flag
+   ([docs/feature-flags.md](feature-flags.md)). Stop a survey by turning its flag off; remove
+   it by deleting the entry and archiving `Survey: <id>` in PostHog (sync never deletes).
+
+Edit surveys in config, never in the PostHog UI: the next sync overwrites the fields it manages.
+
+### Formbricks (connect your own)
+
+For deliveries where data must stay in place (Umami tier, RU contour). Formbricks' core is
+AGPLv3 with a commercial `ee` directory, and its stack (PostgreSQL, Redis and more services) is
+heavier than this whole starter, so there is no compose profile: run it on its own host with
+[Formbricks' Docker guide](https://formbricks.com/docs/self-hosting/setup/docker) and connect it.
+
+1. In Formbricks, copy the Workspace ID and the SDK connection URL (Settings -> Workspace ->
+   Web & Mobile SDK).
+2. Set `VITE_FORMBRICKS_ENV_ID` (the Workspace ID) and `VITE_FORMBRICKS_API_HOST` (that URL)
+   for the web build, and add the URL's origin to `ANALYTICS_ORIGINS` (CSP script and connect).
+   Both empty = off: nothing loads, no request.
+3. Create the surveys and their actions in Formbricks. The web sends page views and the
+   trigger events of our `surveys` config as actions keyed by the event name (create an action
+   with key `project_created` to reuse the CSAT trigger); other events are not sent.
+
+User identification (contacts, attributes, segment targeting) is a Formbricks Enterprise
+Edition feature ([docs](https://formbricks.com/docs/surveys/website-app-surveys/user-identification)).
+Without a license, surveys still show by action and URL and responses are anonymous; the
+`setUserId` and `setAttribute` calls are expected to be refused by the server (not tested here). The SDK pin is exact
+(`5.1.0`) and needs a Formbricks 5 server (Workspace IDs).
+
 ## Journeys as code
 
 `config/journeys.json`: per journey a `name`, `steps` (event names from the catalog),
@@ -193,13 +263,14 @@ median time to convert; not alerted on).
 
 - PostHog (`POSTHOG_APP_HOST` e.g. `https://eu.posthog.com`, `POSTHOG_PROJECT_ID`,
   `POSTHOG_PERSONAL_API_KEY` with scopes `insight:write`, `alert:write`, `survey:write`,
-  `hog_function:write`): one funnel insight `Journey: <name>` (ordered steps, conversion
+  `feature_flag:read`, `hog_function:write`): one funnel insight `Journey: <name>` (ordered steps, conversion
   window), one hourly threshold alert (`FunnelsAlertConfig`, `conversion_from_start` below
   `minConversion`), the "Report a problem / suggest an improvement" survey (feedback tab
-  widget on every page), the "AI answer feedback" API survey, and, when `PUBLIC_API_URL` and
+  widget on every page), the "AI answer feedback" API survey, the `surveys` of the config
+  ([Surveys](#surveys)), and, when `PUBLIC_API_URL` and
   `POSTHOG_WEBHOOK_SECRET` are set, two webhook destinations: `$insight_alert_firing` and
-  `survey sent` (feedback survey only) -> `${PUBLIC_API_URL}/api/hooks/posthog`. Surveys are
-  created once and then left alone (their question ids must stay stable).
+  `survey sent` (feedback survey only) -> `${PUBLIC_API_URL}/api/hooks/posthog`. The feedback
+  and AI surveys are created once and then left alone; config surveys are updated in place.
 - Umami (`UMAMI_URL`, `UMAMI_API_KEY`, `UMAMI_WEBSITE_ID`): one saved funnel per journey
   (`POST /api/websites/{id}/funnels`, window in minutes).
 - Without credentials, or with `--dry-run`, it prints every planned request instead.
@@ -241,7 +312,8 @@ With the service desk configured ([docs/support.md](support.md)), "report a prob
 improvement" moves into the Chatwoot widget's Help menu (one entry point for users, works on every
 tier including Umami-only) and `journeys:sync` skips the feedback survey. Without it:
 
-Feedback on the Umami-only tier: Umami has no surveys. GlitchTip implements Sentry's
+Feedback on the Umami-only tier: Umami has no surveys; connect Formbricks for NPS/CSAT
+([above](#formbricks-connect-your-own)). GlitchTip implements Sentry's
 crash-report dialog (user reports attached to an error), not a standalone "suggest an
 improvement" widget, so that tier has no feedback channel yet (docs/TODO.md).
 
@@ -253,6 +325,8 @@ improvement" widget, so that tier has no feedback channel yet (docs/TODO.md).
   `pnpm check:events` enforces it.
 - Never put emails, names, free text or ids from the URL in props. `track()` masks emails and
   UUIDs and keeps only declared props; mark anything that may identify a person `pii: true`.
+- Surveys only through the `surveys` block of `config/journeys.json` and `pnpm journeys:sync`,
+  each linked to a catalog flag; never hand-made in the PostHog UI, never an own response table.
 - Read the product's state before changing a flow: `pnpm journeys:report`, or the PostHog /
   Umami MCP (`.mcp.json.example`). Tracker items labelled `cjm-regression` or `from-users` are
   real user pain: close them from the PR that fixes them (`Fixes PROJ-123`, docs/releases.md).
