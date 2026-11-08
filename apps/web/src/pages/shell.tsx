@@ -62,7 +62,7 @@ import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/
 import { authClient } from '@/lib/auth';
 import { bookingUrl, onBookingClick } from '@/lib/booking';
 import { useFlag } from '@/lib/flags';
-import { startTour, stored, TOURS, tourKey } from '@/lib/onboarding';
+import { startTour, stored, tourKey } from '@/lib/onboarding';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
 
@@ -193,7 +193,7 @@ function UserMenu() {
           <DropdownMenuItem
             onSelect={async () => {
               await navigate({ to: '/' });
-              await startTour('/', user.id, true);
+              await startTour(user.id, true);
             }}
           >
             <Compass className="size-4" /> Product tour
@@ -346,14 +346,15 @@ export function Shell() {
   const mcpTools = useFlag('mcp-tools');
   // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
   const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
-  // Product tour (docs/onboarding.md): once per user and browser, on a route that has one.
+  // Product tour (docs/onboarding.md): once per user and browser, on the projects page.
   const onboarding = useFlag('onboarding') && !viewedBy && Boolean(orgs?.length) && !mustEnrol;
-  const path = useLocation({ select: (l) => l.pathname });
+  const onProjects = useLocation({ select: (l) => l.pathname === '/' });
   useEffect(() => {
-    if (!onboarding || !userId || !TOURS[path] || stored(tourKey(userId))) return;
-    const t = setTimeout(() => startTour(path, userId), 500); // let the page render first
+    // Blocked storage (undefined) counts as seen: never start a tour that cannot be remembered.
+    if (!onboarding || !userId || !onProjects || stored(tourKey(userId)) !== null) return;
+    const t = setTimeout(() => startTour(userId), 500); // let the page render first
     return () => clearTimeout(t);
-  }, [onboarding, userId, path]);
+  }, [onboarding, userId, onProjects]);
 
   const banner = viewedBy && session && (
     <ImpersonationBanner

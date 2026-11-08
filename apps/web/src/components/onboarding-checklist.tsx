@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { CheckCircle2, Circle, X } from 'lucide-react';
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,6 +23,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { track } from '@/lib/analytics';
 import { client, type Ok, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
@@ -30,7 +37,6 @@ import { useFlag } from '@/lib/flags';
 import { store, stored } from '@/lib/onboarding';
 
 type ItemId = Ok<'/api/onboarding/', 'get'>['items'][number]['id'];
-type Dialogs = 'profile' | 'invite';
 /** Copy and action per item; `to` links to the page where it is done, else a click handler. */
 const ITEMS: Record<ItemId, { text: string; action: string; to?: string }> = {
   org_profile: { text: 'Add your company details', action: 'Add details' },
@@ -43,6 +49,8 @@ const ITEMS: Record<ItemId, { text: string; action: string; to?: string }> = {
   },
   api_key: { text: 'Create an API key', action: 'Create key', to: '/settings/api-keys' },
 };
+// Same values as ORG_SIZES in apps/api/src/auth.ts (the API validates them).
+const SIZES = ['1-10', '11-50', '51-200', '201-1000', '1000+'];
 
 /** A small form dialog: one submit, pending state, toast on error (profile and invite). */
 function FormDialog(props: {
@@ -89,20 +97,17 @@ function FormDialog(props: {
   );
 }
 
-const field = (id: string, label: string, input: ReactNode) => (
-  <div className="space-y-2">
-    <Label htmlFor={id}>{label}</Label>
-    {input}
-  </div>
-);
-
-/** Onboarding checklist on the projects page (docs/onboarding.md). Done = the server says so. */
+/**
+ * Onboarding checklist on the projects page (docs/onboarding.md). The API returns only the items
+ * the user's role can complete, each done or not from real data.
+ */
 export function OnboardingChecklist({ onNewProject }: { onNewProject: () => void }) {
-  const enabled = useFlag('onboarding');
+  const { data: session } = authClient.useSession();
+  const enabled = useFlag('onboarding') && !session?.session.impersonatedBy;
   const { data: org } = authClient.useActiveOrganization();
   const dismissKey = `onboarding-checklist-dismissed:${org?.id}`;
   const [dismissed, setDismissed] = useState(false);
-  const [dialog, setDialog] = useState<Dialogs>();
+  const [dialog, setDialog] = useState<'profile' | 'invite'>();
   const status = useQuery({
     queryKey: ['onboarding', org?.id],
     queryFn: () => ok(client.GET('/api/onboarding/')),
@@ -111,24 +116,14 @@ export function OnboardingChecklist({ onNewProject }: { onNewProject: () => void
   const items = status.data?.items ?? [];
   const done = items.filter((i) => i.done).length;
 
-  // `onboarding_item_completed` once per item and browser, when it is first seen done.
-  useEffect(() => {
-    if (!org) return;
-    const key = `onboarding-reported:${org.id}`;
-    const reported = new Set((stored(key) ?? '').split(','));
-    const fresh = items.filter((i) => i.done && !reported.has(i.id));
-    for (const i of fresh) track('onboarding_item_completed', { item: i.id });
-    if (fresh.length) store(key, [...reported, ...fresh.map((i) => i.id)].join(','));
-  }, [items, org]);
-
-  if (!org || !status.data || dismissed || stored(dismissKey) || done === items.length) return null;
+  if (!enabled || !org || dismissed || stored(dismissKey) || done === items.length) return null;
 
   const click: Partial<Record<ItemId, () => void>> = {
     org_profile: () => setDialog('profile'),
     first_project: onNewProject,
     teammate_invited: () => setDialog('invite'),
   };
-  const metadata = (org.metadata ?? {}) as Record<string, string | undefined>;
+  const metadata = (org.metadata ?? {}) as { size?: string; website?: string };
 
   return (
     <Card data-tour="onboarding-checklist">
@@ -191,43 +186,41 @@ export function OnboardingChecklist({ onNewProject }: { onNewProject: () => void
         open={dialog === 'profile'}
         onOpenChange={(o) => setDialog(o ? 'profile' : undefined)}
         title="Company details"
-        description="Helps us tailor the product to your team. Only admins can change them."
+        description="Helps us tailor the product to your team."
         submit="Save details"
         onSubmit={(f) =>
           authClient.organization.update({
-            data: {
-              metadata: {
-                ...metadata,
-                size: String(f.get('size')),
-                website: String(f.get('website')),
-              },
-            },
+            data: { metadata: { size: String(f.get('size')), website: String(f.get('website')) } },
           })
         }
       >
-        {field(
-          'org-size',
-          'Company size',
-          <Input
-            id="org-size"
-            name="size"
-            placeholder="11-50"
-            defaultValue={metadata.size}
-            required
-          />,
-        )}
-        {field(
-          'org-website',
-          'Website',
+        <div className="space-y-2">
+          <Label htmlFor="org-size">Company size</Label>
+          <Select name="size" defaultValue={metadata.size} required>
+            <SelectTrigger id="org-size" className="w-full">
+              <SelectValue placeholder="Select a size" />
+            </SelectTrigger>
+            <SelectContent>
+              {SIZES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s} people
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="org-website">Website</Label>
           <Input
             id="org-website"
             name="website"
             type="url"
             placeholder="https://example.com"
+            maxLength={200}
             defaultValue={metadata.website}
             required
-          />,
-        )}
+          />
+        </div>
       </FormDialog>
       <FormDialog
         open={dialog === 'invite'}
@@ -239,11 +232,10 @@ export function OnboardingChecklist({ onNewProject }: { onNewProject: () => void
           authClient.organization.inviteMember({ email: String(f.get('email')), role: 'member' })
         }
       >
-        {field(
-          'invite-email',
-          'Email',
-          <Input id="invite-email" name="email" type="email" required autoFocus />,
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="invite-email">Email</Label>
+          <Input id="invite-email" name="email" type="email" required autoFocus />
+        </div>
       </FormDialog>
     </Card>
   );

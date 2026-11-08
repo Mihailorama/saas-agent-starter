@@ -1,7 +1,7 @@
 // Onboarding checklist (docs/onboarding.md): GET /api/onboarding behind the `onboarding` flag,
 // every item derived from existing data, scoped to the active organization.
 import { randomUUID } from 'node:crypto';
-import { user } from '@app/db';
+import { member, user } from '@app/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
@@ -38,8 +38,11 @@ async function newOrg() {
   await db.update(user).set({ emailVerified: true }).where(eq(user.email, credentials.email));
   const signedIn = await call('POST', '/api/auth/sign-in/email', undefined, credentials);
   const cookie = signedIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
-  await call('POST', '/api/auth/organization/create', cookie, { name: 'Org', slug: randomUUID() });
-  return cookie;
+  const org = await call('POST', '/api/auth/organization/create', cookie, {
+    name: 'Org',
+    slug: randomUUID(),
+  });
+  return { cookie, orgId: org.json().id as string, userId: signedIn.json().user.id as string };
 }
 
 const status = async (cookie: string) => {
@@ -53,7 +56,7 @@ const status = async (cookie: string) => {
 describe('onboarding checklist', () => {
   it('flag off: 404', async () => {
     flag(false);
-    expect((await call('GET', '/api/onboarding/', await newOrg())).statusCode).toBe(404);
+    expect((await call('GET', '/api/onboarding/', (await newOrg()).cookie)).statusCode).toBe(404);
   });
 
   it('flag on: 401 without a session', async () => {
@@ -63,8 +66,8 @@ describe('onboarding checklist', () => {
 
   it('flag on: each item turns done from its own data, per organization', async () => {
     flag(true);
-    const a = await newOrg();
-    const b = await newOrg();
+    const a = (await newOrg()).cookie;
+    const b = (await newOrg()).cookie;
     const none = {
       org_profile: false,
       first_project: false,
@@ -74,6 +77,20 @@ describe('onboarding checklist', () => {
     };
     expect(await status(a)).toEqual(none);
 
+    // A canceled invitation does not count; a pending one does.
+    const invite = () =>
+      call('POST', '/api/auth/organization/invite-member', a, {
+        email: `${randomUUID()}@example.com`,
+        role: 'member',
+      });
+    const canceled = await invite();
+    expect(canceled.statusCode, canceled.body).toBe(200);
+    await call('POST', '/api/auth/organization/cancel-invitation', a, {
+      invitationId: canceled.json().id,
+    });
+    expect((await status(a)).teammate_invited).toBe(false);
+    expect((await invite()).statusCode).toBe(200);
+
     for (const [url, body, code] of [
       [
         '/api/auth/organization/update',
@@ -81,11 +98,6 @@ describe('onboarding checklist', () => {
         200,
       ],
       ['/api/projects/', { name: 'P', description: '' }, 201],
-      [
-        '/api/auth/organization/invite-member',
-        { email: `${randomUUID()}@example.com`, role: 'member' },
-        200,
-      ],
       ['/api/api-keys', { name: 'k', scopes: ['projects:read'], expiresInDays: null }, 201],
     ] as const) {
       const res = await call('POST', url, a, body);
@@ -100,5 +112,46 @@ describe('onboarding checklist', () => {
       api_key: true,
     });
     expect(await status(b)).toEqual(none); // nothing leaks across organizations
+  });
+
+  it('organization metadata: only known keys, a size from the list and an http(s) website', async () => {
+    const { cookie } = await newOrg();
+    const update = (metadata: object) =>
+      call('POST', '/api/auth/organization/update', cookie, { data: { metadata } });
+    for (const bad of [
+      { size: 'huge' },
+      { website: 'javascript:alert(1)' },
+      { website: `https://example.com/${'a'.repeat(200)}` },
+      { size: '1-10', plan: 'enterprise' },
+    ]) {
+      expect((await update(bad)).statusCode, JSON.stringify(bad)).toBe(400);
+    }
+    expect((await update({ size: '1-10' })).statusCode).toBe(200);
+    const created = await call('POST', '/api/auth/organization/create', cookie, {
+      name: 'Org',
+      slug: randomUUID(),
+      metadata: { tier: 'gold' },
+    });
+    expect(created.statusCode).toBe(400);
+  });
+
+  it('flag on: a member gets only the items a member can complete', async () => {
+    flag(true);
+    const owner = await newOrg();
+    const m = await newOrg();
+    await db.insert(member).values({
+      id: randomUUID(),
+      organizationId: owner.orgId,
+      userId: m.userId,
+      role: 'member',
+      createdAt: new Date(),
+    });
+    const active = await call('POST', '/api/auth/organization/set-active', m.cookie, {
+      organizationId: owner.orgId,
+    });
+    expect(active.statusCode, active.body).toBe(200);
+    expect(await status(m.cookie)).toEqual({ first_project: false, two_factor: false });
+    // The second member also completes the owner's "teammate" item.
+    expect((await status(owner.cookie)).teammate_invited).toBe(true);
   });
 });

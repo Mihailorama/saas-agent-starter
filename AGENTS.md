@@ -263,11 +263,11 @@ Details: docs/mcp.md, ADR 0027. A tool is a REST route that already accepts API 
 
 ## Recipe: add an onboarding checklist item or tour step
 
-Details: docs/onboarding.md. Item: add the id to `ONBOARDING_ITEMS` and its condition (existing
-data only, no new table) in `apps/api/src/routes/onboarding.ts`, its copy and action in `ITEMS` of
-`apps/web/src/components/onboarding-checklist.tsx`, a case in `apps/api/test/onboarding.test.ts`
-and a row in docs/onboarding.md; never rename an id. Tour step: put `data-tour="<id>"` on the
-element, add the id to `TourTarget` and the step to `TOURS` in `apps/web/src/lib/onboarding.ts`.
+Details: docs/onboarding.md. Item: add the id and its minimum role to `ONBOARDING_ITEMS` and its
+condition (existing data only, no new table) in `apps/api/src/routes/onboarding.ts`, its copy and
+action in `ITEMS` of `apps/web/src/components/onboarding-checklist.tsx`, a case in
+`apps/api/test/onboarding.test.ts` and a row in docs/onboarding.md; never rename an id. Tour step:
+put `data-tour="<id>"` on the element and add the step to `TOUR` in `apps/web/src/lib/onboarding.ts`.
 
 ## Recipe: add a background workflow
 

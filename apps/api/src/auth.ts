@@ -3,7 +3,9 @@ import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { APIError } from 'better-auth/api';
 import { admin, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { z } from 'zod';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
 import { db } from './db.ts';
@@ -59,6 +61,24 @@ const oidc =
     : [];
 export const ssoEnabled = oidc.length > 0;
 
+/**
+ * The only keys an organization's `metadata` may hold (onboarding company details,
+ * docs/onboarding.md). Checked on create and update; anything else is a 400.
+ */
+export const ORG_SIZES = ['1-10', '11-50', '51-200', '201-1000', '1000+'] as const;
+export const OrgMetadata = z.strictObject({
+  size: z.enum(ORG_SIZES).optional(),
+  website: z
+    .url({ protocol: /^https?$/ })
+    .max(200)
+    .optional(),
+});
+const checkMetadata = async ({ organization }: { organization: { metadata?: unknown } }) => {
+  if (organization.metadata != null && !OrgMetadata.safeParse(organization.metadata).success) {
+    throw new APIError('BAD_REQUEST', { message: 'invalid organization metadata' });
+  }
+};
+
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   basePath: '/api/auth',
@@ -98,6 +118,8 @@ export const auth = betterAuth({
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
       organizationHooks: {
+        beforeCreateOrganization: checkMetadata,
+        beforeUpdateOrganization: checkMetadata,
         afterCreateOrganization: ({ organization, user }) =>
           crmSync({
             kind: 'org.created',
