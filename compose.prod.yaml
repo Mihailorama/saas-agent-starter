@@ -105,11 +105,15 @@ services:
       - GITHUB_WEBHOOK_SECRET
       - PLANE_WEBHOOK_SECRET
       - PLANE_PROJECT_ID
+      # lite Telegram support (docs/support.md)
+      - TELEGRAM_SUPPORT_BOT_TOKEN
+      - TELEGRAM_SUPPORT_CHAT_ID
       # booking webhook -> CRM (docs/crm.md)
       - BOOKING_WEBHOOK_SECRET
       # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
       - AI_CONTOUR=${AI_CONTOUR:-}
       - BILLING_CONTOUR
+      - PLANS_FILE
       - STRIPE_SECRET_KEY
       - STRIPE_WEBHOOK_SECRET
       # rewards (docs/growth.md): the worker applies money rewards through /internal/rewards
@@ -205,6 +209,9 @@ services:
       - AI_SUPPORT_TRIAGE_MODEL
       - SUPPORT_AI_ORG_ID
       - SUPPORT_NOTIFY_ON_CLOSE
+      - TELEGRAM_SUPPORT_BOT_TOKEN
+      - TELEGRAM_SUPPORT_CHAT_ID
+      - TELEGRAM_SUPPORT_WEBHOOK_URL
       # CRM sync (docs/crm.md); Twenty runs elsewhere (docs/deploy.md), empty = dry run
       - TWENTY_API_URL
       - TWENTY_API_KEY
@@ -217,6 +224,8 @@ services:
       - POSTHOG_SECRET_KEY
       # billing: plans and LLM spend limits (default: config/plans.json in the image)
       - PLANS_FILE
+      # usage reporting to Stripe Meters (docs/billing.md "Usage-based"); empty = off
+      - STRIPE_SECRET_KEY
       # rewards (docs/growth.md): rules (default config/rewards.json) and the API link
       - REWARDS_FILE
       - API_INTERNAL_URL=${API_INTERNAL_URL:-http://api:3000}

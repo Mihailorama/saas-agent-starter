@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
+import { plans } from '../src/billing/plans.ts';
 import { attachReferral, checkoutReferral, onReferralEvent } from '../src/billing/referrals.ts';
 import { providerFor } from '../src/billing/registry.ts';
 import { db, pool } from '../src/db.ts';
@@ -92,12 +93,13 @@ describe('native referrals (Stripe promotion codes)', () => {
     expect(await referredBy(b)).toBe(a);
     expect(await checkoutReferral(b)).toEqual({ promotionCode: code, referrerOrgId: a });
     // stripe-mock accepts the session with the promotion code and the referrer in metadata.
-    const checkout = await providerFor('en').checkout({
+    const checkout = await providerFor('en').checkout!({
       orgId: b,
       planId: 'pro',
       planName: 'Pro',
       currency: 'USD',
-      price: { amount: '29.00', interval: 'month', providerPriceId: 'price_123' },
+      prices: plans.plans.pro!.prices.USD!,
+      seats: 1,
       customerId: null,
       returnUrl: 'https://app.example.com/settings/billing',
       referral: (await checkoutReferral(b))!,

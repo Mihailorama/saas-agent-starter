@@ -213,6 +213,9 @@ services:
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       PLANE_WEBHOOK_SECRET: ${PLANE_WEBHOOK_SECRET:-}
       PLANE_PROJECT_ID: ${PLANE_PROJECT_ID:-}
+      # Lite Telegram support (docs/support.md, flag telegram-support); empty = endpoint off.
+      TELEGRAM_SUPPORT_BOT_TOKEN: ${TELEGRAM_SUPPORT_BOT_TOKEN:-}
+      TELEGRAM_SUPPORT_CHAT_ID: ${TELEGRAM_SUPPORT_CHAT_ID:-}
       # Booking webhook -> CRM (docs/crm.md); empty = endpoint off.
       BOOKING_WEBHOOK_SECRET: ${BOOKING_WEBHOOK_SECRET:-}
       # Operator console (docs/admin.md); empty = no operators.
@@ -242,6 +245,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
       SENTRY_DSN: ${WORKER_SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-} # usage reporting to Stripe Meters
       # LLM observability (ADR 0009): each call as a PostHog $ai_generation when set.
       POSTHOG_PRIVACY_MODE: ${POSTHOG_PRIVACY_MODE:-true}
       # With --profile llmops: spans to Langfuse (see .env.example, "LLM-ops Full").
@@ -296,6 +300,9 @@ services:
       AI_SUPPORT_TRIAGE_MODEL: ${AI_SUPPORT_TRIAGE_MODEL:-}
       SUPPORT_AI_ORG_ID: ${SUPPORT_AI_ORG_ID:-}
       SUPPORT_NOTIFY_ON_CLOSE: ${SUPPORT_NOTIFY_ON_CLOSE:-false}
+      TELEGRAM_SUPPORT_BOT_TOKEN: ${TELEGRAM_SUPPORT_BOT_TOKEN:-}
+      TELEGRAM_SUPPORT_CHAT_ID: ${TELEGRAM_SUPPORT_CHAT_ID:-}
+      TELEGRAM_SUPPORT_WEBHOOK_URL: ${TELEGRAM_SUPPORT_WEBHOOK_URL:-}
       # CRM sync (docs/crm.md). Empty = dry run. With --profile crm: http://twenty:3000
       TWENTY_API_URL: ${TWENTY_API_URL:-}
       TWENTY_API_KEY: ${TWENTY_API_KEY:-}
@@ -452,6 +459,8 @@ services:
         # in-app help widget (Chatwoot); empty = no Help entry (docs/support.md)
         VITE_CHATWOOT_BASE_URL: ${VITE_CHATWOOT_BASE_URL:-}
         VITE_CHATWOOT_WEBSITE_TOKEN: ${VITE_CHATWOOT_WEBSITE_TOKEN:-}
+        # Telegram support bot's username (flag `telegram-support`); empty = no Telegram entry
+        VITE_TELEGRAM_SUPPORT_BOT: ${VITE_TELEGRAM_SUPPORT_BOT:-}
         # "Talk to us" booking (Cal.diy / Cal.com, flag `booking`); empty = no entry (docs/crm.md)
         VITE_BOOKING_ORIGIN: ${VITE_BOOKING_ORIGIN:-}
         VITE_BOOKING_LINK: ${VITE_BOOKING_LINK:-}

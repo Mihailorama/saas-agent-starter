@@ -32,8 +32,10 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { entitlementsOf, type LimitOverrides, llmSpend } from '../billing/entitlements.ts';
 import { type Limit, plans } from '../billing/plans.ts';
-import { providerFor } from '../billing/registry.ts';
+import { providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
+import { env } from '../env.ts';
+import { startContractPeriod } from '../temporal.ts';
 import { httpError } from '../tenant.ts';
 import {
   audit,
@@ -95,11 +97,22 @@ const safeUrl = (raw: string) => {
   }
 };
 
-/** Organizations: list, detail, suspend/unsuspend, limits (docs/admin.md). */
+/** The manual contract price of a plan in a currency (a contract price stands alone). Stripe
+ * contracts are created in the Stripe dashboard instead (docs/billing.md "Contract"). */
+const contractOf = (planId: string, currency: string) => {
+  const c = plans.plans[planId]?.prices[currency]?.[0];
+  return c?.model === 'contract' && c.provider === 'manual' ? c : undefined;
+};
+const contractPlans = Object.entries(plans.plans).flatMap(([id, p]) => {
+  const currencies = Object.keys(p.prices).filter((cur) => contractOf(id, cur));
+  return currencies.length ? [{ id, name: p.name, currencies }] : [];
+});
+
 /** A pending_manual grant is resolved by an `operator.reward.applied` audit row. */
 const unresolved = sql`not exists (select 1 from ${auditLog} where ${auditLog.action} =
   'operator.reward.applied' and ${auditLog.target} = ${rewardGrants.id}::text)`;
 
+/** Organizations: list, detail, suspend/unsuspend, limits, contracts (docs/admin.md). */
 export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
   const tags = ['admin'];
   const op = { preHandler: requireOperator, schema: { tags, hide: true } };
@@ -215,9 +228,14 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
         currency: z.string(),
         currentPeriodEnd: z.string().nullable(),
         cancelAtPeriodEnd: z.boolean(),
+        contractRef: z.string().nullable(),
         dashboardUrl: z.string().nullable(),
       })
       .nullable(),
+    /** Plans an operator can put this org on by contract: id, name, currencies. */
+    contractPlans: z.array(
+      z.object({ id: z.string(), name: z.string(), currencies: z.array(z.string()) }),
+    ),
     planId: z.string(),
     planName: z.string(),
     period: z.object({ start: z.string(), end: z.string() }),
@@ -321,7 +339,7 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
           );
         let dashboardUrl: string | null = null;
         try {
-          dashboardUrl = sub ? providerFor(sub.contour).dashboardUrl(sub) : null;
+          dashboardUrl = sub ? providerOf(sub).dashboardUrl(sub) : null;
         } catch {} // provider not configured in this deployment: no link
         const usage = (name: Limit, used: number) => ({
           used,
@@ -349,8 +367,10 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
             currency: sub.currency,
             currentPeriodEnd: iso(sub.currentPeriodEnd),
             cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+            contractRef: sub.contractRef,
             dashboardUrl,
           },
+          contractPlans,
           planId: e.planId,
           planName: e.plan.name,
           period: { start: e.period.start.toISOString(), end: e.period.end.toISOString() },
@@ -567,6 +587,77 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
           .set({ limitOverrides: Object.keys(overrides).length ? overrides : null })
           .where(eq(organization.id, id));
         await audit(tx, req, id, 'limits.changed', changes.join(' '), b.reason);
+      });
+      return reply.code(204).send(null);
+    },
+  );
+
+  // A manual contract (docs/billing.md "Contract"): invoiced outside any PSP, so the row is ours.
+  // A Temporal timer marks it past_due at the period end unless an operator extends it; it is
+  // started inside the transaction (deterministic id), so no contract is committed without one.
+  // Seats/projects: PATCH .../limits.
+  const Contract = WithReason.extend({
+    planId: z.string().min(1).max(64),
+    currency: z.string().length(3),
+    contractRef: z.string().trim().min(1).max(200),
+    periodStart: z.iso.datetime(),
+    periodEnd: z.iso.datetime(),
+  })
+    .refine((b) => Date.parse(b.periodStart) < Date.parse(b.periodEnd), 'periodEnd before start')
+    // A period that already ended would never get its past_due timer (it runs before commit).
+    .refine((b) => Date.parse(b.periodEnd) > Date.now(), 'periodEnd must be in the future');
+  app.put(
+    '/orgs/:id/contract',
+    {
+      ...op,
+      schema: {
+        ...op.schema,
+        params: Id,
+        body: Contract,
+        response: { 204: z.null(), 400: ErrorBody, 404: ErrorBody, 409: ErrorBody },
+      },
+    },
+    async (req, reply) => {
+      const id = req.params.id;
+      const b = req.body;
+      if (!contractOf(b.planId, b.currency)) {
+        throw httpError(400, `${b.planId} has no manual contract price in ${b.currency}`);
+      }
+      await withOrg(db, id, async (tx) => {
+        const [org] = await tx
+          .select()
+          .from(organization)
+          .where(eq(organization.id, id))
+          .for('update');
+        if (!org) throw httpError(404, 'not found');
+        const [sub] = await tx.select().from(subscriptions);
+        // Never next to a self-serve or provider-invoiced subscription: it would bill twice.
+        if (sub && PAID.includes(sub.status as 'active') && sub.provider !== 'manual') {
+          throw httpError(409, `the organization has a ${sub.provider} subscription: end it first`);
+        }
+        const row = {
+          planId: b.planId,
+          status: 'active' as const,
+          contour: sub?.contour ?? env.BILLING_CONTOUR,
+          provider: 'manual',
+          providerSubscriptionId: null,
+          currency: b.currency,
+          currentPeriodStart: new Date(b.periodStart),
+          currentPeriodEnd: new Date(b.periodEnd),
+          cancelAtPeriodEnd: false,
+          contractRef: b.contractRef,
+          lastEventAt: new Date(),
+          updatedAt: new Date(),
+        };
+        await tx
+          .insert(subscriptions)
+          .values({ orgId: id, ...row })
+          .onConflictDoUpdate({ target: subscriptions.orgId, set: row });
+        const target = `${b.planId} ${b.contractRef} until ${row.currentPeriodEnd.toISOString()}`;
+        await audit(tx, req, id, 'contract.set', target, b.reason);
+        // Before commit: Temporal down = no contract. A timer whose row then rolls back finds no
+        // matching period at its end and does nothing.
+        await startContractPeriod({ orgId: id, periodEnd: row.currentPeriodEnd.toISOString() });
       });
       return reply.code(204).send(null);
     },

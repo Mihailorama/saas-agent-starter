@@ -69,6 +69,19 @@ function Meter({
   );
 }
 
+type PlanCard = {
+  price: { amount: string; interval: string } | null;
+  models: string[];
+};
+/** "$12 per seat per month + usage", "Pay as you go", "Contact us", "Free". */
+function priceText(p: PlanCard, currency: string) {
+  if (p.models.includes('contract')) return 'Contact us';
+  const usage = p.models.includes('metered');
+  if (!p.price) return usage ? 'Pay as you go' : 'Free';
+  const seat = p.models.includes('per_seat') ? ' per seat' : '';
+  return `${money(p.price.amount, currency)}${seat} per ${p.price.interval}${usage ? ' + usage' : ''}`;
+}
+
 /** Org settings: plan, usage vs. limits, LLM spend, upgrade/cancel. Prices come from the API. */
 export function BillingPage() {
   const queryClient = useQueryClient();
@@ -88,6 +101,11 @@ export function BillingPage() {
   const checkout = useMutation({
     mutationFn: (planId: string) => ok(client.POST('/api/billing/checkout', { body: { planId } })),
     onMutate: (planId) => track('billing_checkout_started', { plan: planId }),
+    onSuccess: ({ url }) => go(url),
+    onError: (err) => toast.error(err.message),
+  });
+  const topUp = useMutation({
+    mutationFn: () => ok(client.POST('/api/billing/credits/checkout')),
     onSuccess: ({ url }) => go(url),
     onError: (err) => toast.error(err.message),
   });
@@ -147,9 +165,13 @@ export function BillingPage() {
 
       {b.status === 'past_due' && (
         <Alert variant="destructive">
-          <AlertTitle>Payment failed</AlertTitle>
+          <AlertTitle>
+            {b.provider === 'manual' ? 'Contract period ended' : 'Payment failed'}
+          </AlertTitle>
           <AlertDescription>
-            The last renewal did not go through. Update the payment method to keep the plan.
+            {b.provider === 'manual'
+              ? 'The contract has not been renewed yet. Contact us to keep the plan.'
+              : 'The last renewal did not go through. Update the payment method to keep the plan.'}
           </AlertDescription>
         </Alert>
       )}
@@ -179,10 +201,16 @@ export function BillingPage() {
           </CardDescription>
           {b.canManage && paid && (
             <CardAction className="flex gap-2">
-              <Button variant="outline" onClick={() => portal.mutate()} disabled={portal.isPending}>
-                Invoices and payment method <ExternalLink className="size-4" />
-              </Button>
-              {!b.cancelAtPeriodEnd && (
+              {b.selfService.portal && (
+                <Button
+                  variant="outline"
+                  onClick={() => portal.mutate()}
+                  disabled={portal.isPending}
+                >
+                  Invoices and payment method <ExternalLink className="size-4" />
+                </Button>
+              )}
+              {b.selfService.cancel && !b.cancelAtPeriodEnd && (
                 <Button variant="ghost" onClick={() => setConfirmCancel(true)}>
                   Cancel plan
                 </Button>
@@ -203,6 +231,20 @@ export function BillingPage() {
             limit={b.usage.projects.limit}
             text={`${b.usage.projects.used} of ${b.usage.projects.limit}`}
           />
+          {b.credits && (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span>
+                Prepaid credit:{' '}
+                {b.credits.balance === null ? 'unavailable' : money(b.credits.balance, b.currency)}
+              </span>
+              {b.canManage && (
+                <Button variant="outline" onClick={() => topUp.mutate()} disabled={topUp.isPending}>
+                  Buy {b.credits.pack.credits} credits for{' '}
+                  {money(b.credits.pack.amount, b.currency)}
+                </Button>
+              )}
+            </div>
+          )}
           {b.llmSpend.map((s) => (
             <div key={s.currency} className="space-y-2">
               <Meter
@@ -213,7 +255,9 @@ export function BillingPage() {
               />
               {s.level === 'warning' && (
                 <p className="text-sm text-amber-700 dark:text-amber-400">
-                  Over 80% of the limit: AI features stop when it is reached.
+                  {b.payg
+                    ? 'Near or over the monthly estimate: usage is billed; set your own limit to cap it.'
+                    : 'Over 80% of the limit: AI features stop when it is reached.'}
                 </p>
               )}
               {b.canManage && b.features.llmLimitRaise && (
@@ -248,9 +292,7 @@ export function BillingPage() {
           <Card key={p.id} className={cn(p.id === b.planId && 'border-primary')}>
             <CardHeader>
               <CardTitle>{p.name}</CardTitle>
-              <CardDescription>
-                {p.price ? `${money(p.price.amount, b.currency)} per ${p.price.interval}` : 'Free'}
-              </CardDescription>
+              <CardDescription>{priceText(p, b.currency)}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 text-sm">
               <ul className="space-y-1 text-muted-foreground">
@@ -263,7 +305,7 @@ export function BillingPage() {
               {p.id === b.planId ? (
                 <Badge variant="secondary">Current plan</Badge>
               ) : (
-                p.price &&
+                p.checkout &&
                 b.canManage &&
                 !paid && (
                   <Button onClick={() => checkout.mutate(p.id)} disabled={checkout.isPending}>

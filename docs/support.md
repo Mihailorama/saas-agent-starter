@@ -1,7 +1,8 @@
 # Service desk (Chatwoot)
 
 Users ask questions, report problems and suggest improvements in one place: the **Help** menu in
-the app, plus email and Telegram. Tickets live in [Chatwoot](https://github.com/chatwoot/chatwoot)
+the app, plus email and Telegram. For Telegram only, without Chatwoot, see
+[Lite: Telegram only](#lite-telegram-only). Tickets live in [Chatwoot](https://github.com/chatwoot/chatwoot)
 (MIT core, self-hosted), backlog items live in the tracker (Plane by default, new items in the
 project's Intake; GitHub Issues as an optional alternative). This repo keeps no ticket table, event journal or link table. The link
 between a conversation and an issue lives in the two tools themselves: the conversation URL is
@@ -298,6 +299,109 @@ written by its own token's user (`users/me`, looked up once), so give the releas
 same `PLANE_API_TOKEN`; a person typing "Released in v9" changes nothing. With
 `SUPPORT_NOTIFY_ON_CLOSE=release` the customer message waits for that comment
 instead of the close.
+
+## Lite: Telegram only
+
+A support bot users message in Telegram, with the team answering from a Telegram group: no
+Chatwoot, no extra containers. Built into the API and the worker, behind the flag
+`telegram-support` (default off).
+
+**Which one.** Lite when Telegram is where your users are (markets where it is the main
+messenger), a few people answer and the team lives in Telegram anyway. Chatwoot when you need more
+than one channel (widget, email), assignment, SLAs, canned answers, reports or the AI triage note,
+or when agents should not work from a messenger. Outgrowing lite = connecting the bot to a
+Chatwoot Telegram inbox ("Channels" above, `TELEGRAM_SUPPORT_*` unset); the tracker and the return
+path stay the same.
+
+```
+user ──> bot (private chat) ──webhook──> POST /api/hooks/telegram ──signal──> TelegramChatWorkflow
+          (X-Telegram-Bot-Api-Secret-Token, constant time)                    (id telegram-chat-<chat>-<thread>)
+worker: one forum topic per Telegram user in the team's supergroup, created on first contact;
+  user's message copied into it (copyMessage: text, photos, files, voice), 👍 reaction on it,
+  an acknowledgement on first contact (TEXTS in worker/telegram.py, by the user's language)
+team reply in the topic ──> same webhook ──> copied to the user's private chat
+/bug <title> or /feature <title> in a topic ──> tracker item (support-bug / support-feature-request)
+```
+
+- **Order and retries**: one workflow per private chat and one per topic, started or signalled
+  per message (signal-with-start); it relays its messages one at a time, in order, drops message
+  ids it has already seen (Telegram redelivers when an answer is slow), ends after an idle hour and
+  continues as new every 100 messages. The webhook is registered with `max_connections: 1`, so
+  Telegram sends updates one after another. Each step of a message (copy, reaction,
+  acknowledgement, note) is its own activity: a retry repeats only the failed step. A 429 waits
+  Telegram's `retry_after`; steps keep retrying for up to an hour, other 4xx are not retried.
+- **Storage**: `telegram_support_users` (Telegram user id, group id, topic id, linked app user id)
+  and `telegram_support_links` (signatures of used deep links). Messages are not stored by us: they
+  stay in Telegram. Workflow arguments carry ids only: message ids, the app user id of a verified
+  link, and for `/bug` the S3 key of the title (`tracker-inbox/`, deleted after filing, leftovers
+  purged daily).
+- **Account link**: Help -> Telegram in the app fetches a fresh payload from
+  `GET /api/support/telegram` on each click and opens `t.me/<bot>?start=<payload>`. The payload is
+  `<expiry>_<signature>_<user id>`, signed with a key derived from the bot token, valid for **10
+  minutes and once**: the API verifies it when `/start` arrives and stores its signature, so a
+  replayed or forwarded link is refused. The user gets "Done: this chat is now linked to your
+  account j\*\*\*@example.com" (masked email: they see at once if it is not theirs), or "expired or
+  already used"; the team gets "Linked to app user ... (organizations: ...)" in the topic. Without
+  a link the user is anonymous to the team (their Telegram name and id are in the topic title).
+- **Team commands** in a topic: `/bug <title>` and `/feature <title>` file a tracker item with the
+  Chatwoot triage's producers (`config/tracker.json`), or add "+1" to the open item with that exact
+  title (not when that item already links this topic: no "+1" on its own item). The title is
+  redacted once, in the API (`redact()`: Presidio with the `pii` sidecar, else emails only;
+  "Personal data" below); the item carries the topic link, never the user's messages. The bot
+  answers in the topic with the link (or "dry run" without tracker credentials). Other commands
+  are not relayed: the team can talk in the topic with `/note ...` and similar.
+- **Return path**: `SupportIssueClosedWorkflow` also finds topic links (`https://t.me/c/<group>/<topic>`)
+  in the item and notes the outcome in each topic; with `SUPPORT_NOTIFY_ON_CLOSE` the user gets
+  `RESOLVED_MESSAGE` in Telegram too.
+- **Rate limit**: 5 messages per minute per Telegram user (the API's Redis rate-limit store).
+  Over it, messages are dropped with a 200 answer, so Telegram does not redeliver them.
+- A deleted topic is recreated on the user's next message, a closed one is reopened; a reply the
+  user cannot receive (they blocked the bot) gets a "Not delivered" note in the topic.
+
+### Set up
+
+1. [@BotFather](https://t.me/BotFather): `/newbot`, keep the token. `/setprivacy` -> Disable is
+   not needed (the bot is an admin, admins get every message).
+2. Create a group, Settings -> **Topics** on (it becomes a forum supergroup). Add the team.
+   **The group is the trust boundary**: everyone in it reads every user's messages and can answer
+   as the bot. Keep it private (Group type: Private), revoke every invite link (Invite links ->
+   revoke, add people by hand), and leave _Remain anonymous_ off for every admin: replies from
+   anonymous admins come from Telegram's stand-in bot and are not relayed.
+3. Add the bot as **administrator** with _Manage topics_ (needed for `createForumTopic` and to
+   reopen closed topics).
+4. Chat id: send a message in the group, then
+   `curl -s https://api.telegram.org/bot<token>/getUpdates` (before the webhook is set) and take
+   `message.chat.id` (`-100...`).
+5. Configure and roll out:
+
+```sh
+TELEGRAM_SUPPORT_BOT_TOKEN=<token>                 # API + worker
+TELEGRAM_SUPPORT_CHAT_ID=-1001234567890            # API + worker
+TELEGRAM_SUPPORT_WEBHOOK_URL=https://app.example.com/api/hooks/telegram   # worker
+VITE_TELEGRAM_SUPPORT_BOT=example_support_bot      # web, build time: the Help menu entry
+pnpm flags:sync   # then turn `telegram-support` on in PostHog (or FLAGS_ON / VITE_FLAGS_ON)
+```
+
+The worker registers the webhook at start (`setWebhook` with `secret_token` = HMAC of the token,
+`allowed_updates: ["message"]`, `max_connections: 1`) while the flag is on; the API checks that header and answers 404
+while the flag is off. The flag is one switch for the bot (no per-user rollout: Telegram would
+redeliver what a user outside the rollout sends). The webhook URL must be public HTTPS (ports 443,
+80, 88 or 8443). To test locally, point a tunnel at the API and set the URL to it.
+
+### Limits
+
+- Telegram lets a bot send at most 20 messages per minute into one group (Bot FAQ). Every user
+  message is one copy into the support group, plus notes: beyond roughly 20 incoming messages a
+  minute the copies get 429s and wait (`retry_after`, up to an hour per step, then the step is
+  dropped). Sustained traffic like that is the point to move to Chatwoot.
+- A copy that succeeds just before its activity times out is retried and arrives twice (rare;
+  at-least-once delivery).
+- Edited messages and reactions are not relayed (the webhook subscribes to `message` only).
+  Messages Telegram cannot copy (polls with hidden answers, paid media, service messages) are not
+  relayed.
+- No assignment, statuses, search or reports beyond what Telegram offers (topic open/closed, pins).
+- Telegram is the processor of all support content: the residency notes below apply to it, and
+  there is no self-hosted variant.
 
 ## Personal data
 

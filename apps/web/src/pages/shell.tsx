@@ -29,6 +29,7 @@ import {
   Plug,
   Plus,
   ScrollText,
+  Send,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -65,7 +66,13 @@ import { authClient } from '@/lib/auth';
 import { bookingUrl, onBookingClick } from '@/lib/booking';
 import { useFlag } from '@/lib/flags';
 import { startTour, stored, tourKey } from '@/lib/onboarding';
-import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
+import {
+  openSupport,
+  resetSupport,
+  supportEnabled,
+  telegramConfigured,
+  telegramLink,
+} from '@/lib/support';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
 
 /** API error text for members of a suspended organization (apps/api/src/operator-guard.ts). */
@@ -228,10 +235,23 @@ function UserMenu() {
 }
 
 /** The one entry point for questions, problem reports and ideas (Chatwoot, docs/support.md). */
-function HelpMenu() {
+function HelpMenu({ telegram }: { telegram: boolean }) {
   const { data: active } = authClient.useActiveOrganization();
   const open = (kind: Parameters<typeof openSupport>[0]) => () =>
     openSupport(kind, active?.id).catch(() => toast.error('Help is unavailable right now'));
+  // A fresh single-use link per click. The tab opens first (inside the click, so no popup
+  // blocker stops it) and navigates once the API has signed the link.
+  const openTelegram = () => {
+    track('support_opened', { kind: 'telegram' });
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+    telegramLink()
+      .then((url) => (tab ? tab.location.assign(url) : window.location.assign(url)))
+      .catch(() => {
+        tab?.close();
+        toast.error('Help is unavailable right now');
+      });
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -240,15 +260,24 @@ function HelpMenu() {
         </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60" align="start" side="top">
-        <DropdownMenuItem onSelect={open('question')}>
-          <MessageCircle className="size-4" /> Ask a question
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={open('bug')}>
-          <Bug className="size-4" /> Report a problem
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={open('feature_request')}>
-          <Lightbulb className="size-4" /> Suggest an improvement
-        </DropdownMenuItem>
+        {supportEnabled && (
+          <>
+            <DropdownMenuItem onSelect={open('question')}>
+              <MessageCircle className="size-4" /> Ask a question
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={open('bug')}>
+              <Bug className="size-4" /> Report a problem
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={open('feature_request')}>
+              <Lightbulb className="size-4" /> Suggest an improvement
+            </DropdownMenuItem>
+          </>
+        )}
+        {telegram && (
+          <DropdownMenuItem onSelect={openTelegram}>
+            <Send className="size-4" /> Telegram
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -350,6 +379,8 @@ export function Shell() {
   const referrals = useFlag('referrals');
   // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
   const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
+  // Lite Telegram support: rolled out (flag) and the bot's username set (docs/support.md).
+  const telegram = useFlag('telegram-support') && telegramConfigured;
   // Product tour (docs/onboarding.md): once per user and browser, on the projects page.
   const onboarding = useFlag('onboarding') && !viewedBy && Boolean(orgs?.length) && !mustEnrol;
   const onProjects = useLocation({ select: (l) => l.pathname === '/' });
@@ -454,9 +485,9 @@ export function Shell() {
               <TalkToUs />
             </SidebarMenuItem>
           )}
-          {supportEnabled && !viewedBy && (
+          {(supportEnabled || telegram) && !viewedBy && (
             <SidebarMenuItem>
-              <HelpMenu />
+              <HelpMenu telegram={telegram} />
             </SidebarMenuItem>
           )}
           <SidebarMenuItem>

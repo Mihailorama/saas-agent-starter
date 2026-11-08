@@ -127,6 +127,13 @@ const schema = z
     /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
     PLANE_WEBHOOK_SECRET: z.string().optional(),
     PLANE_PROJECT_ID: z.string().optional(),
+    /**
+     * Lite Telegram support (docs/support.md "Lite: Telegram only", flag `telegram-support`). The
+     * bot token also derives the webhook secret and the deep-link signing key (worker: the same).
+     */
+    TELEGRAM_SUPPORT_BOT_TOKEN: z.string().optional(),
+    /** The forum supergroup the team answers in, e.g. -1001234567890. */
+    TELEGRAM_SUPPORT_CHAT_ID: z.string().optional(),
     /** Secret of the Cal.com webhook (booking -> CRM activity, docs/crm.md); empty = off (401). */
     BOOKING_WEBHOOK_SECRET: z.string().optional(),
     // Operator console (docs/admin.md). Empty list = no operators, /api/admin answers 403.

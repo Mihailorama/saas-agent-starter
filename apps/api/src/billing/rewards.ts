@@ -6,18 +6,12 @@ import { db } from '../db.ts';
 import { isEnabled } from '../flags.ts';
 import { startReward } from '../temporal.ts';
 import type { Subscription } from './entitlements.ts';
+import { minorUnits } from './money.ts';
 import type { BillingProvider } from './provider.ts';
 import { providerFor } from './registry.ts';
 
 /** config/rewards.json (docs/growth.md). Also read by the worker (worker/rewards.py). */
 const Currency = z.string().regex(/^[A-Z]{3}$/);
-/** ponytail: amounts are two-decimal; these currencies have 0 or 3 minor digits and are refused
- * until a minor-unit map is shared with billing. */
-const NOT_TWO_DECIMAL = new Set(
-  'BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX VND VUV XAF XOF XPF BHD IQD JOD KWD LYD OMR TND'.split(
-    ' ',
-  ),
-);
 const Entitlement = z
   .object({
     kind: z.literal('entitlement'),
@@ -31,11 +25,15 @@ const Entitlement = z
     message: 'currency is set exactly on llmSpendMonthly entitlements',
   });
 const Reward = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('balance_credit'),
-    amount: z.string().regex(/^\d+\.\d{2}$/),
-    currency: Currency.refine((c) => !NOT_TWO_DECIMAL.has(c), 'two-decimal currencies only'),
-  }),
+  z
+    .object({
+      kind: z.literal('balance_credit'),
+      amount: z.string().regex(/^\d+(\.\d+)?$/),
+      currency: Currency,
+    })
+    .refine((m) => (m.amount.split('.')[1]?.length ?? 0) === minorUnits(m.currency), {
+      message: "amount has the currency's minor-unit digits (money.ts): 5.00 USD, 500 JPY",
+    }),
   z.object({ kind: z.literal('coupon'), couponId: z.string().min(1) }),
   Entitlement,
 ]);
