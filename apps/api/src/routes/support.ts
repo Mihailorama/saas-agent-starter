@@ -4,7 +4,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
 import { env } from '../env.ts';
-import { startSupportIssueClosed, startSupportTriage } from '../temporal.ts';
+import { startCrmSync, startSupportIssueClosed, startSupportTriage } from '../temporal.ts';
 
 /**
  * Service desk glue (docs/support.md, ADR 0013). Tickets live in Chatwoot, backlog items in the
@@ -12,14 +12,14 @@ import { startSupportIssueClosed, startSupportTriage } from '../temporal.ts';
  * does the triage and the notes), and one endpoint signs the widget identity of a logged-in user.
  */
 
-const hmacHex = (key: string, data: string | Buffer) =>
+export const hmacHex = (key: string, data: string | Buffer) =>
   createHmac('sha256', key).update(data).digest('hex');
-const sameString = (a: string, b: string) => {
+export const sameString = (a: string, b: string) => {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 };
-const header = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '');
+export const header = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '');
 
 /** Chatwoot: `X-Chatwoot-Signature: sha256=hex(HMAC(secret, "<timestamp>.<raw body>"))`. */
 export function chatwootSigned(
@@ -45,6 +45,7 @@ export const planeSigned = (raw: Buffer, signature: string) =>
 
 const ChatwootEvent = z.object({
   event: z.string(),
+  id: z.number().int().optional(), // conversation_created: the conversation's display id
   message_type: z.string().optional(),
   private: z.boolean().optional(),
   account: z.object({ id: z.number().int() }).optional(),
@@ -94,16 +95,18 @@ const PlaneEvent = z.object({
 });
 const Result = z.object({ action: z.enum(['ignored', 'started', 'duplicate']) });
 const ErrorBody = z.object({ error: z.string() });
-const hookResponses = { 200: Result, 401: ErrorBody };
+export const hookResponses = { 200: Result, 401: ErrorBody };
 
 /** Label the worker puts on every tracker item it creates or +1s (docs/support.md). */
 export const SUPPORT_LABEL = 'support';
 
 const rawBodies = new WeakMap<object, Buffer>();
 
-/** POST /api/hooks/{chatwoot,github,plane}. Encapsulated: its raw-body JSON parser stays here. */
-export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
-  // Signatures are over the exact bytes received, so keep them next to the parsed body.
+/**
+ * Replaces the JSON parser of an encapsulated plugin with one that keeps the exact bytes, since
+ * signatures are over those. Returns the lookup for a request's raw body.
+ */
+export function keepRawJson(app: Parameters<FastifyPluginAsyncZod>[0]) {
   app.removeContentTypeParser('application/json');
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (req, body, done) => {
     rawBodies.set(req, body as Buffer);
@@ -113,7 +116,12 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
       done(Object.assign(new Error('invalid JSON'), { statusCode: 400 }), undefined);
     }
   });
-  const raw = (req: object) => rawBodies.get(req) ?? Buffer.alloc(0);
+  return (req: object) => rawBodies.get(req) ?? Buffer.alloc(0);
+}
+
+/** POST /api/hooks/{chatwoot,github,plane}. Encapsulated: its raw-body JSON parser stays here. */
+export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
+  const raw = keepRawJson(app);
   const limits = { rateLimit: { max: 120, timeWindow: '1 minute' } };
 
   app.post(
@@ -127,6 +135,16 @@ export const supportHookRoutes: FastifyPluginAsyncZod = async (app) => {
       );
       if (!ok) return reply.code(401).send({ error: 'unauthorized' });
       const e = req.body;
+      // A new conversation is an activity on the person in the CRM (docs/crm.md).
+      if (e.event === 'conversation_created' && e.account && e.id) {
+        const started = await startCrmSync({
+          kind: 'support.conversation',
+          eventId: `chatwoot:${e.account.id}:${e.id}`,
+          accountId: e.account.id,
+          conversationId: e.id,
+        });
+        return { action: started ? ('started' as const) : ('duplicate' as const) };
+      }
       // Only a customer's message starts a triage; agent replies and private notes do not.
       if (e.event !== 'message_created' || e.message_type !== 'incoming' || e.private) {
         return { action: 'ignored' as const };

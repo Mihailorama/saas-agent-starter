@@ -58,7 +58,27 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await expect(page.locator('#cc-main')).toHaveCount(0);
   // No Chatwoot configured: no Help entry and no widget request (docs/support.md).
   await expect(page.getByRole('button', { name: 'Help' })).toHaveCount(0);
+  // Booking is configured in this build but its flag is off: no "Talk to us" (next test).
+  await expect(page.getByRole('link', { name: 'Talk to us' })).toHaveCount(0);
   expect([...hosts]).toEqual(['localhost']);
+});
+
+// "Talk to us" (docs/crm.md) with the `booking` flag on: the build on PLAYWRIGHT_BOOKING_PORT
+// (playwright.config.ts); the flag-off path is the default build above.
+test('booking flag on: "Talk to us" links to the booking page', async ({ page }) => {
+  await signUp(page, `${randomUUID()}@example.com`);
+  await page.getByLabel('Organization name').fill('Analytical Engines');
+  await page.getByRole('button', { name: 'Create organization' }).click();
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+
+  // Same session on the other build: cookies are per host, not per port.
+  await page.goto(`http://localhost:${process.env.PLAYWRIGHT_BOOKING_PORT ?? '5175'}/`);
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible({
+    timeout: 15_000, // first page of this dev server
+  });
+  const link = page.getByRole('link', { name: 'Talk to us' }).first();
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute('href', 'https://cal.example.com/acme/demo');
 });
 
 test('forgotten password: reset through the mailed link', async ({ page, context }) => {

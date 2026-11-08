@@ -10,6 +10,7 @@ import {
 import {
   Bug,
   Building2,
+  CalendarClock,
   Check,
   ChevronsUpDown,
   Cookie,
@@ -57,6 +58,7 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui
 import { Skeleton } from '@/components/ui/skeleton';
 import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
+import { bookingUrl, onBookingClick } from '@/lib/booking';
 import { useFlag } from '@/lib/flags';
 import { openSupport, resetSupport, supportEnabled } from '@/lib/support';
 import { policyQuery, TWO_FACTOR_REQUIRED } from '@/pages/security';
@@ -274,6 +276,24 @@ function ImpersonationBanner({ name, email, until }: { name: string; email: stri
   );
 }
 
+/** Books a call with the team (Cal.diy / Cal.com, docs/crm.md); prefilled with the user. */
+function TalkToUs() {
+  const { data: session } = authClient.useSession();
+  const user = session?.user;
+  return (
+    <SidebarMenuButton asChild>
+      <a
+        href={bookingUrl}
+        target="_blank"
+        rel="noopener"
+        onClick={(e) => onBookingClick(e, 'app', { name: user?.name, email: user?.email })}
+      >
+        <CalendarClock /> <span>Talk to us</span>
+      </a>
+    </SidebarMenuButton>
+  );
+}
+
 /** What members of a suspended organization see instead of its pages. */
 function SuspendedNotice() {
   return (
@@ -309,6 +329,8 @@ export function Shell() {
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const byoProviders = useFlag('byo-llm-providers');
+  // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
+  const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
 
   const banner = viewedBy && session && (
     <ImpersonationBanner
@@ -392,6 +414,11 @@ export function Shell() {
       }
       sidebarFooter={
         <SidebarMenu>
+          {booking && (
+            <SidebarMenuItem>
+              <TalkToUs />
+            </SidebarMenuItem>
+          )}
           {supportEnabled && !viewedBy && (
             <SidebarMenuItem>
               <HelpMenu />

@@ -37,6 +37,8 @@ on an image that is not. Their primary software licenses:
 | `saas-agent-starter-postgres`          | Postgres 17 + pgvector extension (built)           | PostgreSQL                  |
 | `ghcr.io/gitroomhq/postiz-app`         | social post scheduling (`marketing` profile)       | AGPL-3.0                    |
 | `towfiqi/serpbear`                     | keyword rank tracking (`marketing` profile)        | MIT                         |
+| `twentycrm/twenty`                     | CRM: people, companies, deals (`crm` profile)      | AGPL-3.0 + app exception    |
+| `caldiy` (built from calcom/cal.diy)   | booking: "Book a demo" (`booking` profile)         | MIT                         |
 | `stripe/stripe-mock`                   | Stripe API mock for tests/dev (`billing` profile)  | MIT                         |
 | `vllm/vllm-openai`                     | self-hosted models, GPU (`local-llm` profile)      | Apache-2.0                  |
 | `vllm/vllm-openai-cpu`                 | self-hosted models, CPU smoke (`local-llm-cpu`)    | Apache-2.0                  |
@@ -202,6 +204,29 @@ Notes:
   - External services, not shipped software: Google Search Console, Bing Webmaster Tools /
     IndexNow, the social networks Postiz posts to, the SERP scraper SerpBear is configured with.
 
+- CRM and booking ([docs/crm.md](crm.md), [ADR 0026](adr/0026-crm-and-booking.md)), checked
+  2026-11-07:
+  - `twentycrm/twenty` (Twenty v2.56.1, server and worker from one image): its
+    [LICENSE](https://github.com/twentyhq/twenty/blob/main/LICENSE) is AGPL-3.0 for most of the
+    code, a commercial license for files marked `/* @license Enterprise */`, and MIT for its SDK
+    packages; it adds an AGPLv3 section 7 "Twenty Application Exception": an application that
+    talks to Twenty only through its published APIs and webhooks is not governed by the AGPL. The
+    worker does exactly that (REST). Run unmodified, not distributed with the app; the permissive
+    twin disables it. Its `twenty-db` one-shot reuses the `postgres` image.
+  - `caldiy` (Cal.diy, `booking` profile): Cal.com is closed source since 2026-04-14
+    ([announcement](https://cal.com/blog/cal-com-goes-closed-source-why)); its open-source
+    successor Cal.diy is MIT. Verified at the pinned commit `2eb48ecc` (infra/caldiy/build.sh):
+    the root [LICENSE](https://github.com/calcom/cal.diy/blob/main/LICENSE) is MIT ("Copyright (c)
+    2020-present Cal.com, Inc."), and so is every other LICENSE file in the tree
+    (`apps/api/v2/src/platform`, `packages/app-store/hitpay`, `packages/app-store/stripepayment`,
+    `packages/embeds/*`); there is no `ee/` directory and no license key. Upstream publishes no
+    image, so CI builds it from that commit with upstream's own Dockerfile (on `node:22`, Debian)
+    and pushes it with our release; we change no source. The image is an infrastructure container
+    like the others, not distributed with the app; its npm dependencies are upstream's and are
+    not part of our code gate (Trivy scans the image for vulnerabilities). The last
+    `calcom/cal.com` image, v6.2.0 (2026-03-02, AGPL-3.0 with a commercial `ee/`), is unmaintained
+    and not used. Cal.com Cloud, the documented alternative, is an external service. The web and
+    the site load the booking host's `embed.js` by URL after consent: no npm dependency.
 - UI kit ([docs/ui.md](ui.md), [ADR 0023](adr/0023-ui-kit-and-checks.md)); code dependencies,
   checked by the gate: `radix-ui` (MIT; the shadcn/ui primitives, replacing the separate
   `@radix-ui/react-*` packages), `react-hook-form` and `@hookform/resolvers` (MIT), `zod` (MIT),
@@ -249,14 +274,15 @@ docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observ
 # or once: COMPOSE_FILE=docker-compose.yml:compose.permissive.yaml in .env
 ```
 
-| Component            | Default (license)                          | Permissive twin (license)                                                                 | What you lose                                                                                                                                                                                          |
-| -------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Rate-limit store     | Redis 8 (RSALv2/SSPLv1/AGPLv3)             | Valkey 9 (BSD-3-Clause), same protocol and `REDIS_URL`                                    | Nothing the app uses. Redis-only modules/features (e.g. Redis Query Engine) are not in Valkey.                                                                                                         |
-| Logs                 | Loki (AGPL-3.0)                            | none: `docker compose logs`, or ship the collector's logs to any OTLP backend you license | Central log search, log-to-trace links, log retention. The collector still runs; its Loki log pipeline is dropped.                                                                                     |
-| Dashboards/alerts UI | Grafana (AGPL-3.0)                         | Prometheus UI (graphs, `/alerts`) + Jaeger UI (traces), both Apache-2.0                   | Provisioned dashboards, one pane across logs/metrics/traces, Grafana alerting UI. Alert rules still evaluate in Prometheus (`infra/otel/alerts.yml`); add Alertmanager (Apache-2.0) for notifications. |
-| Error tracking       | GlitchTip (MIT), already permissive        | (Sentry SaaS / self-hosted is FSL: a bigger, not a more permissive, option)               | n/a                                                                                                                                                                                                    |
-| Object storage       | SeaweedFS (Apache-2.0), already permissive | n/a                                                                                       | n/a                                                                                                                                                                                                    |
-| Social posting       | Postiz (AGPL-3.0, `marketing` profile)     | none in compose: post natively, or run Mixpost Lite (MIT, Laravel + MySQL) separately     | One calendar for every network, scheduling, team approval. SerpBear (MIT) and the site are unaffected.                                                                                                 |
+| Component            | Default (license)                          | Permissive twin (license)                                                                    | What you lose                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Rate-limit store     | Redis 8 (RSALv2/SSPLv1/AGPLv3)             | Valkey 9 (BSD-3-Clause), same protocol and `REDIS_URL`                                       | Nothing the app uses. Redis-only modules/features (e.g. Redis Query Engine) are not in Valkey.                                                                                                         |
+| Logs                 | Loki (AGPL-3.0)                            | none: `docker compose logs`, or ship the collector's logs to any OTLP backend you license    | Central log search, log-to-trace links, log retention. The collector still runs; its Loki log pipeline is dropped.                                                                                     |
+| Dashboards/alerts UI | Grafana (AGPL-3.0)                         | Prometheus UI (graphs, `/alerts`) + Jaeger UI (traces), both Apache-2.0                      | Provisioned dashboards, one pane across logs/metrics/traces, Grafana alerting UI. Alert rules still evaluate in Prometheus (`infra/otel/alerts.yml`); add Alertmanager (Apache-2.0) for notifications. |
+| Error tracking       | GlitchTip (MIT), already permissive        | (Sentry SaaS / self-hosted is FSL: a bigger, not a more permissive, option)                  | n/a                                                                                                                                                                                                    |
+| Object storage       | SeaweedFS (Apache-2.0), already permissive | n/a                                                                                          | n/a                                                                                                                                                                                                    |
+| Social posting       | Postiz (AGPL-3.0, `marketing` profile)     | none in compose: post natively, or run Mixpost Lite (MIT, Laravel + MySQL) separately        | One calendar for every network, scheduling, team approval. SerpBear (MIT) and the site are unaffected.                                                                                                 |
+| CRM                  | Twenty (AGPL-3.0, `crm` profile)           | none in compose: a SaaS CRM behind the same `Crm` class, or Krayin (MIT, Laravel) separately | Customer records in the stack. The sync dry-runs until another CRM is wired in (docs/crm.md "Swapping the CRM").                                                                                       |
 
 SBOMs and notices for a delivery: `pnpm run sbom` writes one CycloneDX SBOM per image (both
 twins, all profiles) and `THIRD_PARTY_NOTICES.md` to `dist/sbom/` (also a CI artifact on

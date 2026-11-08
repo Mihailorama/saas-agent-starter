@@ -47,7 +47,9 @@ no longer identifies anyone through our systems.
 ### Object storage (S3)
 
 - `S3_BUCKET` (`attachments`): uploads under `<org>/<project>/<attachment>`, data exports under
-  `privacy-exports/<request>.zip`.
+  `privacy-exports/<request>.zip`, booking webhooks (attendee name and email) under
+  `crm-bookings/<day>/<hash>.json` until the CRM sync has used them (at most
+  `BOOKING_PAYLOAD_DAYS`, default 7).
 - `AI_CONTENT_BUCKET` (`ai-calls`): LLM request/response JSON under
   `<org>/<yyyy>/<mm>/<dd>/<call>/{request,response}.json` (ADR 0008).
 
@@ -122,9 +124,27 @@ on the deployment (its settings are empty); it is still listed in the report.
 | GA4                | events under a browser client id (no user id is sent)                                                                           | not supported: no per-user export API (raw events only through a BigQuery export)                                              | Admin API `POST /v1alpha/properties/:id:submitUserDeletion` `{clientId}` for the browser the deletion was requested from (gtag `client_id`, else the `_ga` cookie); other browsers stay    | `GA4_PROPERTY_ID`, `GA4_SERVICE_ACCOUNT_JSON`                        |
 | GlitchTip / Sentry | nothing: events are scrubbed of user, request and extra data                                                                    | not needed (nothing per person); Sentry could filter by `user.id`, but we never send one                                       | not supported by the APIs (issue-level deletion only); retention: GlitchTip `GLITCHTIP_RETENTION_DAYS` (`GLITCHTIP_MAX_EVENT_LIFE_DAYS` before 7.0), default 90; Sentry 30/90 days by plan | -                                                                    |
 | Umami              | nothing linkable: cookieless, sessions are hashes with a monthly salt, no `umami.identify`                                      | not applicable                                                                                                                 | not applicable (`DELETE /api/websites/:id/sessions/:id` exists, but no session maps to a user)                                                                                             | -                                                                    |
+| Twenty (CRM)       | person (`appUserId` = user id, name, email), company + deal (`appOrgId`), notes the sync wrote (`appEventId`)                   | REST `GET /rest/people?filter=appUserId[eq]:...` (org: companies, opportunities by `appOrgId`), their note targets and notes   | REST `DELETE /rest/<object>/:id?soft_delete=false`: Twenty's destroy, a hard delete (the UI's "Delete" is soft); notes the sync wrote first, then deal, person or company                  | `TWENTY_API_URL`, `TWENTY_API_KEY` (same as the sync)                |
 
-Organization deletion calls Langfuse (the traces of all the organization's AI calls); PostHog,
-Chatwoot and GA4 hold data per person, so each member's own deletion removes theirs.
+**Twenty** ([docs/crm.md](crm.md)): what stays after a deletion is what people wrote in the CRM
+themselves. Notes a salesperson added on the person (no `appEventId`) are not deleted, they lose
+their link to the destroyed person; Twenty's own record history (timeline activities, audit logs
+of edits) was not checked and may still name the person. A person matched by a typed email only
+(a booking or an unverified chat, no `appUserId`) is a lead, not one of our users, and is not found
+by a user's deletion: delete it in Twenty if the request names that address.
+
+**Bookings** (Cal.diy, `booking` profile or connected, [docs/crm.md](crm.md#booking)): the
+attendee's name, email, answers and the booking live in Cal.diy's own database (on our Postgres
+server with the profile; with Cal.com Cloud, at Cal.com). Export and deletion do not reach it:
+Cal.diy has no API on its web container (API v2 is a separate server we do not run), so an
+operator exports or deletes the attendee's bookings in Cal.diy's UI (docs/TODO.md). Our side keeps
+the booking webhook only as a short-lived S3 object (`crm-bookings/<day>/...` in `S3_BUCKET`):
+the CRM sync deletes it after writing the note, the retention schedule whatever is older than
+`BOOKING_PAYLOAD_DAYS` (default 7).
+
+Organization deletion calls Langfuse (the traces of all the organization's AI calls) and Twenty
+(the company and its deal); PostHog, Chatwoot and GA4 hold data per person, so each member's own
+deletion removes theirs.
 
 Sources: [PostHog persons API](https://posthog.com/docs/api/persons),
 [PostHog data deletion](https://posthog.com/docs/privacy/data-storage),
@@ -136,19 +156,22 @@ Sources: [PostHog persons API](https://posthog.com/docs/api/persons),
 [GA4 submitUserDeletion](https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1alpha/properties/submitUserDeletion),
 [Sentry data retention](https://docs.sentry.io/security-legal-pii/security/data-retention-periods/),
 [GlitchTip install](https://glitchtip.com/documentation/install),
-[Umami delete session](https://docs.umami.is/docs/api-reference/delete-website-session).
+[Umami delete session](https://docs.umami.is/docs/api-reference/delete-website-session),
+Twenty's source at `twenty/v2.56.1` (`rest-api-core.service.ts`: `DELETE` without
+`soft_delete=true` destroys; `parse-soft-delete-rest-request.util.ts`).
 
 ## Retention
 
 The daily Temporal Schedule `privacy-retention` (`PrivacyRetentionWorkflow`, created by the
 worker on start; pause or edit it in the Temporal UI) enforces every recorded date:
 
-| What                           | Recorded in                                                      | Enforced by                                                       | What stays                      |
-| ------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------- |
-| AI request/response content    | `ai_calls.content_expires_at` (`AI_CONTENT_RETENTION_DAYS`, 180) | S3 objects deleted                                                | the `ai_calls` row (metadata)   |
-| Data export ZIPs               | `privacy_requests.expires_at` (`PRIVACY_EXPORT_TTL_DAYS`, 7)     | S3 object deleted, `result_key` cleared                           | the request row                 |
-| Deleted organizations' records | `privacy_requests.expires_at` (`PRIVACY_ORG_RECORDS_DAYS`, 180)  | organization row deleted, cascading to `ai_calls` and `audit_log` | the request row with its report |
-| Webhook events and attempts    | `created_at` + `WEBHOOK_RETENTION_DAYS` (30)                     | `webhook-maintenance` schedule (ADR 0018)                         | -                               |
+| What                           | Recorded in                                                          | Enforced by                                                       | What stays                      |
+| ------------------------------ | -------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------- |
+| AI request/response content    | `ai_calls.content_expires_at` (`AI_CONTENT_RETENTION_DAYS`, 180)     | S3 objects deleted                                                | the `ai_calls` row (metadata)   |
+| Data export ZIPs               | `privacy_requests.expires_at` (`PRIVACY_EXPORT_TTL_DAYS`, 7)         | S3 object deleted, `result_key` cleared                           | the request row                 |
+| Deleted organizations' records | `privacy_requests.expires_at` (`PRIVACY_ORG_RECORDS_DAYS`, 180)      | organization row deleted, cascading to `ai_calls` and `audit_log` | the request row with its report |
+| Webhook events and attempts    | `created_at` + `WEBHOOK_RETENTION_DAYS` (30)                         | `webhook-maintenance` schedule (ADR 0018)                         | -                               |
+| Booking webhook payloads       | the day in the key `crm-bookings/<day>/` (`BOOKING_PAYLOAD_DAYS`, 7) | S3 object deleted (the CRM sync deletes it right after use)       | the CRM note                    |
 
 Each run deletes AI content whose expiry passed since the previous successful run (its result is
 the watermark), so a call is visited once and a missed day is caught up on the next run.

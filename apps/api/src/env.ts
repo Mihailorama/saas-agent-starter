@@ -115,6 +115,8 @@ const schema = z
     /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
     PLANE_WEBHOOK_SECRET: z.string().optional(),
     PLANE_PROJECT_ID: z.string().optional(),
+    /** Secret of the Cal.com webhook (booking -> CRM activity, docs/crm.md); empty = off (401). */
+    BOOKING_WEBHOOK_SECRET: z.string().optional(),
     // Operator console (docs/admin.md). Empty list = no operators, /api/admin answers 403.
     /** Emails of operators (support staff), comma-separated; `pnpm operators:sync` applies it. */
     OPERATOR_EMAILS: list.transform((l) => l.map((e) => e.toLowerCase())),
@@ -145,9 +147,12 @@ const schema = z
   .refine(
     (e) =>
       e.NODE_ENV !== 'production' ||
-      ![e.CHATWOOT_WEBHOOK_SECRET, e.CHATWOOT_HMAC_TOKEN, e.GITHUB_WEBHOOK_SECRET].some((v) =>
-        v?.startsWith('local-dev'),
-      ),
+      ![
+        e.CHATWOOT_WEBHOOK_SECRET,
+        e.CHATWOOT_HMAC_TOKEN,
+        e.GITHUB_WEBHOOK_SECRET,
+        e.BOOKING_WEBHOOK_SECRET,
+      ].some((v) => v?.startsWith('local-dev')),
     { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   )
   .refine(

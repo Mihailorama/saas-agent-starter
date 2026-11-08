@@ -3,7 +3,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { env } from '../env.ts';
 import { putJson } from '../s3.ts';
-import { startTrackerItem } from '../temporal.ts';
+import { startCrmSync, startTrackerItem } from '../temporal.ts';
 
 /**
  * Alert-to-agent loop (docs/product-analytics.md): PostHog webhook destinations post here; the
@@ -11,15 +11,18 @@ import { startTrackerItem } from '../temporal.ts';
  * - `$insight_alert_firing` (a journey funnel fell below its threshold) -> producer `cjm-regression`
  * - `survey sent` from the "Report a problem" survey -> producer `from-users`
  * The item's text goes to S3 and only its key into the Temporal workflow (TrackerItemWorkflow).
+ * - a body with `signal` (CRM product signals, config/crm.json, `pnpm crm:sync`) -> CrmSyncWorkflow
  * Survey answers are redacted first: by the Presidio sidecar when PII_REDACT_URL is set (compose
  * profile `pii`, docs/support.md "Personal data"), otherwise only emails are masked.
  */
 const Hook = z.object({
   event: z.object({
+    uuid: z.string().optional(),
     event: z.string(),
     distinct_id: z.string().optional(),
     properties: z.record(z.string(), z.unknown()).default({}),
   }),
+  signal: z.string().max(64).optional(),
 });
 type Issue = { title: string; producer: 'cjm-regression' | 'from-users'; body: string };
 
@@ -139,9 +142,21 @@ export const hookRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!sameSecret(req.headers['x-webhook-secret'] as string | undefined)) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
+      const { event, signal } = req.body;
+      if (signal) {
+        // The worker decides whether the user's organizations qualify (members, plan).
+        if (!event.uuid || !event.distinct_id) return { action: 'ignored' };
+        const started = await startCrmSync({
+          kind: 'signal',
+          eventId: `posthog:${event.uuid}`,
+          userId: event.distinct_id,
+          signal,
+        });
+        return { action: started ? 'started' : 'duplicate' };
+      }
       let issue: Issue | undefined;
       try {
-        issue = await toIssue(req.body.event);
+        issue = await toIssue(event);
       } catch (err) {
         if (!(err instanceof RedactionUnavailable)) throw err;
         // Fail closed: no unredacted text goes anywhere. PostHog shows the failed delivery.

@@ -7,6 +7,7 @@
 // Rage/dead clicks, web vitals and exceptions come from PostHog autocapture, not from here.
 // Catalog, tiers and replacement criteria: docs/product-analytics.md.
 import catalog from '../../../../config/events.json';
+import flags from '../../../../config/flags.json';
 
 export type EventName = keyof typeof catalog.events;
 export type Props = Record<string, string | number | boolean>;
@@ -35,8 +36,17 @@ type Win = Window & {
 };
 const w = window as Win;
 
-/** True when a third-party sink is configured, i.e. the consent banner has something to ask. */
-const consentNeeded = Boolean(config.posthog.key || config.ga4 || config.ym.id);
+const analyticsNeedsConsent = Boolean(config.posthog.key || config.ga4 || config.ym.id);
+/** The booking embed (lib/booking.ts) loads a third party into the page: ask first, when it can
+ * show at all: configured, and its `booking` flag not off for everyone (same order as lib/flags). */
+const listed = (names: string | undefined) =>
+  (names ?? '').split(',').some((n) => n.trim() === 'booking');
+const bookingNeedsConsent =
+  Boolean(env.VITE_BOOKING_ORIGIN && env.VITE_BOOKING_LINK) &&
+  (listed(env.VITE_FLAGS_ON) ||
+    (!listed(env.VITE_FLAGS_OFF) && (flags.flags.booking.default || Boolean(config.posthog.key))));
+/** True when the consent banner has something to ask. */
+const consentNeeded = analyticsNeedsConsent || bookingNeedsConsent;
 // Regime per request: nginx writes the meta tag from CONSENT_MODE or the edge's country header
 // (docs/product-analytics.md#consent). Anything else, the Vite dev server included: opt-in.
 const consentMode =
@@ -51,6 +61,10 @@ export const privacyChoicesLabel = !consentNeeded
     : 'Cookie settings';
 export const showPrivacyChoices = async () =>
   (await import('vanilla-cookieconsent')).showPreferences();
+
+let consent: typeof import('vanilla-cookieconsent') | undefined;
+/** Whether the visitor allowed a consent category (false until the banner has loaded). */
+export const allowed = (category: 'booking') => consent?.acceptedCategory(category) ?? false;
 
 const firstParty: Sink[] = [];
 const thirdParty: Sink[] = [];
@@ -173,6 +187,7 @@ async function startConsent() {
     import('vanilla-cookieconsent'),
     import('vanilla-cookieconsent/dist/cookieconsent.css'),
   ]);
+  consent = cc;
   const apply = () => {
     if (cc.acceptedCategory('analytics')) void startThirdParty();
   };
@@ -192,6 +207,7 @@ async function startConsent() {
           reloadPage: true,
         },
       },
+      ...(bookingNeedsConsent && { booking: { enabled: consentMode === 'opt-out' } }),
     },
     onFirstConsent: answered,
     onChange: answered,
@@ -200,9 +216,15 @@ async function startConsent() {
       translations: {
         en: {
           consentModal: {
-            title: 'Usage analytics',
-            description:
-              'We use analytics to see where the product works and where it gets in your way.',
+            title: analyticsNeedsConsent ? 'Usage analytics' : 'Booking calendar',
+            description: [
+              analyticsNeedsConsent &&
+                'We use analytics to see where the product works and where it gets in your way.',
+              bookingNeedsConsent &&
+                'Our booking calendar comes from Cal.com and loads only if you allow it.',
+            ]
+              .filter(Boolean)
+              .join(' '),
             acceptAllBtn: 'Allow',
             acceptNecessaryBtn: 'Only necessary',
             showPreferencesBtn: 'Choose',
@@ -226,6 +248,17 @@ async function startConsent() {
                   ' how the app is used. Turn this off to stop sharing your usage data with them.',
                 linkedCategory: 'analytics',
               },
+              ...(bookingNeedsConsent
+                ? [
+                    {
+                      title: 'Booking calendar',
+                      description:
+                        'Cal.com shows its scheduling calendar inside this page. Off: booking links' +
+                        ' open the calendar on Cal.com instead.',
+                      linkedCategory: 'booking',
+                    },
+                  ]
+                : []),
             ],
           },
         },

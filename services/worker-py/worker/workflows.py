@@ -14,13 +14,15 @@ from temporalio.client import (
     SchedulePolicy,
     ScheduleSpec,
 )
-from temporalio.common import RetryPolicy
+from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
     import worker.settings as settings
     from worker.activities import Activities, ProjectCreated
     from worker.billing import BillingActivities, BillingEvent
+    from worker.crm import CrmActivities, CrmEvent
     from worker.mail import SendEmail, send_email
     from worker.privacy import (
         CORE_STEPS,
@@ -204,11 +206,50 @@ class BillingEventWorkflow:
     @workflow.run
     async def run(self, event: BillingEvent) -> bool:
         # The DB may be down for a while; the provider already got its 200, so keep trying.
-        return await workflow.execute_activity_method(
+        applied = await workflow.execute_activity_method(
             BillingActivities.apply_billing_event,
             event,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+        )
+        # Deal stage in the CRM (docs/crm.md), only for events that changed our state. The child
+        # maps the subscription row as it is when it runs, so a retried older child cannot move
+        # the deal back. A child, so a CRM outage never holds the billing workflow open.
+        # `patched`: runs started before this code replay as-is.
+        if applied and workflow.patched("crm-sync"):
+            crm = CrmEvent(
+                kind="billing",
+                eventId=f"billing:{event.provider}:{event.eventId}",
+                orgId=event.orgId,
+                billingType=event.type,
+            )
+            await workflow.start_child_workflow(
+                CrmSyncWorkflow.run,
+                crm,
+                id=f"crm-{crm.eventId}",
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                parent_close_policy=ParentClosePolicy.ABANDON,
+            )
+        return applied
+
+
+@workflow.defn(name="CrmSyncWorkflow")
+class CrmSyncWorkflow:
+    """One source event -> the CRM. Id `crm-<eventId>`, started by the API (verified sign-up, org,
+    PostHog signal, Chatwoot, booking) or by BillingEventWorkflow; duplicates are rejected."""
+
+    @workflow.run
+    async def run(self, e: CrmEvent) -> str:
+        # A CRM outage of a few hours is retried; after that the event shows as failed in the UI.
+        return await workflow.execute_activity_method(
+            CrmActivities.sync,
+            e,
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(
+                initial_interval=timedelta(seconds=5),
+                maximum_interval=timedelta(minutes=10),
+                maximum_attempts=25,
+            ),
         )
 
 
@@ -284,7 +325,10 @@ class DataDeletionWorkflow:
         if not started:  # cancelled, or refused (reason in the request's report)
             return {"status": "not started"}
         report: dict[str, Any] = {}
-        for name in USER_STEPS if req.subjectType == "user" else ORG_STEPS:
+        steps = USER_STEPS if req.subjectType == "user" else ORG_STEPS
+        # `patched`: a deletion already running its steps when "twenty" was added replays as-is.
+        steps = [n for n in steps if n != "twenty" or workflow.patched("privacy-twenty")]
+        for name in steps:
             try:
                 report[name] = await workflow.execute_activity_method(
                     PrivacyActivities.deletion_step,
@@ -316,8 +360,8 @@ class DataDeletionWorkflow:
 class PrivacyRetentionWorkflow:
     """Daily (Temporal Schedule `privacy-retention`): deletes AI request/response content past
     ai_calls.content_expires_at, expired data exports, deleted organizations whose record
-    period ended and tracker items a TrackerItemWorkflow left in S3. The previous run's result
-    is the watermark, so each AI call is visited once."""
+    period ended, tracker items a TrackerItemWorkflow left in S3 and leftover booking payloads.
+    The previous run's result is the watermark, so each AI call is visited once."""
 
     @workflow.run
     async def run(self) -> dict[str, Any]:
@@ -345,4 +389,17 @@ class PrivacyRetentionWorkflow:
             start_to_close_timeout=timeout,
             retry_policy=retry,
         )
-        return {**content, "exports": exports, "orgs": orgs, "tracker_inbox": inbox}
+        bookings = 0
+        if workflow.patched("booking-payloads"):
+            bookings = await workflow.execute_activity_method(
+                PrivacyActivities.purge_booking_payloads,
+                start_to_close_timeout=timeout,
+                retry_policy=retry,
+            )
+        return {
+            **content,
+            "exports": exports,
+            "orgs": orgs,
+            "tracker_inbox": inbox,
+            "bookings": bookings,
+        }
