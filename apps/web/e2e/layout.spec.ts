@@ -44,6 +44,18 @@ test('the guards catch a broken page', async ({ page }, testInfo) => {
   ]);
   expect(errors).toEqual(['console.error: boom']);
 
-  await page.setContent('<main><h1>Fine</h1><button>Save</button> <a href="#x">Link</a></main>');
+  // Allowed: a reveal button inside its field, a tight heading, an explicit opt-out.
+  await page.setContent(`
+    <main><h1>Fine</h1><button>Save</button> <a href="#x">Link</a>
+      <h2 style="font-size: 18px; line-height: 0.6">Tight heading</h2>
+      <div style="position: relative; width: 240px">
+        <input aria-label="Password" style="width: 100%; height: 32px; box-sizing: border-box">
+        <button style="position: absolute; right: 4px; top: 4px; height: 24px">Show</button>
+      </div>
+      <div data-layout-overlap-ok style="position: relative; height: 40px">
+        <a href="#p" style="position: absolute; top: 0; left: 0; width: 80px">Card</a>
+        <button style="position: absolute; top: 0; left: 20px">Menu</button>
+      </div>
+    </main>`);
   expect(await layoutProblems(page)).toEqual([]);
 });

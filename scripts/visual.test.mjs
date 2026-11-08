@@ -1,14 +1,19 @@
 // node --test 'scripts/*.test.mjs'. Pure parts of visual.mjs: intent matching and the decision.
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   addedIntent,
   decide,
+  finishMainRender,
   matches,
   parseIntent,
   readResults,
   report,
   reviewArgs,
+  reviewEnv,
 } from './visual.mjs';
 
 test('parseIntent drops comments and blank lines', () => {
@@ -18,12 +23,22 @@ test('parseIntent drops comments and blank lines', () => {
   ]);
 });
 
-test('only intent added on the branch counts; merged entries are spent', () => {
-  const base = '# header\npage-sign-in\n';
-  assert.deepEqual(addedIntent('# header\npage-sign-in\nscreen-list\n', base), ['screen-list']);
-  assert.deepEqual(addedIntent(base, base), []);
-  assert.deepEqual(addedIntent('', base), []);
-  assert.deepEqual(addedIntent('page-sign-in\n', ''), ['page-sign-in']);
+test('only lines the branch adds count, and an id main has can be declared again', () => {
+  const diff = [
+    'diff --git a/apps/web/.visual-intent b/apps/web/.visual-intent',
+    '--- a/apps/web/.visual-intent',
+    '+++ b/apps/web/.visual-intent',
+    '@@ -6,2 +6,3 @@',
+    '-page-sign-in   # the OTP change, merged earlier',
+    '-screen-list',
+    '+page-sign-in   # again, for this change',
+    '+screen-form',
+    '+# a comment',
+  ].join('\n');
+  assert.deepEqual(addedIntent(diff), ['page-sign-in', 'screen-form']);
+  // Nothing added (only removals, or no diff): nothing declared.
+  assert.deepEqual(addedIntent('--- a/x\n+++ b/x\n@@ -1 +0,0 @@\n-screen-list'), []);
+  assert.deepEqual(addedIntent(''), []);
 });
 
 test('matches is exact unless a * says otherwise', () => {
@@ -59,6 +74,28 @@ test('decide: an undeclared change fails, a declared one passes', () => {
   assert.deepEqual(d.unused, ['gallery-*']);
   assert.equal(decide(changes, ['page-*', 'screen-list']).ok, true);
   assert.equal(decide([], []).ok, true);
+});
+
+test('decide: a wildcard that declares everything is rejected', () => {
+  const known = ['page-sign-in', 'screen-list', 'gallery-buttons', 'gallery-forms'];
+  const changes = [change('page-sign-in'), change('screen-list')];
+  for (const p of ['*', '*-*']) {
+    const d = decide(changes, [p], known);
+    assert.equal(d.ok, false, p);
+    assert.deepEqual(d.rejected, [p]);
+    assert.equal(d.declared.length, 0);
+  }
+  // More than five changed screens through one wildcard is "everything" too.
+  const many = Array.from({ length: 6 }, (_, i) => change(`gallery-s${i}`));
+  assert.deepEqual(decide(many, ['gallery-*'], known).rejected, ['gallery-*']);
+  // A narrow wildcard is fine, and the report shows what it matched.
+  const d = decide([change('gallery-buttons')], ['gallery-*', 'page-sign-in'], known);
+  assert.equal(d.ok, true);
+  assert.deepEqual(d.matched, { 'gallery-*': ['gallery-buttons'], 'page-sign-in': [] });
+  assert.match(
+    report({ base: 'abc', decision: d, failures: [] }),
+    /^# [^\n]*\n\n\*\*Result: pass\*\*\n\nDeclared intent[^\n]*\n\n- `gallery-\*` -> `gallery-buttons`/,
+  );
 });
 
 test('readResults separates screenshot changes from other failures', () => {
@@ -129,6 +166,7 @@ test('readResults separates screenshot changes from other failures', () => {
         ],
       },
     ],
+    stats: { expected: 1, unexpected: 3, flaky: 0, skipped: 0 },
   };
   const { changes, failures } = readResults(json);
   assert.deepEqual(changes, [
@@ -141,6 +179,38 @@ test('readResults separates screenshot changes from other failures', () => {
     { project: 'desktop-dark', id: 'gallery-new', files: { actual: '/r/n.png' }, isNew: true },
   ]);
   assert.deepEqual(failures, ['mobile-dark › layout /dev/ui']);
+});
+
+test('readResults: a run that executed nothing never passes', () => {
+  // The web server did not start: one global error, no test ran, non-zero exit.
+  const crashed = {
+    suites: [],
+    errors: [{ message: 'Error: Timed out waiting 60000ms from config.webServer.\n  at ...' }],
+    stats: { expected: 0, unexpected: 0, flaky: 0, skipped: 0 },
+  };
+  assert.deepEqual(readResults(crashed, 1).failures, [
+    'run: Error: Timed out waiting 60000ms from config.webServer.',
+    'run: no test was executed',
+  ]);
+  // Every test skipped, exit 0: still nothing was checked.
+  assert.deepEqual(readResults({ suites: [], stats: { skipped: 4 } }, 0).failures, [
+    'run: no test was executed',
+  ]);
+  // Non-zero exit that no test or screenshot explains.
+  assert.deepEqual(readResults({ suites: [], stats: { expected: 3 } }, 1).failures, [
+    'run: Playwright exited with status 1',
+  ]);
+  assert.deepEqual(readResults({ suites: [], stats: { expected: 3 } }, 0).failures, []);
+});
+
+test('main is cached only after a clean render', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'visual-test-'));
+  assert.equal(finishMainRender(dir, 1), false);
+  assert.equal(existsSync(join(dir, '.done')), false);
+  assert.equal(finishMainRender(dir, null), false);
+  assert.equal(existsSync(join(dir, '.done')), false);
+  assert.equal(finishMainRender(dir, 0), true);
+  assert.equal(existsSync(join(dir, '.done')), true);
 });
 
 test('report names every undeclared screen and the verdicts', () => {
@@ -164,4 +234,13 @@ test('the AI review always names its model and runs read-only', () => {
   const args = reviewArgs(change('page-sign-in'), ['page-sign-in']);
   assert.equal(args[args.indexOf('--model') + 1], 'claude-opus-5-5');
   assert.equal(args[args.indexOf('--tools') + 1], 'Read');
+  const env = reviewEnv({
+    PATH: '/bin',
+    ANTHROPIC_API_KEY: 'x',
+    ANTHROPIC_AUTH_TOKEN: 'x',
+    ANTHROPIC_BASE_URL: 'x',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_USE_VERTEX: '1',
+  });
+  assert.deepEqual(env, { PATH: '/bin' });
 });

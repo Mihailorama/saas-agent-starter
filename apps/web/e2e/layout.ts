@@ -54,12 +54,14 @@ function findLayoutProblems([textSel, interactiveSel]: [string, string]): string
       if (ps.textOverflow === 'ellipsis' || ps.webkitLineClamp !== 'none') continue;
       range.selectNodeContents(t);
       const r = range.getBoundingClientRect();
-      if (
-        r.left < box.left - 1 ||
-        r.right > box.right + 1 ||
-        r.top < box.top - 1 ||
-        r.bottom > box.bottom + 1
-      ) {
+      const sideways = r.left < box.left - 1 || r.right > box.right + 1;
+      // Vertically only when the box really cuts it off: line boxes above or below a
+      // `leading-none` heading depend on the font's metrics, not on the layout.
+      const cutOff =
+        (r.top < box.top - 1 || r.bottom > box.bottom + 1) &&
+        s.overflowY !== 'visible' &&
+        el.scrollHeight > el.clientHeight + 1;
+      if (sideways || cutOff) {
         problems.push(
           `clipped text: ${name(el)} text is ${Math.round(r.width)}x${Math.round(r.height)}px, box ${Math.round(box.width)}x${Math.round(box.height)}px`,
         );
@@ -76,13 +78,24 @@ function findLayoutProblems([textSel, interactiveSel]: [string, string]): string
       !el.closest('[data-sonner-toaster]'),
   );
   const rects = controls.map((el) => el.getBoundingClientRect());
+  // A control placed inside a field on purpose (password reveal, clear button): fully inside an
+  // input or textarea with the same positioned parent. Anything else opts out explicitly.
+  const insideField = (field: HTMLElement, rf: DOMRect, c: HTMLElement, rc: DOMRect) =>
+    (field.tagName === 'INPUT' || field.tagName === 'TEXTAREA') &&
+    field.offsetParent === c.offsetParent &&
+    rc.left >= rf.left - 1 &&
+    rc.right <= rf.right + 1 &&
+    rc.top >= rf.top - 1 &&
+    rc.bottom <= rf.bottom + 1;
   for (let i = 0; i < controls.length; i++) {
     for (let j = i + 1; j < controls.length; j++) {
       const a = controls[i]!;
       const b = controls[j]!;
       if (a.contains(b) || b.contains(a)) continue;
+      if (a.closest('[data-layout-overlap-ok]') || b.closest('[data-layout-overlap-ok]')) continue;
       const ra = rects[i]!;
       const rb = rects[j]!;
+      if (insideField(a, ra, b, rb) || insideField(b, rb, a, ra)) continue;
       const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
       const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
       // 2px: borders that touch or share a pixel row are fine.

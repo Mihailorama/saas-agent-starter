@@ -8,7 +8,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks || true",
+    "prepare": "[ ! -f scripts/install-hooks.mjs ] || node scripts/install-hooks.mjs",
     "dev": "pnpm -r --parallel dev",
     "worker": "cd services/worker-py && uv run python -m worker",
     "bench": "cd services/worker-py && uv run python bench.py",

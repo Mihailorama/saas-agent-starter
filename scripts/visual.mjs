@@ -13,6 +13,7 @@
 // 4. --review (optional, advisory, never in CI): the `claude` CLI on your subscription looks at
 //    each declared diff and writes a short verdict into the report. It never changes the result.
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -29,15 +30,26 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const web = join(root, 'apps/web');
 const dir = join(web, '.visual');
 const INTENT = 'apps/web/.visual-intent';
-// What can change a screenshot (same list as the UI workflow's paths).
+// What can change a screenshot: the app, the config files it imports, the lockfile and the
+// committed env defaults (VITE_*).
 const UI_PATHS = [
   'apps/web',
   'config/ai-models.json',
   'config/ai-transparency.json',
+  'config/events.json',
+  'config/flags.json',
+  'config/journeys.json',
+  '.env.example',
   'pnpm-lock.yaml',
 ];
+// What renders the screenshots: a change here makes main's cached shots invalid.
+const HARNESS = ['e2e/visual.spec.ts', 'e2e/visual-pages.ts', 'playwright.visual.config.ts'];
+const BASE_REF = process.env.VISUAL_BASE ?? 'origin/main';
 const REVIEW_MODEL = 'claude-opus-5-5';
+const REVIEW_TIMEOUT_MS = 180_000;
 const KEEP_CACHED = 5;
+// A wildcard may declare at most this many changed screens; more is "everything changed".
+const MAX_PER_WILDCARD = 5;
 
 /** Screen ids a `.visual-intent` text declares: one per line, `#` starts a comment, `*` globs. */
 export function parseIntent(text) {
@@ -47,10 +59,17 @@ export function parseIntent(text) {
     .filter(Boolean);
 }
 
-/** Only lines this branch added count: what main already has was another change's intent. */
-export function addedIntent(current, base) {
-  const old = new Set(parseIntent(base));
-  return [...new Set(parseIntent(current))].filter((p) => !old.has(p));
+/**
+ * The intent this branch adds: the `+` lines of `git diff -U0 <merge-base> -- .visual-intent`.
+ * What main already has was another change's intent; an id can be declared again by adding it
+ * again.
+ */
+export function addedIntent(diff) {
+  const added = diff
+    .split('\n')
+    .filter((l) => l.startsWith('+') && !l.startsWith('+++'))
+    .map((l) => l.slice(1));
+  return [...new Set(parseIntent(added.join('\n')))];
 }
 
 export function matches(pattern, id) {
@@ -58,8 +77,12 @@ export function matches(pattern, id) {
   return new RegExp(`^${re}$`).test(id);
 }
 
-/** Changed screenshots and other failures (layout guards, axe, crashes) from Playwright's JSON. */
-export function readResults(json) {
+/**
+ * Changed screenshots and other failures (layout guards, axe, crashes) from Playwright's JSON and
+ * exit status. A run that executed nothing, or failed for a reason no test explains (a web server
+ * that never started), is a failure, never a pass.
+ */
+export function readResults(json, status = 0) {
   const changes = [];
   const failures = [];
   const walk = (suite) => {
@@ -87,15 +110,43 @@ export function readResults(json) {
     for (const s of suite.suites ?? []) walk(s);
   };
   for (const s of json.suites ?? []) walk(s);
+  for (const e of json.errors ?? [])
+    failures.push(`run: ${(e.message ?? String(e)).split('\n')[0].slice(0, 200)}`);
+  const st = json.stats ?? {};
+  if ((st.expected ?? 0) + (st.unexpected ?? 0) + (st.flaky ?? 0) === 0)
+    failures.push('run: no test was executed');
+  if (status !== 0 && !failures.length && !changes.length)
+    failures.push(`run: Playwright exited with status ${status}`);
   return { changes, failures };
 }
 
-/** The decision: every changed screen must be declared. */
-export function decide(changes, intent) {
-  const declared = changes.filter((c) => intent.some((p) => matches(p, c.id)));
+/**
+ * The decision: every changed screen must be declared. A wildcard that matches every known
+ * screen, or more than MAX_PER_WILDCARD changed ones, declares nothing: it is rejected.
+ */
+export function decide(changes, intent, known = []) {
+  const changedIds = [...new Set(changes.map((c) => c.id))];
+  const allIds = [...new Set([...known, ...changedIds])];
+  const hits = (p, ids) => ids.filter((id) => matches(p, id));
+  const rejected = intent.filter(
+    (p) =>
+      p.includes('*') &&
+      ((allIds.length > 0 && hits(p, allIds).length === allIds.length) ||
+        hits(p, changedIds).length > MAX_PER_WILDCARD),
+  );
+  const accepted = intent.filter((p) => !rejected.includes(p));
+  const matched = Object.fromEntries(accepted.map((p) => [p, hits(p, changedIds)]));
+  const declared = changes.filter((c) => accepted.some((p) => matches(p, c.id)));
   const undeclared = changes.filter((c) => !declared.includes(c));
-  const unused = intent.filter((p) => !changes.some((c) => matches(p, c.id)));
-  return { ok: undeclared.length === 0, declared, undeclared, unused };
+  const unused = accepted.filter((p) => !matched[p].length);
+  return {
+    ok: undeclared.length === 0 && rejected.length === 0,
+    declared,
+    undeclared,
+    unused,
+    rejected,
+    matched,
+  };
 }
 
 export function report({ base, decision, failures, verdicts = {} }) {
@@ -107,12 +158,33 @@ export function report({ base, decision, failures, verdicts = {} }) {
       ...(v ? [`  - AI review (advisory): ${v}`] : []),
     ];
   };
-  const { declared, undeclared, unused } = decision;
+  const { declared, undeclared, unused, rejected = [], matched = {} } = decision;
+  const declaredNow = Object.entries(matched).filter(([, ids]) => ids.length);
   return [
     `# Visual check against main (${base.slice(0, 12)})`,
     '',
-    failures.length || undeclared.length ? '**Result: FAIL**' : '**Result: pass**',
+    failures.length || !decision.ok ? '**Result: FAIL**' : '**Result: pass**',
     '',
+    ...(declaredNow.length
+      ? [
+          'Declared intent (apps/web/.visual-intent, lines this branch adds):',
+          '',
+          ...declaredNow.map(
+            ([p, ids]) => `- \`${p}\` -> ${ids.map((i) => `\`${i}\``).join(', ')}`,
+          ),
+          '',
+        ]
+      : []),
+    ...(rejected.length
+      ? [
+          `## Rejected intent: a wildcard may not declare every screen or more than ${MAX_PER_WILDCARD} changed ones`,
+          '',
+          ...rejected.map((p) => `- \`${p}\``),
+          '',
+          'List the screens you mean to change by id.',
+          '',
+        ]
+      : []),
     ...(failures.length
       ? [
           '## Failed checks (layout guards, axe or the run itself)',
@@ -170,6 +242,30 @@ export function reviewArgs(change, intent) {
   ];
 }
 
+/**
+ * Marks main's render as reusable only when it ran clean. A failed render (a screen main lacks,
+ * a crash) is still used for this run, but rendered again next time.
+ */
+export function finishMainRender(cache, status) {
+  if (status !== 0) return false;
+  writeFileSync(join(cache, '.done'), '');
+  return true;
+}
+
+/** Environment for the review CLI: the subscription login only, never a key or another backend. */
+export function reviewEnv(env) {
+  const out = { ...env };
+  for (const k of [
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+  ])
+    delete out[k];
+  return out;
+}
+
 const git = (...args) =>
   execFileSync('git', args, {
     cwd: root,
@@ -201,7 +297,9 @@ function mainScreenshots(base) {
     cwd: web,
     encoding: 'utf8',
   });
-  const key = `${base.slice(0, 12)}-pw${pw.trim().split(' ').at(-1)}`;
+  const harness = createHash('sha256');
+  for (const f of HARNESS) harness.update(readFileSync(join(web, f)));
+  const key = `${base.slice(0, 12)}-pw${pw.trim().split(' ').at(-1)}-${harness.digest('hex').slice(0, 8)}`;
   const cache = join(dir, 'main', key);
   if (existsSync(join(cache, '.done'))) {
     console.log(`visual: main's screenshots from cache (${relative(root, cache)})`);
@@ -213,6 +311,7 @@ function mainScreenshots(base) {
   git('worktree', 'prune');
   rmSync(cache, { recursive: true, force: true });
   console.log(`visual: rendering main (${base.slice(0, 12)}) in a temporary worktree`);
+  let status = 1;
   try {
     git('worktree', 'add', '--detach', tree, base);
     execFileSync(
@@ -225,7 +324,7 @@ function mainScreenshots(base) {
     );
     // The working tree's spec renders main's app, so both sides take the same screenshots.
     // Screens main does not have fail here and show up as new screens later.
-    playwright(['visual.spec.ts', '--update-snapshots=all', '--reporter=dot'], {
+    status = playwright(['visual.spec.ts', '--update-snapshots=all', '--reporter=dot'], {
       VISUAL_WEB_DIR: join(tree, 'apps/web'),
       VISUAL_SNAPSHOT_DIR: cache,
       VISUAL_OUT: join(dir, 'main-run'),
@@ -235,7 +334,8 @@ function mainScreenshots(base) {
   }
   if (!existsSync(cache) || !readdirSync(cache).length)
     throw new Error(`visual: no screenshots of main (${base}); see the output above`);
-  writeFileSync(join(cache, '.done'), '');
+  if (!finishMainRender(cache, status))
+    console.log('visual: main rendered with failures; its shots are used now but not cached');
   const old = readdirSync(join(dir, 'main'))
     .map((n) => join(dir, 'main', n))
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
@@ -250,14 +350,19 @@ function review(declared, intent) {
     console.log('visual: --review skipped, no `claude` CLI on PATH');
     return {};
   }
-  // Subscription only: never bill an API key.
-  const env = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
+  const env = reviewEnv(process.env);
   const verdicts = {};
   for (const c of declared.filter((c) => c.files.actual)) {
-    const r = spawnSync('claude', reviewArgs(c, intent), { cwd: dir, encoding: 'utf8', env });
+    const r = spawnSync('claude', reviewArgs(c, intent), {
+      cwd: dir,
+      encoding: 'utf8',
+      env,
+      timeout: REVIEW_TIMEOUT_MS,
+    });
     verdicts[`${c.project}/${c.id}`] =
-      r.status === 0 ? r.stdout.trim().replace(/\s+/g, ' ') : 'review failed (claude CLI error)';
+      r.status === 0
+        ? r.stdout.trim().replace(/\s+/g, ' ')
+        : `review failed (${r.error?.code === 'ETIMEDOUT' ? 'timed out' : 'claude CLI error'})`;
   }
   return verdicts;
 }
@@ -272,33 +377,53 @@ function main() {
 
   let base;
   try {
-    base = git('merge-base', 'HEAD', 'origin/main');
+    base = git('merge-base', 'HEAD', BASE_REF);
   } catch {
-    console.error('visual: no merge-base with origin/main; run `git fetch origin main`');
+    console.error(
+      [
+        `visual: no merge-base with ${BASE_REF}. Fetch it: \`git fetch origin main\`;`,
+        'in a shallow clone `git fetch --unshallow origin main`; if your remote is not called',
+        '`origin`, set VISUAL_BASE=<remote>/main.',
+      ].join('\n'),
+    );
     process.exit(1);
   }
-  if (!hasUiChanges(base)) layoutOnly(1, `no UI changes against main (${base.slice(0, 12)})`);
+  if (!hasUiChanges(base)) {
+    // The pre-push hook: nothing in the UI changed, so there is nothing to check.
+    if (process.argv.includes('--hook')) {
+      console.log(`visual: no UI changes against main (${base.slice(0, 12)}); skipped`);
+      process.exit(0);
+    }
+    layoutOnly(1, `no UI changes against main (${base.slice(0, 12)})`);
+  }
 
   const cache = mainScreenshots(base);
   const out = join(dir, 'run');
   rmSync(out, { recursive: true, force: true });
-  playwright([], { VISUAL_SNAPSHOT_DIR: cache, VISUAL_OUT: out });
+  const status = playwright([], { VISUAL_SNAPSHOT_DIR: cache, VISUAL_OUT: out });
 
   const resultsFile = join(out, 'results.json');
   if (!existsSync(resultsFile)) {
     console.error('visual: Playwright wrote no results; see the output above');
     process.exit(1);
   }
-  const { changes, failures } = readResults(JSON.parse(readFileSync(resultsFile, 'utf8')));
-  const read = (rev) => {
-    try {
-      return rev ? git('show', `${rev}:${INTENT}`) : readFileSync(join(root, INTENT), 'utf8');
-    } catch {
-      return '';
-    }
-  };
-  const intent = addedIntent(read(), read(base));
-  const decision = decide(changes, intent);
+  const { changes, failures } = readResults(
+    JSON.parse(readFileSync(resultsFile, 'utf8')),
+    status ?? 1,
+  );
+  // Read from the working tree, compared with the merge-base: uncommitted lines count too.
+  const inBase =
+    spawnSync('git', ['cat-file', '-e', `${base}:${INTENT}`], { cwd: root }).status === 0;
+  let intent = [];
+  if (inBase) intent = addedIntent(git('diff', '-U0', base, '--', INTENT));
+  else if (existsSync(join(root, INTENT)))
+    intent = parseIntent(readFileSync(join(root, INTENT), 'utf8'));
+  const known = readdirSync(cache, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .flatMap((d) => readdirSync(join(cache, d.name)))
+    .filter((f) => f.endsWith('.png'))
+    .map((f) => f.slice(0, -4));
+  const decision = decide(changes, intent, known);
   const verdicts = process.argv.includes('--review') ? review(decision.declared, intent) : {};
   const text = report({ base, decision, failures, verdicts });
   mkdirSync(dir, { recursive: true });

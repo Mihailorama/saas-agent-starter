@@ -30,6 +30,9 @@ test('UI gallery and reference screens', async ({ page }) => {
   await page.keyboard.press('ControlOrMeta+k');
   await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeVisible();
   await expectAccessible(page, 'command palette');
+  // No close button (it sat on the search field): Escape closes it.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Command palette' })).toBeHidden();
 });
 
 test('public pages', async ({ page }) => {

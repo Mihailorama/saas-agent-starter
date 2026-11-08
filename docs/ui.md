@@ -92,13 +92,20 @@ Nobody looks at screenshots, and none are committed (no media in git). `pnpm --f
    spilling out of or cut off by its button, link, heading, label, tab, badge or cell (deliberate
    `truncate` is fine), no overlapping controls, no broken images, no console errors, and axe.
    The e2e suite runs the same DOM guards wherever it runs axe, so signed-in pages are covered
-   too. `e2e/layout.spec.ts` proves on a deliberately broken page that each guard fires.
+   too. `e2e/layout.spec.ts` proves on a deliberately broken page that each guard fires. Text
+   counts as cut off vertically only when its box clips it (`overflow-y` not `visible`); a
+   control fully inside an input (password reveal, clear button) is not an overlap; anything
+   else that overlaps on purpose gets `data-layout-overlap-ok` on a common ancestor.
 2. **Screenshots against main, locally only.** The script takes the merge-base of `HEAD` with
    `origin/main`, checks it out in a temporary git worktree, renders it with the working tree's
-   `e2e/visual.spec.ts` and caches the result by sha and Playwright version in
-   `apps/web/.visual/main/`. Then it screenshots the working tree and compares (tolerance: 0.2%
-   of pixels). Both sides come from the same machine, browser and fonts, so there is no stored
-   baseline to go stale. With no UI change against main it skips the screenshots.
+   `e2e/visual.spec.ts` and caches the result in `apps/web/.visual/main/`, keyed by sha,
+   Playwright version and a hash of the screenshot harness (`visual.spec.ts`, `visual-pages.ts`,
+   `playwright.visual.config.ts`); a render with failures is used once and not cached. Then it
+   screenshots the working tree and compares (tolerance: 0.2% of pixels). Both sides come from
+   the same machine, browser and fonts, so there is no stored baseline to go stale. With no UI
+   change against main (`apps/web`, the config files it imports, `.env.example`, the lockfile)
+   it skips the screenshots. A run where no test executed, or Playwright failed for a reason no
+   test explains, fails. Another remote than `origin`: `VISUAL_BASE=<remote>/main`.
 3. **A changed screen needs a declared intent.** Add its id (from the report) to
    `apps/web/.visual-intent`, one per line, `*` as a wildcard (`gallery-*`), `#` for a reason:
 
@@ -106,9 +113,13 @@ Nobody looks at screenshots, and none are committed (no media in git). `pnpm --f
    page-sign-in   # one-time code field
    ```
 
-   Only lines your branch adds count, so an intent is spent once merged and never hides the next
-   change; delete old lines whenever you like. An undeclared changed or new screen fails, and
-   `apps/web/.visual/report.md` lists it with the expected, actual and diff images.
+   The file is read from the working tree (uncommitted lines count) and only the lines your
+   branch adds to it count (`git diff` against the merge-base), so an intent is spent once
+   merged, never hides the next change, and an id can be declared again by adding it again;
+   delete old lines whenever you like. A wildcard that matches every screen, or more than five
+   changed ones, is rejected: list the screens. The report starts with what each line matched;
+   an undeclared changed or new screen fails, and `apps/web/.visual/report.md` lists it with
+   the expected, actual and diff images.
 4. **AI review, optional and advisory:** `pnpm --filter web visual -- --review` sends each
    declared diff (before, after, diff and the intent) to the `claude` CLI on your subscription
    (`--model claude-opus-5-5`, read-only tools, no API key) and writes an OK/REGRESSION verdict
@@ -116,7 +127,11 @@ Nobody looks at screenshots, and none are committed (no media in git). `pnpm --f
    CLI.
 
 CI compares no pixels and has no approval label: the deterministic guards run there through
-`pnpm check`. Skip the hook once with `git push --no-verify`; `pnpm check` still has to be green.
+`pnpm check`. The pixel comparison is skipped by `git push --no-verify`, by `CI=1`, and by any
+push from a machine without the hook (`pnpm install` sets `core.hooksPath` unless another
+hooks path is already configured, and never in CI); such a push still has to pass the guards
+in CI, and `pnpm check` stays the definition of done. The hook does nothing when the UI did not
+change.
 
 ### Bundle size
 
