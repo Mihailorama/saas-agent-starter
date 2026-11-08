@@ -68,13 +68,19 @@ grep -q 'env keys: no change' "$work/rerun.log"
 [ "$sum" = "$(sha256sum <"$DEPLOY_ENV_FILE")" ] || { echo "FAIL: env file rewritten" >&2; exit 1; }
 
 step "pnpm run infra -- verify"
-node scripts/infra.mjs verify --answers "$answers"
+node scripts/infra.mjs verify --answers "$answers" --mail
 
 step "hardening, seen from outside"
 out=$(ssh -F "$work/ssh_config" -o BatchMode=yes -o PubkeyAuthentication=no root@infra-e2e true 2>&1 || :)
 case $out in *"Permission denied (publickey)."*) echo "OK: only key login offered" ;; *) echo "FAIL: $out" >&2; exit 1 ;; esac
 dc exec -T server sh -c 'sshd -T | grep -x "passwordauthentication no" && ufw status && id deploy'
 curl -fsS -k --resolve "localhost:$E2E_HTTPS_PORT:127.0.0.1" "https://localhost:$E2E_HTTPS_PORT/api/auth/ok"
+echo
+# Umami's site opens only after its default admin login was replaced (sites/umami.ready)
+code=$(curl -s -k -o /dev/null -w '%{http_code}' --resolve "umami.localhost:$E2E_HTTPS_PORT:127.0.0.1" \
+  "https://umami.localhost:$E2E_HTTPS_PORT/api/heartbeat")
+[ "$code" = 200 ] || { echo "FAIL: umami site answers $code" >&2; exit 1; }
+echo "OK: umami site open after the admin step"
 echo
 curl -fsS "http://127.0.0.1:$E2E_MAILPIT_PORT/api/v1/search?query=subject:Self-check" |
   jq -e '.messages | length > 0' >/dev/null && echo "OK: the self-check mail arrived"

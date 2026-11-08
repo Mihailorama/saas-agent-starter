@@ -66,17 +66,24 @@ the choices reserve (`mem_limit` sums from [STACK.md](STACK.md)) against the ser
 4. **Server bootstrap** over `ssh ... sh -s` (`deploy/setup/bootstrap.sh`), each step checked
    before it acts: your key for the admin (`ssh-copy-id`, only if a password is all there is),
    Docker Engine and Compose from Docker's apt repository, a `deploy` user in the `docker` group
-   with your key, the deploy directory, a firewall that lets in only SSH, 80 and 443. Only after a
-   key login as `deploy` works does it turn password login off (an sshd drop-in sorted before
-   cloud-init's `50-cloud-init.conf`, checked with `sshd -T` and from your machine).
+   with your key, the deploy directory, a firewall that lets in only SSH, 80 and 443. The SSH
+   ports kept open are the one you connected to plus every port sshd and a socket-activated
+   `ssh.socket` listen on; if none can be found the firewall is not turned on. Docker's apt key is
+   checked against its published fingerprint. Only after a key login as `deploy` works does it
+   turn password login off (an sshd drop-in sorted before cloud-init's `50-cloud-init.conf`,
+   checked with `sshd -T`). Root keeps key-only login (`prohibit-password`, not `no`): every run
+   bootstraps again as the admin, and the deploy user has no sudo.
 5. **Deploy**: `scripts/deploy.mjs` with the release's digests (resolved from the registry's HTTP
-   API), then the after-deploy steps (Umami's default admin password is replaced).
+   API), then the after-deploy steps: Umami's default `admin`/`umami` login is replaced by
+   `UMAMI_ADMIN_PASSWORD`; until then its site answers 503 (`sites/umami.ready` opens it).
 6. **Vault**: with the vault installed or connected and `node scripts/vault.mjs status` unlocked,
-   the newly generated values are saved to the item `app/<env>` (`put`, or `replace` for a
-   rotation). You approve each in your terminal; values travel on stdin only.
+   generated values not saved there yet go to the item `app/<env>` (`put`, or `replace` after a
+   rotation). You approve each in your terminal; values travel on stdin only. The answers file
+   keeps a fingerprint per saved key (`vaultPushed`, a truncated SHA-256, never a value), so a
+   run that stopped early saves the rest next time.
 7. **Verify**: the deploy's health probe through Caddy, then each component's check on the
    server: `python -m worker.selfcheck s3` (put/get/delete), `smtp` (one test mail to the sender
-   address), `llm` (a one-token call through the AI gateway, logged in `ai_calls`), Postgres,
+   address, only on the first run, when the SMTP settings change, or with `--mail`), `llm` (a one-token call through the AI gateway, logged in `ai_calls`), Postgres,
    Umami and Vaultwarden health. `pnpm run infra -- verify` runs them again any time. The LLM
    check needs an organization (the call is billed to it): sign up, then
    `pnpm run infra -- verify --org <organization id>`.
@@ -93,10 +100,17 @@ pnpm run infra -- add analytics                    # answer for one component, t
 pnpm run infra -- plan                             # what a run would change; touches nothing
 ```
 
-Rotating a database password the app reads (`DATABASE_URL`) works: the migration sets it again.
-`POSTGRES_PASSWORD` cannot be rotated this way once the database exists (Postgres keeps its first
-password); change it in Postgres first. Settings you added by hand (`sops edit`) and that no
-component owns stay as they are.
+`--rotate` accepts only keys the server applies again (`install.rotate` in the catalog):
+`BETTER_AUTH_SECRET`, `DATABASE_URL` (the migration sets the role's password), `VAULT_DB_PASSWORD`
+and `UMAMI_DB_PASSWORD` (their one-shots set it), `UMAMI_APP_SECRET`. It refuses the rest:
+`POSTGRES_PASSWORD` (Postgres keeps its first password: `ALTER ROLE postgres` first, then edit the
+env with `sops edit`), `UMAMI_ADMIN_PASSWORD` (change it in Umami), `WEBHOOK_ENCRYPTION_KEYS`
+(add a key in front instead, docs/public-api.md), the S3 keys. Settings you added by hand
+(`sops edit`) and that no component owns stay as they are.
+
+If `deploy/env/<env>.enc.env` is missing while its answers file exists or the server already has
+a `.env`, the run stops instead of generating new secrets that would replace the live ones:
+restore the file from git or a backup (and the age key), or rebuild it from the vault item.
 
 ## Non-interactive (CI, managed setups)
 
@@ -117,8 +131,10 @@ and `DEPLOY_SSH_CONFIG` point at another env file or ssh config.
 Every step is check-then-act, so the fix is: read the message, fix the cause, run the same
 command again. It continues where it stopped.
 
-- **ssh fails**: `ssh root@<server>` by hand first. A changed host key is a real warning: find
-  out why before you remove the old one from `~/.ssh/known_hosts`.
+- **ssh fails**: `ssh root@<server>` by hand first. An unknown or changed host key stops the run
+  (also with `--yes`): compare the fingerprint with your provider's console, accept it once by
+  hand; a changed key is a real warning, find out why before you remove the old one from
+  `~/.ssh/known_hosts`.
 - **Locked out after hardening** (should not happen: it checks the key login first): use your
   provider's web console, remove `/etc/ssh/sshd_config.d/01-infra.conf`, reload ssh.
 - **DNS**: Let's Encrypt fails while the records do not resolve; the run stops before deploying.

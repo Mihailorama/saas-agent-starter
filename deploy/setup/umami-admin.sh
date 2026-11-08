@@ -1,7 +1,8 @@
 # After-deploy step of the analytics component (Umami, compose.prod.yaml), run by
 # `pnpm run infra` in DEPLOY_PATH: replaces Umami's default admin/umami login with
 # UMAMI_ADMIN_PASSWORD from .env. Idempotent: done once that password logs in. The password
-# reaches the container on stdin, never argv or logs.
+# reaches the container on stdin, never argv or logs. On success it creates sites/umami.ready: until
+# then Caddy answers 503 for Umami's site (deploy/sites/analytics.caddy).
 set -eu
 grep '^UMAMI_ADMIN_PASSWORD=' .env | cut -d= -f2- | docker compose exec -T umami node -e '
 let pw = "";
@@ -25,3 +26,4 @@ process.stdin.on("data", (d) => (pw += d)).on("end", async () => {
   if (!r.ok) throw new Error(`umami: password change failed (HTTP ${r.status})`);
   console.log("  umami: default admin password replaced");
 });'
+touch sites/umami.ready

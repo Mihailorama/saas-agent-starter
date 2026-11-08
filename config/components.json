@@ -1,5 +1,5 @@
 {
-  "$comment": "Infrastructure components for `pnpm run infra` (scripts/infra.mjs, docs/setup.md, ADR 0032). One entry per component: tier (core | optional), modes (install = run it on the server, connect = use one you already have, skip), install.profile (compose.prod.yaml profile), install.env (KEY: template; {hex:N} = N random bytes as hex, generated once and kept unless --rotate KEY; {KEY} = another value; {domain}, {project}, {user}, {host}, {repo}, {tls} from the answers), install.site (the env key holding the component's public URL: Caddy site in deploy/sites/<profile>.caddy, DNS checked), install.ramMiB (mem_limit budget, docs/STACK.md), connect fields (key, prompt, secret: value only in the encrypted env, never in the answers; validate: regex; default: template; answerOnly: kept in the answers, not the env), keys (other env keys the component owns), requires (component:mode), verify (shell run in DEPLOY_PATH on the server; exit 3 = skipped), available: false = listed for `infra add`, not wired yet. `pnpm check:components` fails when a compose.prod.yaml profile or a deploy/env/example.env key has no entry.",
+  "$comment": "Infrastructure components for `pnpm run infra` (scripts/infra.mjs, docs/setup.md, ADR 0032). One entry per component: tier (core | optional), modes (install = run it on the server, connect = use one you already have, skip), install.profile (compose.prod.yaml profile), install.env (KEY: template; {hex:N} = N random bytes as hex, generated once and kept unless --rotate KEY; {KEY} = another value; {domain}, {project}, {user}, {host}, {repo}, {tls} from the answers), install.site (the env key holding the component's public URL: Caddy site in deploy/sites/<profile>.caddy, DNS checked), install.ramMiB (mem_limit budget, docs/STACK.md), install.rotate (generated keys that `--rotate` may change because the server re-applies them), connect fields (key, prompt, secret: value only in the encrypted env, never in the answers; validate: regex; default: template; answerOnly: kept in the answers, not the env), keys (other env keys the component owns), requires (component:mode), verify (shell run in DEPLOY_PATH on the server; exit 3 = skipped), available: false = listed for `infra add`, not wired yet. `pnpm check:components` fails when a compose.prod.yaml profile or a deploy/env/example.env key has no entry.",
   "components": [
     {
       "id": "core",
@@ -17,7 +17,8 @@
           "CADDY_TLS": "{tls}",
           "BETTER_AUTH_SECRET": "{hex:32}",
           "WEBHOOK_ENCRYPTION_KEYS": "k1:{hex:32}"
-        }
+        },
+        "rotate": ["BETTER_AUTH_SECRET"]
       },
       "keys": ["COMPOSE_PROFILES"],
       "verify": "docker compose exec -T api wget -qO- http://127.0.0.1:3000/readyz"
@@ -35,7 +36,8 @@
           "MIGRATION_DATABASE_URL": "postgres://postgres:{POSTGRES_PASSWORD}@postgres:5432/app",
           "DATABASE_URL": "postgres://app_user:{hex:24}@postgres:5432/app",
           "TEMPORAL_DB_PASSWORD": "{POSTGRES_PASSWORD}"
-        }
+        },
+        "rotate": ["DATABASE_URL"]
       },
       "connect": [
         {
@@ -50,7 +52,11 @@
           "secret": true,
           "validate": "^postgres(ql)?://"
         },
-        { "key": "TEMPORAL_DB_HOST", "prompt": "Host for Temporal's databases", "secret": false },
+        {
+          "key": "TEMPORAL_DB_HOST",
+          "prompt": "Host for Temporal's databases",
+          "secret": false
+        },
         {
           "key": "TEMPORAL_DB_USER",
           "prompt": "Role for Temporal (creates its databases)",
@@ -64,7 +70,9 @@
         }
       ],
       "keys": ["POSTGRES_PASSWORD"],
-      "verify": { "install": "docker compose exec -T postgres pg_isready -q -U postgres -d app" }
+      "verify": {
+        "install": "docker compose exec -T postgres pg_isready -q -U postgres -d app"
+      }
     },
     {
       "id": "s3",
@@ -105,10 +113,28 @@
           "secret": false,
           "default": "{S3_PUBLIC_ENDPOINT}"
         },
-        { "key": "S3_REGION", "prompt": "Region", "secret": false, "default": "us-east-1" },
-        { "key": "S3_BUCKET", "prompt": "Bucket", "secret": false, "default": "attachments" },
-        { "key": "S3_ACCESS_KEY_ID", "prompt": "Access key id", "secret": true },
-        { "key": "S3_SECRET_ACCESS_KEY", "prompt": "Secret access key", "secret": true }
+        {
+          "key": "S3_REGION",
+          "prompt": "Region",
+          "secret": false,
+          "default": "us-east-1"
+        },
+        {
+          "key": "S3_BUCKET",
+          "prompt": "Bucket",
+          "secret": false,
+          "default": "attachments"
+        },
+        {
+          "key": "S3_ACCESS_KEY_ID",
+          "prompt": "Access key id",
+          "secret": true
+        },
+        {
+          "key": "S3_SECRET_ACCESS_KEY",
+          "prompt": "Secret access key",
+          "secret": true
+        }
       ],
       "verify": "docker compose exec -T worker python -m worker.selfcheck s3"
     },
@@ -149,7 +175,8 @@
           "UMAMI_APP_SECRET": "{hex:32}",
           "UMAMI_ADMIN_PASSWORD": "{hex:16}",
           "ANALYTICS_ORIGINS": "{UMAMI_PUBLIC_URL}"
-        }
+        },
+        "rotate": ["UMAMI_APP_SECRET", "UMAMI_DB_PASSWORD"]
       },
       "connect": [
         {
@@ -168,6 +195,9 @@
       ],
       "verify": {
         "install": "docker compose exec -T umami wget -qO- http://127.0.0.1:3000/api/heartbeat"
+      },
+      "requires": {
+        "install": ["postgres:install"]
       }
     },
     {
@@ -176,10 +206,26 @@
       "description": "AI provider for the AI features (project summary)",
       "modes": ["connect", "skip"],
       "connect": [
-        { "key": "AI_CONTOUR", "prompt": "Contour (config/ai-models.json)", "secret": false },
-        { "key": "AI_PROJECT_SUMMARY_PROVIDER", "prompt": "Provider", "secret": false },
-        { "key": "AI_PROJECT_SUMMARY_MODEL", "prompt": "Model", "secret": false },
-        { "key": "@apiKey", "prompt": "API key of that provider", "secret": true }
+        {
+          "key": "AI_CONTOUR",
+          "prompt": "Contour (config/ai-models.json)",
+          "secret": false
+        },
+        {
+          "key": "AI_PROJECT_SUMMARY_PROVIDER",
+          "prompt": "Provider",
+          "secret": false
+        },
+        {
+          "key": "AI_PROJECT_SUMMARY_MODEL",
+          "prompt": "Model",
+          "secret": false
+        },
+        {
+          "key": "@apiKey",
+          "prompt": "API key of that provider",
+          "secret": true
+        }
       ],
       "verify": "docker compose exec -T worker python -m worker.selfcheck llm"
     },
@@ -188,7 +234,9 @@
       "tier": "optional",
       "description": "Secrets vault for humans and agents (Vaultwarden; docs/secrets.md)",
       "modes": ["install", "connect", "skip"],
-      "requires": { "install": ["postgres:install"] },
+      "requires": {
+        "install": ["postgres:install"]
+      },
       "install": {
         "profile": "vault",
         "ramMiB": 128,
@@ -197,7 +245,8 @@
           "VAULT_PUBLIC_URL": "https://vault.{domain}",
           "VAULT_DB_PASSWORD": "{hex:24}",
           "VAULT_DATABASE_URL": "postgresql://vaultwarden:{VAULT_DB_PASSWORD}@postgres:5432/vaultwarden"
-        }
+        },
+        "rotate": ["VAULT_DB_PASSWORD"]
       },
       "connect": [
         {
@@ -250,7 +299,10 @@
       "description": "Temporal Web UI on the server's loopback",
       "modes": ["install", "skip"],
       "available": false,
-      "install": { "profile": "ops", "ramMiB": 128 }
+      "install": {
+        "profile": "ops",
+        "ramMiB": 128
+      }
     },
     {
       "id": "pii",
@@ -258,7 +310,10 @@
       "description": "Presidio PII redaction sidecar (docs/support.md)",
       "modes": ["install", "skip"],
       "available": false,
-      "install": { "profile": "pii", "ramMiB": 384 }
+      "install": {
+        "profile": "pii",
+        "ramMiB": 384
+      }
     },
     {
       "id": "llm-cli",
@@ -266,7 +321,10 @@
       "description": "Vendor CLI subscriptions as an LLM endpoint (docs/llm-providers.md)",
       "modes": ["install", "skip"],
       "available": false,
-      "install": { "profile": "llm-cli", "ramMiB": 2048 },
+      "install": {
+        "profile": "llm-cli",
+        "ramMiB": 2048
+      },
       "keys": ["IMAGE_LLM_CLI", "LLM_CLI_TOKEN", "LLM_CLI_SECRETS_DIR"]
     },
     {
@@ -275,7 +333,10 @@
       "description": "Cal.diy booking (docs/crm.md)",
       "modes": ["install", "connect", "skip"],
       "available": false,
-      "install": { "profile": "booking", "ramMiB": 1024 }
+      "install": {
+        "profile": "booking",
+        "ramMiB": 1024
+      }
     },
     {
       "id": "observability",
@@ -290,7 +351,9 @@
       "description": "Chatwoot service desk and tracker (docs/support.md)",
       "modes": ["install", "connect", "skip"],
       "available": false,
-      "install": { "ramMiB": 2048 }
+      "install": {
+        "ramMiB": 2048
+      }
     },
     {
       "id": "crm",
@@ -298,7 +361,9 @@
       "description": "Twenty CRM (docs/crm.md)",
       "modes": ["install", "connect", "skip"],
       "available": false,
-      "install": { "ramMiB": 2560 }
+      "install": {
+        "ramMiB": 2560
+      }
     },
     {
       "id": "billing",
@@ -313,7 +378,9 @@
       "description": "Langfuse LLM-ops, self-hosted (ADR 0009)",
       "modes": ["install", "connect", "skip"],
       "available": false,
-      "install": { "ramMiB": 4096 }
+      "install": {
+        "ramMiB": 4096
+      }
     }
   ]
 }

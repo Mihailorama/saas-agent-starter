@@ -11,7 +11,7 @@
 // deploy/env/<env>.enc.env (DEPLOY_ENV_FILE), piped into sops on stdin. Nothing prints a value:
 // plans show key names. SSH: your ssh config and agent (DEPLOY_SSH_CONFIG: another config file).
 import { execFileSync, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -182,6 +182,26 @@ export function render(a, current = {}, { rotate = [], secrets = {}, previous } 
   return { env, generated, missing, invalid };
 }
 
+/** --rotate only for keys something re-applies (install.rotate in config/components.json). */
+export function rotateErrors(keys) {
+  const ok = catalog.flatMap((c) => c.install?.rotate ?? []);
+  return keys
+    .filter((k) => !ok.includes(k))
+    .map(
+      (k) =>
+        `--rotate ${k}: nothing re-applies it on the server (rotatable: ${ok.join(', ')}; docs/setup.md)`,
+    );
+}
+
+/** A missing env file while state exists elsewhere must not mint new live secrets. */
+export function freshEnvError({ envExists, savedAnswers, serverHasEnv, envFile }) {
+  if (envExists || !(savedAnswers || serverHasEnv)) return undefined;
+  const where = serverHasEnv ? 'the server already runs this environment' : 'its answers exist';
+  return `${envFile} is missing but ${where}. A new one would replace the live secrets (database
+  passwords, auth secret). Restore it from git or a backup (and the age key), or rebuild it from the
+  vault item, then run again.`;
+}
+
 const ramOf = (a) =>
   catalog.reduce((sum, c) => sum + (modeOf(a, c) === 'install' ? (c.install?.ramMiB ?? 0) : 0), 0);
 
@@ -195,13 +215,12 @@ export function plan({ a, current, next, generated, missing = [], serverMiB }) {
       .filter((k) => !(k in after))
       .map((k) => `- ${k}`),
   ];
-  const set = (s) =>
-    Object.fromEntries(
-      (s ?? '')
-        .split(',')
-        .filter(Boolean)
-        .map((p) => [p, p]),
-    );
+  const list = (v) => (v ?? '').split(',').filter(Boolean);
+  const [was, now] = [list(current.COMPOSE_PROFILES), list(next.COMPOSE_PROFILES)];
+  const profiles = [
+    ...now.filter((p) => !was.includes(p)).map((p) => `+ ${p}`),
+    ...was.filter((p) => !now.includes(p)).map((p) => `- ${p}`),
+  ];
   const keys = diff(current, next).map((l) =>
     generated.includes(l.slice(2)) && l[0] !== '-' ? `${l} (generated)` : l,
   );
@@ -213,7 +232,7 @@ export function plan({ a, current, next, generated, missing = [], serverMiB }) {
       .filter((c) => c.available !== false)
       .map((c) => `${c.id} ${modeOf(a, c)}`)
       .join(', ')}`,
-    `  profiles: ${diff(set(current.COMPOSE_PROFILES), set(next.COMPOSE_PROFILES)).join(', ') || 'no change'}`,
+    `  profiles: ${profiles.join(', ') || 'no change'}`,
     `  env keys: ${keys.filter((l) => !l.endsWith('COMPOSE_PROFILES')).join(', ') || 'no change'}`,
     ...(missing.length
       ? [`  missing secrets: ${missing.map((k) => `INFRA_${k}`).join(', ')}`]
@@ -302,10 +321,12 @@ function preflight(interactive) {
   to your shell profile.\n`);
 }
 
+const sshG = (host) =>
+  spawnSync('ssh', [...sshArgs(), '-G', host], { encoding: 'utf8' }).stdout ?? '';
+
 /** Addresses of a host as ssh would reach it (aliases resolved by `ssh -G`). */
 async function addresses(host) {
-  const g = spawnSync('ssh', [...sshArgs(), '-G', host], { encoding: 'utf8' });
-  const name = /^hostname (.+)$/m.exec(g.stdout ?? '')?.[1] ?? host;
+  const name = /^hostname (.+)$/m.exec(sshG(host))?.[1] ?? host;
   return (await lookup(name, { all: true }).catch(() => [])).map((x) => x.address);
 }
 
@@ -329,13 +350,19 @@ async function checkDns(a, env) {
 function bootstrap(a, env, interactive) {
   const admin = `${a.server.admin}@${a.server.host}`;
   const deploy = env.DEPLOY_HOST;
+  const port = /^port (\d+)$/m.exec(sshG(a.server.host))?.[1] ?? '';
   const step = (name) => {
     const sh = a.server.admin === 'root' ? 'sh -s' : 'sudo -n sh -s';
-    const vars = `STEP=${name}\nDEPLOY_USER=${q(a.server.user)}\nDEPLOY_PATH=${q(env.DEPLOY_PATH)}\n`;
+    const vars = `STEP=${name}\nDEPLOY_USER=${q(a.server.user)}\nDEPLOY_PATH=${q(env.DEPLOY_PATH)}\nCLIENT_SSH_PORT=${q(port)}\n`;
     const r = ssh(admin, sh, { input: vars + read('deploy/setup/bootstrap.sh') });
     if (r.status !== 0) die(`bootstrap (${name}) failed on ${admin}; fix it and run again`);
   };
-  if (ssh(admin, 'true', { capture: true }).status !== 0) {
+  const probe = ssh(admin, 'true', { capture: true });
+  if (probe.status !== 0) {
+    if (/Host key verification failed|IDENTIFICATION HAS CHANGED/.test(probe.stderr ?? '')) {
+      die(`${a.server.host}: unknown or changed host key. Compare its fingerprint with the one your
+  provider shows, then \`ssh ${admin}\` once and accept it. Host keys are never skipped.`);
+    }
     if (!interactive) die(`no key login as ${admin}: run ssh-copy-id ${admin} once`);
     console.log(`No key login as ${admin} yet. ssh-copy-id installs your public key; OpenSSH asks
 for the password itself (this tool never reads or stores it).`);
@@ -349,14 +376,7 @@ for the password itself (this tool never reads or stores it).`);
   if (ssh(deploy, 'docker info --format "  docker {{.ServerVersion}} as $(id -un)"').status !== 0) {
     die(`no key login as ${deploy} with Docker access; password login left on`);
   }
-  step('harden');
-  const probe = spawnSync(
-    'ssh',
-    [...sshArgs(), '-o', 'BatchMode=yes', '-o', 'PubkeyAuthentication=no', deploy, 'true'],
-    { encoding: 'utf8' },
-  );
-  const offered = /Permission denied \(([^)]*)\)/.exec(probe.stderr ?? '')?.[1] ?? '';
-  if (/password|keyboard/.test(offered)) die(`${a.server.host} still offers password login`);
+  step('harden'); // checks the effective sshd config itself (sshd -T)
 }
 
 function serverMiB(env) {
@@ -367,7 +387,7 @@ function serverMiB(env) {
   return r.status === 0 ? Number(r.stdout.trim()) : undefined;
 }
 
-function verify(a, env, org) {
+function verify(a, env, { org, mail }) {
   const at = (cmd) => ssh(env.DEPLOY_HOST, `cd ${q(env.DEPLOY_PATH)} && ${cmd}`, { capture: true });
   const port = env.HTTPS_PORT ?? '443';
   const ca = env.CADDY_TLS === 'internal' ? '--cacert .caddy-root.crt' : '';
@@ -381,7 +401,10 @@ function verify(a, env, org) {
     const mode = modeOf(a, c);
     const cmd =
       typeof c.verify === 'string' ? (mode === 'skip' ? null : c.verify) : c.verify?.[mode];
-    if (cmd) checks.push([c.id, c.id === 'llm' && org ? `${cmd} ${q(org)}` : cmd]);
+    if (!cmd) continue;
+    if (c.id === 'smtp' && !mail)
+      console.log('  skipped smtp       no test mail (--mail sends one)');
+    else checks.push([c.id, c.id === 'llm' && org ? `${cmd} ${q(org)}` : cmd]);
   }
   let failed = 0;
   for (const [id, cmd] of checks) {
@@ -396,17 +419,25 @@ function verify(a, env, org) {
   if (failed) die(`${failed} check(s) failed`);
 }
 
-function vaultPush(a, env, fresh, rotate) {
+export const fingerprint = (v) => createHash('sha256').update(v).digest('hex').slice(0, 16);
+
+/** Generated values not yet in the vault item app/<env>; a.vaultPushed keeps fingerprints only. */
+function vaultPush(a, env, generated) {
+  a.vaultPushed ??= {};
+  const pending = generated.filter((k) => a.vaultPushed[k] !== fingerprint(env[k]));
+  if (!pending.length) return;
   if (spawnSync('node', ['scripts/vault.mjs', 'status'], { stdio: 'ignore' }).status !== 0) {
-    console.log('  vault: not unlocked (node scripts/vault.mjs unlock), values not saved there');
+    console.log(`  vault: not unlocked (node scripts/vault.mjs unlock); ${pending.length} values
+  not saved there yet, the next run saves them`);
     return;
   }
-  for (const k of fresh) {
-    const cmd = rotate.includes(k) ? 'replace' : 'put';
-    spawnSync('node', ['scripts/vault.mjs', cmd, `app/${a.env}`, k], {
+  for (const k of pending) {
+    const cmd = a.vaultPushed[k] ? 'replace' : 'put';
+    const r = spawnSync('node', ['scripts/vault.mjs', cmd, `app/${a.env}`, k], {
       input: env[k],
       stdio: ['pipe', 'inherit', 'inherit'],
     });
+    if (r.status === 0) a.vaultPushed[k] = fingerprint(env[k]);
   }
 }
 
@@ -442,7 +473,13 @@ async function ask(a, current, secrets, only) {
         const list = choices(f.key, ca);
         const initial = ca[f.key] ?? f.default?.replace(/\{(\w+)\}/g, (_, k) => ca[k] ?? '');
         ca[f.key] = list
-          ? ok(await p.select({ message: f.prompt, options: list.map((value) => ({ value })) }))
+          ? ok(
+              await p.select({
+                message: f.prompt,
+                options: list.map((value) => ({ value })),
+                initialValue: list.includes(ca[f.key]) ? ca[f.key] : list[0],
+              }),
+            )
           : await text(f.prompt, initial, f.validate);
       } else if (
         secrets[f.key] === undefined &&
@@ -487,17 +524,32 @@ async function main() {
   };
   const envFile = process.env.DEPLOY_ENV_FILE ?? `deploy/env/${a.env}.enc.env`;
   preflight(interactive);
+  if (!existsSync(envFile)) {
+    const remote = saved && `${saved.server.user}@${saved.server.host}`;
+    const env = `/opt/${saved?.project}/.env`;
+    const serverHasEnv =
+      Boolean(remote) &&
+      ssh(remote, `test -f ${q(env)}`, { capture: true, timeout: 5 }).status === 0;
+    const savedAnswers = Boolean(saved) && !argv.includes('--answers');
+    const err = freshEnvError({ envExists: false, savedAnswers, serverHasEnv, envFile });
+    if (err) die(err);
+  }
   const current = decrypt(envFile);
-  if (cmd === 'verify') return verify(a, current, opt('--org'));
+  if (cmd === 'verify')
+    return verify(a, current, { org: opt('--org'), mail: argv.includes('--mail') });
 
   const secrets = argv.includes('--secrets-stdin') ? parseDotenv(readFileSync(0, 'utf8')) : {};
-  for (const [k, v] of Object.entries(process.env))
-    if (k.startsWith('INFRA_')) secrets[k.slice(6)] = v;
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith('INFRA_')) continue;
+    secrets[k.slice(6)] = v;
+    delete process.env[k]; // no child process (ssh, sops, deploy) needs them
+  }
   const confirm = interactive ? await ask(a, current, secrets, only) : undefined;
   const errors = validateAnswers(a);
   if (errors.length) die(`${file}:\n  ${errors.join('\n  ')}`);
   const out = render(a, current, { rotate, secrets, previous: saved });
-  for (const k of rotate) if (!out.generated.includes(k)) die(`--rotate ${k}: not a generated key`);
+  const rotateErr = rotateErrors(rotate);
+  if (rotateErr.length) die(rotateErr.join('\n'));
   if (out.invalid.length) die(`invalid value (format, or contains $): ${out.invalid.join(', ')}`);
   await checkDns(a, out.env);
   console.log(plan({ a, current, next: out.env, ...out, serverMiB: serverMiB(out.env) }));
@@ -529,12 +581,13 @@ async function main() {
     });
     if (r.status !== 0) die(`${c.id}: ${c.install.after} failed`);
   }
-  const fresh = out.generated.filter((k) => !current[k] || rotate.includes(k));
-  if (interactive && fresh.length && modeOf(a, byId.vault) !== 'skip') {
-    vaultPush(a, out.env, fresh, rotate);
+  if (interactive && modeOf(a, byId.vault) !== 'skip') {
+    vaultPush(a, out.env, out.generated);
+    writeFileSync(file, `${JSON.stringify(a, null, 2)}\n`);
   }
   console.log('verify');
-  verify(a, out.env, opt('--org'));
+  const mailChanged = ['SMTP_URL', 'MAIL_FROM'].some((k) => current[k] !== out.env[k]);
+  verify(a, out.env, { org: opt('--org'), mail: mailChanged || argv.includes('--mail') });
   console.log(`\nDone: https://${a.domain}. Commit ${file} and ${envFile} (values are encrypted).`);
 }
 

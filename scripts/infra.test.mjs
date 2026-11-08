@@ -1,10 +1,19 @@
 // node --test 'scripts/*.test.mjs' (part of pnpm check:ts). `pnpm run infra` without a server:
 // catalog check, answers validation, env rendering, the plan (dry-run) and that no value leaks.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { checkComponents } from './check-components.mjs';
-import { catalog, expandField, plan, render, validateAnswers } from './infra.mjs';
+import {
+  catalog,
+  expandField,
+  freshEnvError,
+  plan,
+  render,
+  rotateErrors,
+  validateAnswers,
+} from './infra.mjs';
 
 const answers = () => ({
   env: 'production',
@@ -145,4 +154,50 @@ test('@apiKey follows the env names of config/ai-models.json', () => {
     const keys = expandField(f, { AI_PROJECT_SUMMARY_PROVIDER: id }).map((x) => x.key);
     assert.deepEqual(keys, [p.baseUrlEnv, p.apiKeyEnv].filter(Boolean), id);
   }
+});
+
+test("bootstrap keeps every SSH port open: the client's, sshd -T, ListenAddress, ssh.socket", () => {
+  const ports = (vars) => {
+    const script = readFileSync(new URL('../deploy/setup/bootstrap.sh', import.meta.url), 'utf8');
+    const head = Object.entries({ STEP: 'ports', ...vars })
+      .map(([k, v]) => `${k}='${v}'`)
+      .join('\n');
+    return spawnSync('sh', ['-s'], { input: `${head}\n${script}`, encoding: 'utf8' }).stdout.trim();
+  };
+  const dump = 'port 22\nlistenaddress [::]:2200\nlistenaddress 0.0.0.0:22\npermitrootlogin no';
+  const sock = 'Listen=[::]:2022 (Stream)';
+  assert.equal(
+    ports({ CLIENT_SSH_PORT: '2222', SSHD_DUMP: dump, SOCKET_LISTEN: sock }),
+    '22 2022 2200 2222',
+  );
+  assert.equal(ports({ CLIENT_SSH_PORT: '2222', SSHD_DUMP: '', SOCKET_LISTEN: '' }), '2222');
+  assert.equal(ports({ CLIENT_SSH_PORT: '', SSHD_DUMP: '', SOCKET_LISTEN: '' }), ''); // ufw stays off
+});
+
+test('a missing env file never mints new live secrets', () => {
+  const at = { envExists: false, envFile: 'deploy/env/production.enc.env' };
+  assert.equal(freshEnvError({ ...at, savedAnswers: false, serverHasEnv: false }), undefined); // first run
+  assert.match(
+    freshEnvError({ ...at, savedAnswers: true, serverHasEnv: false }),
+    /answers exist.*Restore/s,
+  );
+  assert.match(
+    freshEnvError({ ...at, savedAnswers: false, serverHasEnv: true }),
+    /server already runs/,
+  );
+  assert.equal(
+    freshEnvError({ ...at, envExists: true, savedAnswers: true, serverHasEnv: true }),
+    undefined,
+  );
+});
+
+test('--rotate only what the server re-applies', () => {
+  assert.deepEqual(rotateErrors(['BETTER_AUTH_SECRET', 'DATABASE_URL', 'VAULT_DB_PASSWORD']), []);
+  const errors = rotateErrors([
+    'POSTGRES_PASSWORD',
+    'UMAMI_ADMIN_PASSWORD',
+    'WEBHOOK_ENCRYPTION_KEYS',
+  ]);
+  assert.equal(errors.length, 3);
+  assert.match(errors[0], /--rotate POSTGRES_PASSWORD: nothing re-applies it/);
 });

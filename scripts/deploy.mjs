@@ -69,7 +69,10 @@ async function registryDigest(repo, tag) {
   const env = process.env;
   const [host, ...path] = repo.split('/'); // IMAGE_REPO starts with the registry host
   const name = path.join('/');
-  // Plain HTTP only for loopback or when asked (a local test registry).
+  if (!(host.includes('.') || /^localhost(:\d+)?$/.test(host)) || !name) {
+    throw new Error(`IMAGE_REPO ${repo}: must start with a registry host (ghcr.io/owner/name)`);
+  }
+  // Plain HTTP only for loopback or when asked (a local test registry); then never credentials.
   const http = /^(localhost|127\.)/.test(host) || env.REGISTRY_INSECURE === '1';
   const url = `${http ? 'http' : 'https'}://${host}/v2/${name}/manifests/${tag}`;
   const accept = [
@@ -88,11 +91,14 @@ async function registryDigest(repo, tag) {
       ]),
     );
     const tokenUrl = new URL(p.realm);
+    if (tokenUrl.protocol !== 'https:' && !http)
+      throw new Error(`${host}: token realm is not https`);
     if (p.service) tokenUrl.searchParams.set('service', p.service);
     tokenUrl.searchParams.set('scope', p.scope ?? `repository:${name}:pull`);
-    const auth = env.REGISTRY_AUTH
-      ? { authorization: `Basic ${Buffer.from(env.REGISTRY_AUTH).toString('base64')}` }
-      : {};
+    const auth =
+      env.REGISTRY_AUTH && !http
+        ? { authorization: `Basic ${Buffer.from(env.REGISTRY_AUTH).toString('base64')}` }
+        : {};
     const t = await fetch(tokenUrl, { headers: auth });
     const body = t.ok ? await t.json() : {};
     const token = body.token ?? body.access_token;

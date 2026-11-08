@@ -36,6 +36,9 @@ export function checkComponents(components, profiles, keys, exists = () => true)
       for (const [, n] of t.matchAll(/\{hex:(\d*)\}/g))
         if (!(Number(n) >= 16)) errors.push(`${at}: ${k} needs {hex:N} with N >= 16`);
     }
+    for (const k of c.install?.rotate ?? [])
+      if (!c.install.env?.[k]?.includes('{hex:'))
+        errors.push(`${at}: rotate ${k} is not generated`);
     if (c.install?.site && !(c.install.site in (c.install.env ?? {})))
       errors.push(`${at}: site ${c.install.site} is not in install.env`);
     for (const f of c.connect ?? []) {
