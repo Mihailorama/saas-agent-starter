@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { auditLog, session, user as users, withOperatorRead, withOrg } from '@app/db';
+import { auditLog, rewardGrants, session, user as users, withOperatorRead, withOrg } from '@app/db';
 import { and, eq, like } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import * as OTPAuth from 'otpauth';
@@ -454,5 +454,62 @@ describe('the RLS exception is limited to the operator console', () => {
       'apps/api/src/routes/admin-common.ts',
       'packages/db/src/index.ts', // its definition
     ]);
+  });
+});
+
+describe('rewards waiting for operators (docs/growth.md)', () => {
+  it('shows pending_manual grants on the org page until an operator marks them applied', async () => {
+    const [g] = await withOrg(db, org.id, (tx) =>
+      tx
+        .insert(rewardGrants)
+        .values({
+          orgId: org.id,
+          ruleId: 'team-invite',
+          subject: randomUUID(),
+          status: 'pending_manual',
+          via: 'manual',
+          reward: { kind: 'balance_credit', amount: '5.00', currency: 'USD' },
+          idempotencyKey: 'reward-x',
+        })
+        .returning(),
+    );
+    const pending = async () =>
+      ((await get(op, `/api/admin/orgs/${org.id}`)).json().pendingRewards as { key: string }[]).map(
+        (r) => r.key,
+      );
+    expect(await pending()).toContain('reward-x');
+    const mark = () =>
+      post(op, `/api/admin/orgs/${org.id}/rewards/${g!.id}/applied`, {
+        reason: 'credit note CN-1',
+      });
+    expect((await mark()).statusCode).toBe(204);
+    expect(await pending()).not.toContain('reward-x');
+    expect((await mark()).statusCode).toBe(404);
+    expect((await operatorRows(org.id, 'operator.reward.applied'))[0]).toMatchObject({
+      target: g!.id,
+      reason: 'credit note CN-1',
+    });
+
+    // A reservation stuck for over an hour shows too, and can be released (frees the cap).
+    const [stuck] = await withOrg(db, org.id, (tx) =>
+      tx
+        .insert(rewardGrants)
+        .values({
+          orgId: org.id,
+          ruleId: 'team-invite',
+          subject: randomUUID(),
+          status: 'reserved',
+          reward: { kind: 'balance_credit', amount: '5.00', currency: 'USD' },
+          idempotencyKey: 'reward-stuck',
+          createdAt: new Date(Date.now() - 2 * 3600_000),
+        })
+        .returning(),
+    );
+    expect(await pending()).toContain('reward-stuck');
+    const release = () =>
+      post(op, `/api/admin/orgs/${org.id}/rewards/${stuck!.id}/release`, { reason: 'stuck' });
+    expect((await release()).statusCode).toBe(204);
+    expect(await pending()).not.toContain('reward-stuck');
+    expect((await release()).statusCode).toBe(404);
   });
 });

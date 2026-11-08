@@ -43,7 +43,7 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 ```
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
-  src/auth.ts         Better Auth: email-code sign-in (no passwords, ADR 0029), orgs, OIDC, 2FA
+  src/auth.ts         Better Auth: email-code sign-in (no passwords, ADR 0033), orgs, OIDC, 2FA
                       (TOTP), passkey and API key plugins
   src/signup-guard.ts disposable / allow / deny email domains on every address write (docs/security.md)
   src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
@@ -56,15 +56,19 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts (-> S3 + TrackerItemWorkflow) + CRM signals,
-                      support.ts = Chatwoot/Plane/GitHub hooks, crm.ts = booking hook (Cal.diy),
+                      support.ts = Chatwoot/Plane/GitHub/Telegram hooks, crm.ts = booking hook,
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md),
                       mcp-servers.ts = the org's external MCP servers (docs/mcp.md),
+                      rewards.ts = /internal/rewards (worker -> billing provider, INTERNAL_API_TOKEN),
+                      referrals.ts = the org's referral link (billing/referrals.ts, billing/dub.ts),
                       mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md),
                       onboarding.ts = checklist item ids + conditions, GET /api/onboarding (docs/onboarding.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
-  src/billing/        plans config, entitlements() + requireEntitlement, payment providers
-                      (Stripe) behind one interface (docs/billing.md)
+  src/billing/        plans config (any pricing model), entitlements() + requireEntitlement,
+                      payment providers (Stripe, manual contracts) behind one interface,
+                      money.ts = currency minor units (docs/billing.md);
+                      rewards.ts = reward rules, triggers and the one dispatcher (docs/growth.md)
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -94,20 +98,27 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log,
                       secret decryption, auto-disable, retention (daily Temporal Schedule)
   worker/support.py   service desk triage, return path
+  worker/telegram.py  lite Telegram support: a topic per user in the team's forum group, relay
+                      both ways, /bug /feature -> tracker (Bot API over httpx2, docs/support.md)
   worker/tracker.py   the one tracker client (Plane SDK default, GitHub optional): alerts,
                       feedback, triage items; worker/released.py = release comments
   worker/crm.py       CRM sync (Twenty REST behind the `Crm` protocol), one workflow per source event
   worker/flags.py     is_enabled(): feature flags, twin of apps/api/src/flags.ts (posthog SDK)
   worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
+  worker/selfcheck.py post-deploy checks for `pnpm run infra -- verify` (s3, smtp, llm)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
+  worker/rewards.py   RewardWorkflow activities: hold, conditions, cap, apply, reward_grants
   worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
                       GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
-config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
-                    plans.json (plans, limits, prices per currency, billing contours),
+config/             components.json (infra components: install/connect/skip, env templates,
+                    profiles, verify; `pnpm run infra`, docs/setup.md, ADR 0032),
+                    ai-models.json (providers, allowed models per contour/purpose, price overrides),
+                    plans.json (plans, limits, priced components per currency, billing
+                    contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
-                    flags.json (feature flag catalog),
+                    flags.json (feature flag catalog), rewards.json (reward rules, docs/growth.md),
                     webhook-events.json (outbound webhook event catalog),
                     crm.json (deal stages, product signals; `pnpm crm:sync`)
 prompts/            prompt templates, one immutable file per version; lock.json pins hashes
@@ -120,7 +131,9 @@ infra/              Temporal setup, SeaweedFS (dev S3), OTel collector, Promethe
                     ClickHouse tuning for Langfuse (infra/langfuse)
 compose.permissive.yaml  permissive-license twin of the stack (docs/LICENSES.md)
 compose.prod.yaml   production stack: images by digest, one-shot migrate, Caddy (docs/deploy.md)
-deploy/             Caddyfile, env/<env>.enc.env (SOPS + age), rehearsal.sh (local prod rehearsal)
+deploy/             Caddyfile, sites/<profile>.caddy (on-box profiles' sites), env/<env>.enc.env
+                    (SOPS + age), rehearsal.sh (local prod rehearsal), setup/ (bootstrap.sh,
+                    <env>.answers.json, e2e.sh: the `pnpm run infra` wizard's server side)
 compose.backup.yaml      backups overlay: pgBackRest, object copy, restore check (docs/backups.md)
 infra/backup/       Postgres image (+ pgvector) and backup image (+ pgBackRest/rclone), scripts (ADR 0015)
 infra/chatwoot/     Chatwoot initializer: attachments served through Chatwoot (docs/support.md)
@@ -130,16 +143,21 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     crm.mjs (`pnpm crm:sync`: Twenty fields, PostHog signal destinations),
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
                     deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract),
+                    infra.mjs (`pnpm run infra`: questions, bootstrap, env, deploy, verify),
+                    check-components.mjs,
                     check-flags.mjs, flags.mjs (flags:sync),
-                    eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs
+                    eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs,
+                    vault.mjs (secrets vault for humans and agents over the `bw` CLI)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
-docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
+docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path, lite Telegram bot
 docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync flows, mapping
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
+docs/growth.md      rewards: rules, triggers, behaviour per pricing model, operators' pending list
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/onboarding.md  setup checklist (item ids for rewards rules) and product tour: add a step or item
 docs/mcp.md         external MCP tools: connect a server, the reference server, the tool loop
+docs/secrets.md     secrets vault: Vaultwarden install or Bitwarden connect, agent rules, vault -> SOPS
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 docs/security.md    sign-up protection (disposable email), bot-check follow-up
 ```
@@ -203,6 +221,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   booking on self-hosted Cal.diy (MIT, `booking` profile, image built by CI from a pinned upstream
   commit; Cal.com Cloud connects the same way). Sync is one Temporal workflow per source event,
   cross-links in Twenty custom fields, no own CRM tables (ADR 0026).
+- Secrets vault: Vaultwarden (AGPL-3.0, unmodified, `vault` profile, data in our Postgres) or any
+  Bitwarden you connect, used through the official `bw` CLI (GPL-3.0, installed by the developer)
+  and `scripts/vault.mjs`; SOPS files stay the deploy path; no own vault code (ADR 0029).
 
 ## Where code goes (TS vs Python vs Rust)
 
@@ -442,10 +463,25 @@ Details: docs/product-analytics.md, ADR 0012.
 - Never send free text, emails, names or URL ids as props; mark identifying events `pii: true`.
 - No own event tables, collectors, funnel jobs or click detectors: analytics, funnels, replay,
   heatmaps, surveys and alerts live in PostHog (default) or Umami (self-hosted fallback).
+- In-app surveys (NPS, CSAT) are config: the `surveys` block of
+  `config/journeys.json`, each linked to a `config/flags.json` flag, synced by `pnpm journeys:sync`.
+  Never build them by hand in the PostHog UI or store responses ourselves; Formbricks is the
+  env-only connector for the self-hosted contour (docs/product-analytics.md#surveys).
 - Before changing a flow, read its state: `pnpm journeys:report`, or the PostHog / Umami MCP
   (`.mcp.json.example`). After changing journeys, `pnpm journeys:sync --dry-run` shows what
   would change in the tools. Issues labelled `cjm-regression` or `from-users` come from real
   users: link them in the PR that fixes them.
+
+## Infrastructure setup rules
+
+Details: docs/setup.md, ADR 0032.
+
+- New component, compose.prod.yaml profile or deploy/env/example.env key -> a catalog entry in
+  `config/components.json` (modes, connect fields with `secret`, install env templates with
+  `{hex:N}` for generated secrets, `ramMiB`, `verify`); `pnpm check:components` enforces it.
+  A public on-box service gets `deploy/sites/<profile>.caddy`.
+- Secrets never go into `deploy/setup/*.answers.json`, argv, logs or the plan output: only into
+  the sops-encrypted env, through stdin. Bootstrap steps stay check-then-act (re-runnable).
 
 ## Backup rules
 
@@ -521,6 +557,31 @@ Details: docs/releases.md.
   (never closes it); a bare mention gets nothing.
 - Never create tags or releases by hand; merging the release-please PR does it.
 
+## Secrets for agents
+
+Details: docs/secrets.md, ADR 0029.
+
+- Secrets live in the team vault (Vaultwarden or Bitwarden), one item per `<service>/<env>`, one
+  field per value. The wrapper logs in as a dedicated agent account that sees only dev/staging
+  collections. Never paste secrets into chat, `.env`, `.env.example`, git, issues, logs or files,
+  and never ask a human to paste one into chat: ask them to `put` it into the vault.
+- Without approval (allow-listed): `node scripts/vault.mjs status` and `lock`. Everything else
+  asks the human each time, and that is intended: `get` reveals a value, `run` executes a command
+  with it, `put`/`replace` write the shared vault, `unlock` needs the master password.
+- Read: `node scripts/vault.mjs run <item> <field> <ENV_VAR> -- <command>` (preferred: the value
+  never reaches you), or `node scripts/vault.mjs get <item> <field> --stdout | <consumer>` in the
+  same command. Never a bare `get`, never `echo`/`cat` of a value, never `bw get`/`bw list`.
+- Save every credential you create or receive at once:
+  `<command that prints it> | node scripts/vault.mjs put <item> <field>` (stdin only, never argv).
+  `put` refuses to overwrite; `replace` is for a human-approved rotation. `/save-secret` has the
+  steps. Then use it from the vault, not from your context.
+- Locked or logged out (`vault.mjs status` exit 2): stop and ask the human to run
+  `node scripts/vault.mjs unlock` in their terminal. Never search files, env, shell history, other
+  tools or `~/.config/agent-vault/` for the credential, and never ask for the master password.
+  Deny rules are not a security boundary: these rules are.
+- Production env files: vault -> `sops set --value-stdin` -> `pnpm run deploy` (docs/secrets.md
+  "Vault to deploy"), run by a human. The `bw` CLI is GPL-3.0: never add it as a code dependency.
+
 ## Security rules
 
 - Tenant tables: always `orgId()` + `tenantIsolation()`, always accessed via `withTenant`
@@ -542,7 +603,7 @@ Details: docs/releases.md.
   `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
   go upstream (issue or PR); until a release lands, work around it in our own code.
 - No real secrets, client names or private data in the repo, ever. Example values use
-  `example.com` and `local-dev-*`.
+  `example.com` and `local-dev-*`. Real secrets go to the vault ("Secrets for agents").
 
 ## Never
 

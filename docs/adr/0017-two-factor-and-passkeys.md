@@ -1,6 +1,6 @@
 # 0017. Two-factor authentication and passkeys
 
-Status: accepted (owner decision, 2026-11-07). Amended by ADR 0029 (2026-11-08): sign-in is
+Status: accepted (owner decision, 2026-11-07). Amended by ADR 0033 (2026-11-08): sign-in is
 by email code, no passwords; the TOTP step follows the code.
 
 ## Context
@@ -15,10 +15,10 @@ our own tables, not from another service.
   code (rendered locally by `qrcode.react`, ISC; the URI holds the secret, so never an external QR
   service), 10 one-time backup codes, "trust this device" for 30 days (signed cookie + server-side
   record), a 10-minute sign-in challenge, account lockout after 10 failed codes. Secrets and
-  backup codes are stored encrypted with `BETTER_AUTH_SECRET`. The email code of ADR 0029 is the
+  backup codes are stored encrypted with `BETTER_AUTH_SECRET`. The email code of ADR 0033 is the
   first factor, not a second one: the plugin's own email/SMS OTP second factor is not configured.
   The plugin challenges only password sign-ins, so `auth.ts` runs its same step after
-  `/sign-in/email-otp` (ADR 0029).
+  `/sign-in/email-otp` (ADR 0033).
 - **Passkeys** with `@better-auth/passkey` (MIT; WebAuthn via `@simplewebauthn/server` and
   `@simplewebauthn/browser`, MIT): register, list, rename, delete in account settings and sign in
   with a discoverable credential. A passkey sign-in counts as multi-factor (device + PIN or
@@ -42,7 +42,7 @@ our own tables, not from another service.
 - **Sensitive changes need a recent sign-in** ("sudo mode", `apps/api/src/mfa.ts`): disabling
   2FA, regenerating backup codes and deleting a passkey are refused with `SESSION_NOT_FRESH`
   when the session is older than 10 minutes; the password is asked as well where an account
-  from before ADR 0029 still has one. Registering a passkey needs a session younger than Better Auth's `freshAge` (1 day).
+  from before ADR 0033 still has one. Registering a passkey needs a session younger than Better Auth's `freshAge` (1 day).
   The web offers "Sign in again" and returns to the security page.
 - **Audit**: 2FA enabled/disabled, backup codes regenerated, passkey added/renamed/deleted go to
   `audit_log` (actions `two_factor.*`, `passkey.*`), one row per organization the user belongs

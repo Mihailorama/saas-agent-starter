@@ -5,6 +5,19 @@ one-command quality gate, small colocated files and an `AGENTS.md` that tells ag
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
 obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
+**From a fresh VPS to a running stack in one command** ([docs/setup.md](docs/setup.md)):
+
+```sh
+pnpm i && pnpm run infra     # server, domain, then install / connect / skip per component
+```
+
+It asks for SSH access to a Debian/Ubuntu server, the domain, and for each component (Postgres,
+S3, SMTP, analytics, LLM provider, secrets vault) whether to install it on the server, connect
+one you already have, or skip it. Then it prepares the server (Docker, a deploy user, firewall,
+key-only SSH), writes the settings encrypted with sops, deploys and checks every component.
+Re-runs show a plan first and keep what was generated. Needs Node, OpenSSH, `sops` and `age` on
+your machine, no Docker. **Back up the age key it creates**: it decrypts every secret.
+
 - **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (passwordless sign-in with email
   one-time codes, orgs, roles, 2FA, passkeys, SSO), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
@@ -34,6 +47,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 - **CRM and booking**: Twenty (`crm` profile) gets people, companies, subscription deals, product
   signals and support/booking notes from Temporal workflows; "Book a demo" / "Talk to us" on a
   self-hosted Cal.diy (`booking` profile) or one you connect ([docs/crm.md](docs/crm.md)).
+- **Secrets vault for agents**: Vaultwarden (`vault` profile) or a Bitwarden you connect; coding
+  agents read and save credentials through `scripts/vault.mjs` and the `bw` CLI instead of chat,
+  `.env` files or git ([docs/secrets.md](docs/secrets.md)).
 - **Idea validation**: `/validate-idea` in Claude Code chains an opt-in, pinned founder-skill plugin
   (board, competitors, buyer panel, pricing, CFO), adds SaaS unit economics and ends with a waitlist
   page, price survey and interview plan ([docs/validate-idea.md](docs/validate-idea.md)).

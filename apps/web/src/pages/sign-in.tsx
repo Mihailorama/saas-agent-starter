@@ -54,6 +54,14 @@ export const safeRedirect = (value: unknown) =>
 /** Seconds before another code may be mailed (the API enforces the same per address). */
 const RESEND_AFTER = 30;
 
+/** Referral the visitor arrived with (`?ref=<code>`, or Dub's `?dub_id=`; docs/growth.md). It
+ * stays in the URL, nothing is stored in the browser, and goes with the code sign-in only (the
+ * server keeps it only when that sign-in creates the account). */
+const referral = () => {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('ref') ?? params.get('dub_id') ?? undefined;
+};
+
 /** Better Auth's email-otp error codes, in words a person can act on. */
 const codeError = (e: { code?: string; status?: number; message?: string }) =>
   e.code === 'INVALID_OTP'
@@ -75,6 +83,7 @@ export function SignInPage() {
   const [error, setError] = useState<string>();
   const [wait, setWait] = useState(0);
   const [pending, setPending] = useState(false);
+  const [ref] = useState(referral);
   const { data: config } = useQuery({
     queryKey: ['auth-config'],
     queryFn: () => ok(client.GET('/api/auth-config')),
@@ -124,7 +133,7 @@ export function SignInPage() {
   async function verify(otp: string) {
     if (!email) return;
     setPending(true);
-    const { data, error } = await authClient.signIn.emailOtp({ email, otp });
+    const { data, error } = await authClient.signIn.emailOtp({ email, otp, referralCode: ref });
     setPending(false);
     if (error) {
       setCode('');

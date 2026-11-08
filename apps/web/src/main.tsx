@@ -121,6 +121,20 @@ const apiKeysRoute = createRoute({
   component: lazyRouteComponent(() => import('@/pages/api-keys'), 'ApiKeysPage'),
 });
 
+const membersRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/members',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Members' }] },
+  component: lazyRouteComponent(() => import('@/pages/members'), 'MembersPage'),
+});
+
+const referralsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/referrals',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Referrals' }] },
+  component: lazyRouteComponent(() => import('@/pages/referrals'), 'ReferralsPage'),
+});
+
 const webhooksRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/webhooks',
@@ -198,6 +212,8 @@ const router = createRouter({
       securityRoute,
       privacyRoute,
       apiKeysRoute,
+      membersRoute,
+      referralsRoute,
       webhooksRoute,
       aiProvidersRoute,
       mcpServersRoute,

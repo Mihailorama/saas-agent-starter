@@ -2,7 +2,7 @@
 // VITE_CHATWOOT_BASE_URL / VITE_CHATWOOT_WEBSITE_TOKEN are empty. The widget script loads only
 // when the user opens Help, so nobody's browser talks to the service desk before they ask.
 import { sessionReplayUrl, track } from '@/lib/analytics';
-import { lastTraceId } from '@/lib/api';
+import { client, lastTraceId, ok } from '@/lib/api';
 
 const baseUrl = import.meta.env.VITE_CHATWOOT_BASE_URL as string | undefined;
 const websiteToken = import.meta.env.VITE_CHATWOOT_WEBSITE_TOKEN as string | undefined;
@@ -90,4 +90,15 @@ export async function openSupport(kind: RequestKind, orgId: string | undefined) 
 /** On sign-out: forget the widget's contact so the next user starts clean. */
 export function resetSupport() {
   w.$chatwoot?.reset();
+}
+
+// Lite Telegram support (docs/support.md "Lite: Telegram only"): the bot's username, build time.
+const telegramBot = import.meta.env.VITE_TELEGRAM_SUPPORT_BOT as string | undefined;
+export const telegramConfigured = Boolean(telegramBot);
+
+/** Deep link to the support bot: a signed payload, valid once for 10 minutes, that tells the
+ * team which app user writes. */
+export async function telegramLink(): Promise<string> {
+  const { start } = await ok(client.GET('/api/support/telegram'));
+  return `https://t.me/${telegramBot}?start=${start}`;
 }

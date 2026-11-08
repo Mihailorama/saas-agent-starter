@@ -57,8 +57,10 @@ type OrgDetail = {
     currency: string;
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
+    contractRef: string | null;
     dashboardUrl: string | null;
   } | null;
+  contractPlans: { id: string; name: string; currencies: string[] }[];
   planId: string;
   planName: string;
   period: { start: string; end: string };
@@ -79,6 +81,15 @@ type OrgDetail = {
     disabledReason: string | null;
     consecutiveFailures: number;
     eventTypes: string[];
+  }[];
+  pendingRewards: {
+    id: string;
+    status: 'pending_manual' | 'reserved';
+    ruleId: string;
+    reward: Record<string, unknown>;
+    key: string;
+    providerRef: string | null;
+    createdAt: string;
   }[];
   audit: {
     id: string;
@@ -330,6 +341,88 @@ function LimitsDialog({ org, onDone }: { org: OrgDetail; onDone: () => Promise<u
   );
 }
 
+/** A negotiated contract (docs/billing.md "Contract"): plan, currency, reference and period. */
+function ContractDialog({ org, onDone }: { org: OrgDetail; onDone: () => Promise<unknown> }) {
+  const options = org.contractPlans.flatMap((p) =>
+    p.currencies.map((c) => ({ value: `${p.id}|${c}`, label: `${p.name} (${c})` })),
+  );
+  if (!options.length) return null;
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  const now = new Date();
+  return (
+    <ReasonDialog
+      trigger={
+        <Button variant="outline" size="sm">
+          Set contract
+        </Button>
+      }
+      title="Set contract"
+      description="Plan and period of a signed contract you invoice yourself. At the period end it becomes past due unless you extend it. Contracts invoiced by Stripe are created in the Stripe dashboard."
+      confirm="Save contract"
+      onConfirm={async (reason, form) => {
+        const [planId, currency] = String(form.get('plan')).split('|');
+        const date = (k: string) => new Date(`${form.get(k)}T00:00:00Z`).toISOString();
+        await api(`/api/admin/orgs/${org.id}/contract`, {
+          method: 'PUT',
+          json: {
+            reason,
+            planId,
+            currency,
+            contractRef: String(form.get('contractRef')),
+            periodStart: date('periodStart'),
+            periodEnd: date('periodEnd'),
+          },
+        });
+        toast.success('Contract saved');
+        await onDone();
+      }}
+    >
+      <div className="space-y-2">
+        <Label htmlFor="contract-plan">Plan</Label>
+        <select id="contract-plan" name="plan" className={selectClass}>
+          {options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="contract-ref">Contract reference</Label>
+        <Input
+          id="contract-ref"
+          name="contractRef"
+          required
+          maxLength={200}
+          defaultValue={org.subscription?.contractRef ?? ''}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-2">
+          <Label htmlFor="contract-start">Period start</Label>
+          <Input
+            id="contract-start"
+            name="periodStart"
+            type="date"
+            required
+            defaultValue={day(now)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="contract-end">Period end</Label>
+          <Input
+            id="contract-end"
+            name="periodEnd"
+            type="date"
+            required
+            defaultValue={day(new Date(now.getTime() + 365 * 86_400_000))}
+          />
+        </div>
+      </div>
+    </ReasonDialog>
+  );
+}
+
 export function AdminOrgPage() {
   const { orgId } = useParams({ from: '/admin/orgs/$orgId' });
   const queryClient = useQueryClient();
@@ -401,7 +494,7 @@ export function AdminOrgPage() {
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Section title="Subscription">
+        <Section title="Subscription" action={<ContractDialog org={o} onDone={refresh} />}>
           {o.subscription ? (
             <dl className="grid grid-cols-2 gap-2 text-sm">
               <dt className="text-muted-foreground">Status</dt>
@@ -415,6 +508,12 @@ export function AdminOrgPage() {
               </dd>
               <dt className="text-muted-foreground">Paid until</dt>
               <dd>{dateTime(o.subscription.currentPeriodEnd)}</dd>
+              {o.subscription.contractRef && (
+                <>
+                  <dt className="text-muted-foreground">Contract</dt>
+                  <dd>{o.subscription.contractRef}</dd>
+                </>
+              )}
             </dl>
           ) : (
             <p className="text-sm text-muted-foreground">No subscription: default plan.</p>
@@ -575,6 +674,70 @@ export function AdminOrgPage() {
           </Table>
         </Section>
       </div>
+
+      {o.pendingRewards.length > 0 && (
+        <Section
+          title="Rewards to apply"
+          description="Not applied by the billing provider (manual contract, provider failing), or reserved for over an hour by a stuck workflow. Check the provider for the idempotency key first: it may have applied it already. Then apply it as a credit note or invoice line and mark it, or release a stuck reservation."
+        >
+          <Table>
+            <TableBody>
+              {o.pendingRewards.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell>
+                    {r.ruleId}
+                    {r.status === 'reserved' && <Badge variant="outline">stuck</Badge>}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{JSON.stringify(r.reward)}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {r.key}
+                    {r.providerRef && ` (${r.providerRef})`}
+                  </TableCell>
+                  <TableCell>{dateTime(r.createdAt)}</TableCell>
+                  <TableCell className="text-right">
+                    <ReasonDialog
+                      trigger={
+                        <Button size="sm" variant="outline">
+                          Mark applied
+                        </Button>
+                      }
+                      title="Mark the reward applied"
+                      description="The credit note or invoice reference; it goes to the organization's audit log."
+                      confirm="Mark applied"
+                      onConfirm={async (reason) => {
+                        await api(`/api/admin/orgs/${o.id}/rewards/${r.id}/applied`, {
+                          method: 'POST',
+                          json: { reason },
+                        });
+                        await refresh();
+                      }}
+                    />
+                    {r.status === 'reserved' && (
+                      <ReasonDialog
+                        trigger={
+                          <Button size="sm" variant="ghost">
+                            Release
+                          </Button>
+                        }
+                        title="Release the reservation"
+                        description="Nothing is applied; the reservation stops counting against the rule's cap. The reason goes to the organization's audit log."
+                        confirm="Release"
+                        onConfirm={async (reason) => {
+                          await api(`/api/admin/orgs/${o.id}/rewards/${r.id}/release`, {
+                            method: 'POST',
+                            json: { reason },
+                          });
+                          await refresh();
+                        }}
+                      />
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Section>
+      )}
 
       <Section
         title="Recent audit events"

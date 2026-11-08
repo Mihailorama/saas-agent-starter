@@ -24,6 +24,7 @@ from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import Byo, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
+from worker.credits import CreditActivities, Credits, StripeCredits
 from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
@@ -32,27 +33,35 @@ from worker.mcp import McpConfig
 from worker.posthog import PostHogAi
 from worker.privacy import PrivacyActivities, configured_tools
 from worker.providers import load_providers, providers_from_config
+from worker.rewards import RewardActivities, load_rules, same_domain_blocked
 from worker.s3 import S3
 from worker.support import Chatwoot, SupportActivities
+from worker.telegram import Bot, TelegramActivities
 from worker.text import backend
 from worker.tracker import TrackerActivities
 from worker.tracker import connect as tracker_connect
+from worker.usage import StripeMeters, UsageActivities
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
+    ContractPeriodWorkflow,
     CrmSyncWorkflow,
     DataDeletionWorkflow,
     DataExportWorkflow,
     PrivacyRetentionWorkflow,
     ProjectCreatedWorkflow,
+    RewardWorkflow,
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
+    TelegramChatWorkflow,
     TrackerItemWorkflow,
+    UsageReportWorkflow,
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
     ensure_maintenance_schedule,
     ensure_retention_schedule,
+    ensure_usage_schedule,
 )
 
 log = logging.getLogger("worker")
@@ -160,7 +169,20 @@ async def main() -> None:
     )
     await ensure_maintenance_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     await ensure_retention_schedule(client, settings.TEMPORAL_TASK_QUEUE)
+    await ensure_usage_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
+    stripe = (settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)
+    credits: dict[str, Credits] = (
+        {"stripe": StripeCredits(http, *stripe)} if settings.STRIPE_SECRET_KEY else {}
+    )
+    credit_grants = CreditActivities(pool, plans, credits)
+    if ai:
+        ai.credits = credits  # built before the HTTP client
+    usage = UsageActivities(
+        pool,
+        plans,
+        {"stripe": StripeMeters(http, *stripe)} if settings.STRIPE_SECRET_KEY else {},
+    )
     files = S3(
         endpoint=settings.S3_ENDPOINT,
         region=settings.S3_REGION,
@@ -192,7 +214,27 @@ async def main() -> None:
     )
     tracker = await tracker_connect(http)  # refuses a completed/cancelled target state
     tracker_items = TrackerActivities(tracker, files)
+    s = settings
+    telegram = (
+        TelegramActivities(
+            bot=Bot(s.TELEGRAM_SUPPORT_BOT_TOKEN, http, s.TELEGRAM_API_URL),
+            token=s.TELEGRAM_SUPPORT_BOT_TOKEN,
+            chat_id=s.TELEGRAM_SUPPORT_CHAT_ID,
+            pool=pool,
+            tracker=tracker,
+            files=files,
+        )
+        if s.TELEGRAM_SUPPORT_BOT_TOKEN and s.TELEGRAM_SUPPORT_CHAT_ID
+        else None
+    )
+    if (
+        telegram
+        and s.TELEGRAM_SUPPORT_WEBHOOK_URL
+        and await flags.is_enabled("telegram-support", user_id="telegram")
+    ):
+        await telegram.register_webhook(s.TELEGRAM_SUPPORT_WEBHOOK_URL)
     support = SupportActivities(
+        telegram=telegram,
         chatwoot=chatwoot,
         tracker=tracker,
         ai=ai,
@@ -211,6 +253,14 @@ async def main() -> None:
         files=files,
         booking_url=settings.BOOKING_PUBLIC_URL,
     )
+    rewards = RewardActivities(
+        pool,
+        load_rules(settings.REWARDS_FILE),
+        http,
+        settings.API_INTERNAL_URL,
+        settings.INTERNAL_API_TOKEN,
+        same_domain_blocked(settings.REWARDS_FILE),
+    )
     if chatwoot and triage_model and ai:
         await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio
     stop = asyncio.Event()
@@ -223,23 +273,36 @@ async def main() -> None:
         workflows=[
             ProjectCreatedWorkflow,
             BillingEventWorkflow,
+            ContractPeriodWorkflow,
             CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
+            TelegramChatWorkflow,
             TrackerItemWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,
             DataExportWorkflow,
             DataDeletionWorkflow,
             PrivacyRetentionWorkflow,
+            UsageReportWorkflow,
+            RewardWorkflow,
         ],
         activities=[
             activities.fingerprint_project,
             activities.summarize_project,
             billing.apply_billing_event,
+            billing.end_contract_period,
+            usage.usage_orgs,
+            usage.report_org_usage,
+            credit_grants.grant_credits,
+            credit_grants.record_grant_failure,
+            rewards.reserve,
+            rewards.apply,
+            rewards.record,
             crm.sync,
             support.triage,
             support.issue_closed,
+            *([telegram.handle] if telegram else []),
             tracker_items.file_item,
             webhooks.deliver_webhook,
             webhooks.prune_webhooks,
@@ -271,11 +334,13 @@ async def main() -> None:
     async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
-            " support: chatwoot %s, tracker %s, triage model %s, privacy tools: %s, crm %s)",
+            " support: chatwoot %s, telegram %s, tracker %s, triage model %s, privacy tools: %s,"
+            " crm %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
             "on" if chatwoot else "dry run",
+            "on" if telegram else "off",
             tracker.name,
             triage_model or "off",
             ",".join(t.name for t in privacy_tools.all) or "none",

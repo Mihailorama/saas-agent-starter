@@ -16,7 +16,7 @@ import { adminUserRoutes } from './admin-users.ts';
  */
 
 export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
-  app.setErrorHandler(errorHandler); // inherited by the two route plugins below
+  app.setErrorHandler(errorHandler); // inherited by the route plugins below
   const op = { preHandler: requireOperator, schema: { tags: ['admin'], hide: true } };
   app.get(
     '/me',

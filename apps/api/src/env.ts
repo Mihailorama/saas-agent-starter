@@ -108,6 +108,13 @@ const schema = z
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     /** Only for stripe-mock in tests/dev, e.g. http://localhost:12111; empty = api.stripe.com. */
     STRIPE_API_URL: z.union([z.url(), z.literal('')]).optional(),
+    /** Shared with the worker: it asks /internal/rewards to apply money rewards through the
+     * billing provider (docs/growth.md). Empty = route off; such rewards wait for operators. */
+    INTERNAL_API_TOKEN: z.string().optional(),
+    /** Connect Dub Partners instead of Stripe-native referrals (docs/growth.md); empty = native. */
+    DUB_API_KEY: z.string().optional(),
+    /** Only for tests; empty = https://api.dub.co. */
+    DUB_API_URL: z.union([z.url(), z.literal('')]).optional(),
     // Service desk (docs/support.md). Every secret empty = that endpoint is off (401/404).
     /** Secret of the Chatwoot account webhook (Settings -> Integrations -> Webhooks). */
     CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
@@ -118,6 +125,13 @@ const schema = z
     /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
     PLANE_WEBHOOK_SECRET: z.string().optional(),
     PLANE_PROJECT_ID: z.string().optional(),
+    /**
+     * Lite Telegram support (docs/support.md "Lite: Telegram only", flag `telegram-support`). The
+     * bot token also derives the webhook secret and the deep-link signing key (worker: the same).
+     */
+    TELEGRAM_SUPPORT_BOT_TOKEN: z.string().optional(),
+    /** The forum supergroup the team answers in, e.g. -1001234567890. */
+    TELEGRAM_SUPPORT_CHAT_ID: z.string().optional(),
     /** Secret of the Cal.com webhook (booking -> CRM activity, docs/crm.md); empty = off (401). */
     BOOKING_WEBHOOK_SECRET: z.string().optional(),
     // Operator console (docs/admin.md). Empty list = no operators, /api/admin answers 403.
@@ -155,6 +169,7 @@ const schema = z
         e.CHATWOOT_HMAC_TOKEN,
         e.GITHUB_WEBHOOK_SECRET,
         e.BOOKING_WEBHOOK_SECRET,
+        e.INTERNAL_API_TOKEN,
       ].some((v) => v?.startsWith('local-dev')),
     { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   )

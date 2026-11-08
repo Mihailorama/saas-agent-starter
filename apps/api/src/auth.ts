@@ -9,6 +9,8 @@ import { admin, emailOTP, genericOAuth, organization, twoFactor } from 'better-a
 import { z } from 'zod';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
+import { attachReferral, cleanReferral } from './billing/referrals.ts';
+import { triggerRewards } from './billing/rewards.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
@@ -93,6 +95,8 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
   // vouches for): an unverified sign-up must not claim a CRM person who has that email.
+  // Referral the sign-up came with (docs/growth.md); only a well-formed code is stored.
+  user: { additionalFields: { referralCode: { type: 'string', required: false, input: true } } },
   // Disposable addresses (signup-guard.ts) are refused on every user write: email sign-up, SSO,
   // operator-created users and an email change. Invitations are checked in organizationHooks.
   databaseHooks: {
@@ -101,17 +105,29 @@ export const auth = betterAuth({
         // A code sign-up sends no name; mails and invitations greet by it, so start with the
         // address's local part (the user can change it).
         before: async (user) => {
-          assertAllowedEmail(user.email);
-          return { data: { ...user, name: user.name || user.email.split('@')[0] } };
+          await assertAllowedEmail(user.email);
+          return {
+            data: {
+              ...user,
+              name: user.name || user.email.split('@')[0],
+              referralCode: cleanReferral(user.referralCode),
+            },
+          };
         },
         after: async (user) => {
           if (user.emailVerified) await personSync(user.id);
         },
       },
-      update: { before: async (user) => assertAllowedEmail(user.email) },
+      update: {
+        // The referral is set at sign-up only: update-user cannot change it (docs/growth.md).
+        before: async (user) => {
+          assertAllowedEmail(user.email);
+          return { data: { ...user, referralCode: undefined } };
+        },
+      },
     },
   },
-  // Passwordless (ADR 0029): one-time e-mail codes, passkeys and SSO. No passwords anywhere.
+  // Passwordless (ADR 0033): one-time e-mail codes, passkeys and SSO. No passwords anywhere.
   emailAndPassword: { enabled: false },
   // Code sign-in verifies the address itself; this covers OIDC users the IdP does not vouch for.
   emailVerification: { afterEmailVerification: (user) => personSync(user.id) },
@@ -140,13 +156,33 @@ export const auth = betterAuth({
         beforeCreateOrganization: checkMetadata,
         beforeUpdateOrganization: checkMetadata,
         beforeCreateInvitation: async ({ invitation }) => assertAllowedEmail(invitation.email),
-        afterCreateOrganization: ({ organization, user }) =>
-          crmSync({
+        afterCreateOrganization: async ({ organization, user }) => {
+          await attachReferral(organization.id, user.id);
+          await crmSync({
             kind: 'org.created',
             eventId: `org:${organization.id}`,
             orgId: organization.id,
             userId: user.id,
-          }),
+          });
+        },
+        // Rewards (docs/growth.md): both run after Better Auth committed the change. The worker
+        // re-checks the conditions (verified, still a member after holdDays; profile complete).
+        afterAcceptInvitation: async ({ member, user, organization }) => {
+          await triggerRewards('invitation.accepted', {
+            orgId: organization.id,
+            subject: member.userId,
+            userId: user.id,
+          });
+        },
+        afterUpdateOrganization: async ({ organization, user }) => {
+          if (!organization) return;
+          await triggerRewards('org.profile_completed', {
+            orgId: organization.id,
+            subject: organization.id,
+            userId: user.id,
+            metadata: organization.metadata,
+          });
+        },
       },
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>

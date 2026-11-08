@@ -111,6 +111,9 @@ describe('plans and entitlements', () => {
     llmSpendLimits: null,
     lastEventAt: null,
     updatedAt: new Date(),
+    seats: null,
+    contractRef: null,
+    usageReportedUntil: null,
     ...over,
   });
   const now = new Date('2026-11-20T00:00:00Z');
@@ -164,7 +167,9 @@ describe('plans and entitlements', () => {
           const price = plan.prices[cur];
           expect(price, `${id} price in ${cur}`).toBeDefined();
           // Stripe charges a price object.
-          if (c.provider === 'stripe') expect(price!.providerPriceId).toBeTruthy();
+          if (c.provider === 'stripe') {
+            for (const part of price!) expect(part.providerPriceId).toBeTruthy();
+          }
         }
       }
     }

@@ -12,9 +12,12 @@ ARG VITE_SENTRY_RELEASE=dev
 # Analytics sinks are compiled in; all empty = no analytics requests (docs/product-analytics.md).
 ARG VITE_RELEASE=dev VITE_POSTHOG_KEY= VITE_POSTHOG_HOST= VITE_POSTHOG_AI_FEEDBACK_SURVEY_ID= \
     VITE_POSTHOG_AI_FEEDBACK_QUESTION_ID= VITE_UMAMI_SCRIPT_URL= VITE_UMAMI_WEBSITE_ID= \
-    VITE_GA4_ID= VITE_YM_ID= VITE_YM_WEBVISOR= VITE_LANGFUSE_PUBLIC_KEY= VITE_LANGFUSE_HOST=
+    VITE_GA4_ID= VITE_YM_ID= VITE_YM_WEBVISOR= VITE_LANGFUSE_PUBLIC_KEY= VITE_LANGFUSE_HOST= \
+    VITE_FORMBRICKS_WORKSPACE_ID= VITE_FORMBRICKS_API_HOST=
 # In-app help widget (Chatwoot); both empty = no Help entry, no request (docs/support.md).
 ARG VITE_CHATWOOT_BASE_URL= VITE_CHATWOOT_WEBSITE_TOKEN=
+# Telegram support bot's username (flag `telegram-support`); empty = no Telegram entry.
+ARG VITE_TELEGRAM_SUPPORT_BOT=
 # "Talk to us" booking link (Cal.diy / Cal.com, docs/crm.md); empty = no entry; flag `booking`.
 ARG VITE_BOOKING_ORIGIN= VITE_BOOKING_LINK=
 # Feature flag overrides (docs/feature-flags.md), comma-separated names.

@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -28,22 +29,28 @@ from worker.ai import (
     Gateway,
     Message,
     ModelNotAllowed,
-    Price,
     load_registry,
 )
+from worker.ai import Price as ModelPrice
 from worker.billing import (
     BillingActivities,
     BillingEvent,
+    ContractPeriod,
+    Price,
     SpendLimitExceeded,
     UsageLimitExceeded,
+    from_minor,
     llm_budget,
     load_plans,
+    to_minor,
 )
 from worker.providers import ProviderConfig, load_providers
 from worker.s3 import S3
-from worker.workflows import BillingEventWorkflow
+from worker.workflows import BillingEventWorkflow, ContractPeriodWorkflow
 
 PLANS = load_plans(settings.PLANS_FILE)
+# One plan per pricing model, shared with the API tests.
+FIXTURE_PLANS = Path(__file__).resolve().parents[3] / "apps/api/test/fixtures/plans.json"
 reader = InMemoryMetricReader()
 metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
 provider_calls: list[str] = []
@@ -72,7 +79,7 @@ async def s3() -> AsyncIterator[S3]:
 
 @pytest.fixture
 def gateway(pool: asyncpg.Pool, s3: S3) -> Gateway:
-    price = Price(Decimal("0.001"), Decimal("0.002"), "USD")  # 1000 in + 100 out = 0.0012
+    price = ModelPrice(Decimal("0.001"), Decimal("0.002"), "USD")  # 1000 in + 100 out = 0.0012
     return Gateway(
         pool=pool,
         s3=s3,
@@ -379,7 +386,7 @@ async def test_rate_limited_call_falls_back_once(pool: asyncpg.Pool, s3: S3) -> 
             ("fake", "self-hosted"): AllowedModel(allowed, None, True, Fallback("sub", "m")),
             ("sub", "no-fallback"): AllowedModel(allowed, None, True),
             ("sub", "to-unconfigured"): AllowedModel(allowed, None, True, Fallback("api", "x")),
-            ("api", "x"): AllowedModel(allowed, Price(Decimal(1), Decimal(1), "USD")),
+            ("api", "x"): AllowedModel(allowed, ModelPrice(Decimal(1), Decimal(1), "USD")),
         },
         providers={"sub": rate_limited, "fake": fake, "api": fake},
         provider_configs={
@@ -440,7 +447,7 @@ def test_price_override_wins_then_litellm_map_then_refusal() -> None:
         registry=registry
         | {
             ("anthropic", "overridden"): AllowedModel(
-                frozenset(), Price(Decimal(5), Decimal(6), "EUR")
+                frozenset(), ModelPrice(Decimal(5), Decimal(6), "EUR")
             )
         }
         | {("anthropic", "unknown-model"): AllowedModel(frozenset({"project.summary"}), None)},
@@ -448,10 +455,62 @@ def test_price_override_wins_then_litellm_map_then_refusal() -> None:
         provider_configs=configs,
         retention_days=1,
     )
-    assert gw.price_of("anthropic", "claude-haiku-5-5") == Price(
+    assert gw.price_of("anthropic", "claude-haiku-5-5") == ModelPrice(
         Decimal("0.0001"), Decimal("0.0005"), "USD"
     )
-    assert gw.price_of("anthropic", "overridden") == Price(Decimal(5), Decimal(6), "EUR")
+    assert gw.price_of("anthropic", "overridden") == ModelPrice(Decimal(5), Decimal(6), "EUR")
     assert gw.price_of("claude_cli", "claude-haiku-5-5") is None  # subscription: unmetered
     with pytest.raises(ModelNotAllowed, match="no price"):
         gw._route("project.summary", "anthropic", "unknown-model")  # pyright: ignore[reportPrivateUsage]
+
+
+def test_price_models_parse_and_old_prices_stay_flat() -> None:
+    assert PLANS.plans["pro"].prices["USD"] == [Price("flat", "29.00", "month")]  # no `model`
+    examples = load_plans(FIXTURE_PLANS).plans
+    assert [p.model for p in examples["growth"].prices["USD"]] == ["flat", "metered"]
+    assert examples["enterprise"].prices["USD"] == [Price("contract")]
+
+
+async def test_contract_period_end_marks_past_due_once(pool: asyncpg.Pool) -> None:
+    acts = BillingActivities(pool, PLANS)
+    org_id, renewed = await new_org(pool), await new_org(pool)
+    end = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=2)
+    for org in (org_id, renewed):
+        await subscribe(pool, org, provider="manual", current_period_end=end, contract_ref="PO-1")
+    # An operator extended this one before the timer fired: the old timer changes nothing.
+    await in_org(pool, renewed, "update subscriptions set current_period_end = $1", end + DAYS)
+    queue = f"test-{uuid.uuid4()}"
+    client = await Client.connect(settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE)
+    async with Worker(
+        client,
+        task_queue=queue,
+        workflows=[ContractPeriodWorkflow],
+        activities=[acts.end_contract_period],
+    ):
+        for org, expected in ((org_id, "past_due"), (renewed, "unchanged")):
+            result = await client.execute_workflow(
+                ContractPeriodWorkflow.run,
+                ContractPeriod(org, end.isoformat()),
+                id=f"billing-contract-{org}-{int(end.timestamp() * 1000)}",
+                task_queue=queue,
+            )
+            assert result == expected
+    assert await acts.end_contract_period(ContractPeriod(org_id, end.isoformat())) == "unchanged"
+    [sub] = await in_org(pool, org_id, "select status from subscriptions")
+    assert sub["status"] == "past_due"
+    audit = await in_org(pool, org_id, "select action from audit_log")
+    assert [a["action"] for a in audit] == ["billing.contract.past_due"]
+    [sub] = await in_org(pool, renewed, "select status from subscriptions")
+    assert sub["status"] == "active"
+
+
+DAYS = timedelta(days=30)
+
+
+def test_minor_units_per_currency() -> None:  # twin of apps/api/src/billing/money.ts
+    assert [to_minor("29.00", "USD"), to_minor("3000", "JPY"), to_minor("9.500", "KWD")] == [
+        2900,
+        3000,
+        9500,
+    ]
+    assert from_minor(9500, "KWD") == Decimal("9.5")

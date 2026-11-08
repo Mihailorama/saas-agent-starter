@@ -15,6 +15,10 @@ The core is the same everywhere:
 The default target runs that core with plain `docker compose` on one server over SSH. Coolify,
 Kubernetes and customer on-prem are documented options at the end.
 
+**Fresh server? Use `pnpm run infra`** ([setup.md](setup.md)): it does sections 2 to 4 for you
+(questions, server bootstrap, the encrypted env file, the deploy, checks). This guide is what it
+runs underneath, and the manual path.
+
 Components (licenses in [LICENSES.md](LICENSES.md)): Caddy 2.11 (Apache-2.0), SOPS 3.13
 (MPL-2.0, operator CLI) with age 1.3 (BSD-3-Clause), Docker Compose, GHCR. No new code dependency.
 
@@ -98,9 +102,12 @@ pnpm run deploy -- production --status
 What `deploy` does:
 
 1. Decrypts `deploy/env/production.enc.env`, resolves `IMAGE_REPO/{api,worker,web}:v1.4.0` to
-   digests in the registry (`docker buildx imagetools inspect`).
-2. **Stage** (nothing running changes): writes the new `compose.yaml`, `Caddyfile`, Temporal
-   files, `secrets.env` and `release.env` as `*.next` on the server and pulls the images. A
+   digests through the registry's HTTP API (no Docker needed on your machine; a private
+   registry: `REGISTRY_AUTH=user:token`). `IMAGE_REPO` defaults to the upstream images,
+   `ghcr.io/mihailorama/saas-agent-starter`, until your fork has its own release.
+2. **Stage** (nothing running changes): writes the new `compose.yaml`, `Caddyfile`, the sites
+   of the enabled profiles (`deploy/sites/<profile>.caddy` -> `sites/`), Temporal files,
+   `secrets.env` and `release.env` as `*.next` on the server and pulls the images. A
    failure here leaves the old release untouched.
 3. **Pre-migration backup**: the backup sidecar on the server takes a differential pgBackRest
    backup (what `pnpm run backup:now` does locally). No sidecar or a failed backup stops the
@@ -127,12 +134,14 @@ deployed version. To roll those back too, check out the old tag and deploy it wi
 `--version <old tag>`. The database is never rolled back; expand/contract (section 5) keeps the
 previous release working on the newer schema.
 
-Server layout (`DEPLOY_PATH`): `compose.yaml`, `Caddyfile`, `temporal-*.{sh,yaml}`, `secrets.env`,
+Server layout (`DEPLOY_PATH`): `compose.yaml`, `Caddyfile`, `sites/`, `db-init.sh`, `temporal-*.{sh,yaml}`, `secrets.env`,
 `release.env`, `release.prev.env`, `release.good.env`, `.env` (= secrets + release, read by compose), `deploy.log`.
 Day-to-day commands work there directly: `cd /opt/app && docker compose logs -f api`.
 
-Profiles in `COMPOSE_PROFILES`: `db` (Postgres on the box), `s3` (SeaweedFS on the box; for
-browser uploads also enable the S3 site in `deploy/Caddyfile`), `ops` (Temporal UI on
+Profiles in `COMPOSE_PROFILES`: `db` (Postgres on the box), `s3` (SeaweedFS on the box; Caddy
+serves `S3_PUBLIC_ENDPOINT` for browser uploads, `deploy/sites/s3.caddy`), `analytics` (Umami on
+`UMAMI_PUBLIC_URL`, its database created by the `umami-db` one-shot; `pnpm run infra` replaces
+its default admin password), `ops` (Temporal UI on
 `127.0.0.1:8233`, reach it with `ssh -L 8233:127.0.0.1:8233`). Deliveries that ban AGPL/SSPL
 containers set `REDIS_IMAGE=valkey/valkey:9.1-alpine`. Observability (`docker-compose.yml`
 profile) is not part of the production file yet, nor are Langfuse (`llmops`) and Chatwoot
@@ -173,6 +182,22 @@ uncomment the booking site in `deploy/Caddyfile`), `CALDIY_NEXTAUTH_SECRET`,
 ~0.7-1 GiB (docs/STACK.md). Using a Cal.diy you already run, or Cal.com Cloud: leave the
 profile off and set only `BOOKING_PUBLIC_URL`, `BOOKING_WEBHOOK_SECRET`, `BOOKING_ORIGINS` and the
 `VITE_BOOKING_*` build variables to it.
+
+The secrets vault (Vaultwarden, [docs/secrets.md](secrets.md)) is the `vault` profile. Its
+database lives next to the app's (so the backups cover it): with Postgres on the box, set
+`VAULT_DB_PASSWORD` and the `vault-db` one-shot creates role and database (`pnpm run infra` does
+that). Otherwise create them once with the password typed at a prompt, never in argv or shell
+history: `psql "$MIGRATION_DATABASE_URL"`, then `create role vaultwarden login;`,
+`\password vaultwarden`, `create database vaultwarden owner vaultwarden;`. Set
+`VAULT_DATABASE_URL`, `VAULT_PUBLIC_URL` (its own domain, served by `deploy/sites/vault.caddy`;
+the `bw` CLI requires HTTPS) and, only while you invite the accounts,
+`VAULT_ADMIN_TOKEN`: an argon2 hash (`vaultwarden hash`, `$` doubled), the container refuses
+anything else. `/admin` answers 403 except from `VAULT_ADMIN_IPS`. `VAULT_SMTP_*` sends the
+invitations. Using Bitwarden Cloud or a Vaultwarden you already run: leave the profile off.
+
+Values for these env files come from the vault, not from a chat or a scratch file: `node
+scripts/vault.mjs get <item> <field> --stdout | jq -Rs . | sops set --value-stdin
+deploy/env/production.enc.env '["<KEY>"]'` (sops 3.10+, docs/secrets.md "Vault to deploy").
 
 ### GitHub Actions (optional)
 

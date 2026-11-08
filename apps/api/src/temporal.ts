@@ -74,6 +74,34 @@ export const supportClosedWorkflowId = (e: SupportIssueClosed, closeId: string) 
   `support-closed-${e.tracker}-${e.issueId}-${closeId}`;
 export const startSupportIssueClosed = (e: SupportIssueClosed, closeId: string) =>
   startOnce('SupportIssueClosedWorkflow', supportClosedWorkflowId(e, closeId), e);
+/**
+ * Lite Telegram support (docs/support.md). Contract with services/worker-py (worker/telegram.py):
+ * ids only; the worker copies messages by id, so their content stays in Telegram. `userId` is the
+ * app user of a verified `/start` link, `s3Key` the redacted title of a `/bug` or `/feature`.
+ */
+export type TelegramUpdate = {
+  chatId: number;
+  messageId: number;
+  fromId: number;
+  threadId?: number;
+  command?: 'start' | 'bug' | 'feature' | 'other';
+  userId?: string;
+  linkFailed?: boolean;
+  s3Key?: string;
+  lang?: string;
+};
+export const telegramChatWorkflowId = (u: TelegramUpdate) =>
+  `telegram-chat-${u.chatId}-${u.threadId ?? 0}`;
+/** One workflow per chat or topic relays its messages in order; each message is a signal. */
+export async function queueTelegramUpdate(u: TelegramUpdate) {
+  await (await temporal()).workflow.signalWithStart('TelegramChatWorkflow', {
+    taskQueue: env.TEMPORAL_TASK_QUEUE,
+    workflowId: telegramChatWorkflowId(u),
+    args: [{ pending: [], seen: [] }],
+    signal: 'message',
+    signalArgs: [u],
+  });
+}
 /** CRM sync (docs/crm.md). Contract with services/worker-py (worker/crm.py, CrmEvent). Ids only. */
 export type CrmEvent = {
   kind: 'user.created' | 'org.created' | 'signal' | 'support.conversation' | 'booking';
@@ -146,6 +174,15 @@ export async function startBillingEvent(event: BillingEvent) {
   }
 }
 
+/** Contract with services/worker-py (worker/billing.py ContractPeriod). */
+export type ContractPeriod = { orgId: string; periodEnd: string };
+/**
+ * A durable timer to the end of a manual contract's period (ContractPeriodWorkflow): then the
+ * worker marks it `past_due` unless the period was extended meanwhile. One per org and end.
+ */
+export const startContractPeriod = (p: ContractPeriod) =>
+  startOnce('ContractPeriodWorkflow', `billing-contract-${p.orgId}-${Date.parse(p.periodEnd)}`, p);
+
 /** Contract with services/worker-py (worker/webhooks.py): ids only, the payload stays in the DB. */
 export type WebhookEvent = {
   orgId: string;
@@ -205,3 +242,22 @@ export async function signalPrivacyCancel(requestId: string) {
     .getHandle(privacyWorkflowId({ kind: 'deletion', requestId }))
     .signal('cancel');
 }
+
+/**
+ * Contract with services/worker-py (worker/rewards.py, RewardRequest): one rule for one subject
+ * (docs/growth.md). The id makes a rule reward a subject at most once, whoever triggers it again.
+ */
+export type RewardRequest = {
+  orgId: string;
+  ruleId: string;
+  /** What the rule counts once: invited user id, the org id, the referred org id. */
+  subject: string;
+  /** User whose action triggered it (invitation: the new member, checked again after the hold). */
+  userId: string | null;
+  /** From config/rewards.json: the worker waits this long, then checks the conditions. */
+  holdDays: number;
+};
+export const rewardWorkflowId = (r: Pick<RewardRequest, 'orgId' | 'ruleId' | 'subject'>) =>
+  `reward-${r.orgId}-${r.ruleId}-${r.subject}`;
+export const startReward = (r: RewardRequest) =>
+  startOnce('RewardWorkflow', rewardWorkflowId(r), r);

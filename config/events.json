@@ -79,6 +79,16 @@
       "pii": false,
       "props": {}
     },
+    "referral_link_copied": {
+      "description": "An org admin copied the organization's referral link on the referrals page.",
+      "pii": false,
+      "props": {}
+    },
+    "member_invited": {
+      "description": "An org admin invited someone by email from the members page. `role` is member or admin.",
+      "pii": false,
+      "props": { "role": "string" }
+    },
     "org_created": {
       "description": "An organization was created from the onboarding card or the org switcher.",
       "pii": false,
@@ -202,7 +212,7 @@
       "props": { "done": "number" }
     },
     "support_opened": {
-      "description": "The Help menu opened the support widget (docs/support.md). `kind` is what the user picked: question, bug or feature_request.",
+      "description": "The Help menu opened the support widget or the Telegram support bot (docs/support.md). `kind` is what the user picked: question, bug, feature_request or telegram.",
       "pii": false,
       "props": {
         "kind": "string"

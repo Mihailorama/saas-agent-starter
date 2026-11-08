@@ -90,7 +90,7 @@ function BackupCodes({ codes }: { codes: string[] }) {
 }
 
 /** Password field for re-confirming identity: only accounts from before passwordless sign-in
- * (ADR 0029) still have a password to ask. */
+ * (ADR 0033) still have a password to ask. */
 function PasswordField({ hasPassword }: { hasPassword: boolean }) {
   if (!hasPassword) return null;
   return (

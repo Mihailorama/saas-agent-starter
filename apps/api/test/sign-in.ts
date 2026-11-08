@@ -14,20 +14,29 @@ export const cookieOf = (res: { cookies: { name: string; value: string }[] }) =>
  * server-only createVerificationOTP (no HTTP route, so production is unchanged); the mailed
  * path itself is tested in api.test.ts and the e2e specs. New accounts are named `T`.
  */
-export async function codeSignIn(app: FastifyInstance, email: string, cookie = '') {
+export async function codeSignIn(
+  app: FastifyInstance,
+  email: string,
+  cookie = '',
+  fields: Record<string, unknown> = {}, // sign-up fields, e.g. referralCode
+) {
   const otp = await auth.api.createVerificationOTP({ body: { email, type: 'sign-in' } });
   return app.inject({
     method: 'POST',
     url: '/api/auth/sign-in/email-otp',
     remoteAddress: ip(),
     headers: { origin: allowedOrigins[0]!, ...(cookie && { cookie }) },
-    payload: { email, otp, name: 'T' },
+    payload: { email, otp, name: 'T', ...fields },
   });
 }
 
 /** A signed-in user (created now unless `email` already has an account). */
-export async function signUp(app: FastifyInstance, email = `${randomUUID()}@example.com`) {
-  const res = await codeSignIn(app, email);
+export async function signUp(
+  app: FastifyInstance,
+  email = `${randomUUID()}@example.com`,
+  fields: Record<string, unknown> = {},
+) {
+  const res = await codeSignIn(app, email, '', fields);
   expect(res.statusCode, res.body).toBe(200);
   return { id: res.json().user.id as string, email, cookie: cookieOf(res) };
 }

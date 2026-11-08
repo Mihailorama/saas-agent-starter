@@ -1,6 +1,16 @@
 import Stripe from 'stripe';
-import { planByProviderPriceId } from './plans.ts';
+import { toMinor } from './money.ts';
+import { componentByProviderPriceId, type PriceComponent } from './plans.ts';
 import { type BillingEvent, type BillingProvider, WebhookRejected } from './provider.ts';
+
+/** Checkout/subscription items: metered prices take no quantity, per-seat prices the seats. */
+export function lineItems(prices: PriceComponent[], seats: number) {
+  return prices.map((c) => {
+    if (!c.providerPriceId) throw new Error(`no Stripe price id for a ${c.model} price`);
+    if (c.model === 'metered') return { price: c.providerPriceId };
+    return { price: c.providerPriceId, quantity: c.model === 'per_seat' ? Math.max(1, seats) : 1 };
+  });
+}
 
 /**
  * Stripe adapter (official `stripe` SDK, MIT). Stripe owns the subscription: Checkout creates it,
@@ -36,9 +46,13 @@ export function stripeProvider(opts: {
     const orgId = sub.metadata?.orgId;
     const item = sub.items.data[0];
     if (!orgId || !item) return []; // not created by our checkout
+    const known = sub.items.data.map((i) => ({ i, ...componentByProviderPriceId(i.price.id) }));
+    const seats = known.find((k) => k.component?.model === 'per_seat')?.i.quantity;
     const state = {
       ...base(e, orgId),
-      planId: planByProviderPriceId(item.price.id) ?? sub.metadata.planId,
+      planId: known.find((k) => k.planId)?.planId ?? sub.metadata.planId,
+      ...(seats !== undefined && { seats }),
+      ...(sub.metadata.contractRef && { contractRef: sub.metadata.contractRef }),
       currency: sub.currency.toUpperCase(),
       customerId: typeof sub.customer === 'string' ? sub.customer : sub.customer.id,
       subscriptionId: sub.id,
@@ -64,12 +78,23 @@ export function stripeProvider(opts: {
   return {
     id: 'stripe',
 
+    invoicing: 'provider',
+
     async checkout(input) {
-      if (!input.price.providerPriceId) throw new Error(`no Stripe price id for ${input.planId}`);
-      const metadata = { orgId: input.orgId, planId: input.planId };
+      const metadata = {
+        orgId: input.orgId,
+        planId: input.planId,
+        ...(input.referral && { referrerOrgId: input.referral.referrerOrgId }),
+      };
+      // The referrer's promotion code: Stripe applies it only to a first-time customer.
+      const promo = input.referral
+        ? (await stripe.promotionCodes.list({ code: input.referral.promotionCode, limit: 1 }))
+            .data[0]
+        : undefined;
       const session = await stripe.checkout.sessions.create({
+        ...(promo && { discounts: [{ promotion_code: promo.id }] }),
         mode: 'subscription',
-        line_items: [{ price: input.price.providerPriceId, quantity: 1 }],
+        line_items: lineItems(input.prices, input.seats),
         client_reference_id: input.orgId,
         ...(input.customerId && { customer: input.customerId }),
         metadata,
@@ -79,6 +104,35 @@ export function stripeProvider(opts: {
       });
       if (!session.url) throw new Error('Stripe returned a checkout session without url');
       return { url: session.url };
+    },
+
+    // A credit pack: a one-time payment; the worker grants it after checkout.session.completed.
+    async topUp(input) {
+      if (!input.pack.providerPriceId) throw new Error('no Stripe price id for the credit pack');
+      const metadata = { orgId: input.orgId, planId: input.planId, kind: 'credits' };
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer: input.customerId,
+        line_items: [{ price: input.pack.providerPriceId, quantity: 1 }],
+        metadata,
+        payment_intent_data: { metadata },
+        success_url: `${input.returnUrl}?checkout=success`,
+        cancel_url: `${input.returnUrl}?checkout=canceled`,
+      });
+      if (!session.url) throw new Error('Stripe returned a checkout session without url');
+      return { url: session.url };
+    },
+
+    async creditBalance(sub) {
+      if (!sub.customerId) return 0;
+      const summary = await stripe.billing.creditBalanceSummaries.retrieve({
+        customer: sub.customerId,
+        filter: { type: 'applicability_scope', applicability_scope: { price_type: 'metered' } },
+      });
+      return summary.balances
+        .map((b) => b.available_balance.monetary)
+        .filter((m) => m?.currency.toUpperCase() === sub.currency)
+        .reduce((sum, m) => sum + (m?.value ?? 0), 0);
     },
 
     async portal(sub, returnUrl) {
@@ -102,6 +156,53 @@ export function stripeProvider(opts: {
       return sub.customerId ? `${base}/customers/${sub.customerId}` : null;
     },
 
+    // Rewards (docs/growth.md). The balance pays the next invoices (flat, per-seat and metered
+    // alike); a coupon joins the subscription's discounts. Each call carries an idempotency key.
+
+    async applyCredit(sub, c) {
+      if (!sub.customerId) throw new Error('no Stripe customer');
+      const txn = await stripe.customers.createBalanceTransaction(
+        sub.customerId,
+        {
+          amount: -toMinor(c.amount, c.currency), // negative = a credit
+          currency: c.currency.toLowerCase(),
+          description: c.description,
+        },
+        { idempotencyKey: c.key },
+      );
+      return txn.id;
+    },
+
+    async applyCoupon(sub, c) {
+      if (!sub.providerSubscriptionId) throw new Error('no Stripe subscription');
+      const current = await stripe.subscriptions.retrieve(sub.providerSubscriptionId);
+      const keep = current.discounts.map((d) => ({ discount: typeof d === 'string' ? d : d.id }));
+      const s = await stripe.subscriptions.update(
+        sub.providerSubscriptionId,
+        { discounts: [...keep, { coupon: c.couponId }] },
+        { idempotencyKey: c.key },
+      );
+      return s.id;
+    },
+
+    async createPromotionCode(p) {
+      const promo = await stripe.promotionCodes.create(
+        {
+          promotion: { type: 'coupon', coupon: p.couponId },
+          code: p.code,
+          restrictions: { first_time_transaction: true },
+          metadata: { referrerOrgId: p.referrerOrgId },
+        },
+        { idempotencyKey: p.key },
+      );
+      return promo.id;
+    },
+
+    async cardFingerprints(customerId) {
+      const cards = await stripe.paymentMethods.list({ customer: customerId, type: 'card' });
+      return cards.data.flatMap((p) => (p.card?.fingerprint ? [p.card.fingerprint] : []));
+    },
+
     async webhook(req) {
       const signature = req.headers['stripe-signature'];
       if (typeof signature !== 'string') throw new WebhookRejected('missing signature');
@@ -116,12 +217,87 @@ export function stripeProvider(opts: {
         case 'customer.subscription.updated':
         case 'customer.subscription.deleted':
           return subscriptionEvent(e, e.data.object);
+        case 'checkout.session.completed':
+        case 'checkout.session.async_payment_succeeded': {
+          const session = e.data.object;
+          const orgId = session.metadata?.orgId;
+          if (session.metadata?.kind !== 'credits' || !orgId || session.payment_status !== 'paid') {
+            return [];
+          }
+          // The grant is the plan's pack value (the worker reads it), never amount_total, which
+          // includes tax and discounts.
+          return [
+            {
+              ...base(e, orgId),
+              eventId: session.id, // one grant per paid session, whichever event reports it
+              type: 'credits.purchased',
+              planId: session.metadata.planId,
+              currency: session.currency?.toUpperCase(),
+              customerId: typeof session.customer === 'string' ? session.customer : undefined,
+            },
+          ];
+        }
         case 'invoice.paid':
         case 'invoice.payment_failed': {
-          const orgId = e.data.object.parent?.subscription_details?.metadata?.orgId;
+          const invoice = e.data.object;
+          const meta = invoice.parent?.subscription_details?.metadata;
+          const orgId = meta?.orgId;
           if (!orgId) return [];
-          const type = e.type === 'invoice.paid' ? 'payment.succeeded' : 'payment.failed';
-          return [{ ...base(e, orgId), type }];
+          if (e.type === 'invoice.payment_failed')
+            return [{ ...base(e, orgId), type: 'payment.failed' }];
+          const paid = {
+            ...base(e, orgId),
+            amount: invoice.amount_paid,
+            currency: invoice.currency.toUpperCase(),
+            ...(invoice.id && { invoiceId: invoice.id }),
+            ...(typeof invoice.customer === 'string' && { customerId: invoice.customer }),
+          };
+          // A referral converts on the second paid period: the first renewal invoice with an
+          // amount (a $0 trial or 100%-off first invoice converts then too). Later renewals emit
+          // it again; the reward counts each referred org once.
+          const referrerOrgId = meta?.referrerOrgId;
+          const first = invoice.billing_reason === 'subscription_cycle';
+          return [
+            { ...paid, type: 'payment.succeeded' },
+            ...(referrerOrgId && first && invoice.amount_paid > 0
+              ? [
+                  {
+                    ...paid,
+                    eventId: `${e.id}:referral`,
+                    type: 'referral.converted' as const,
+                    referrerOrgId,
+                  },
+                ]
+              : []),
+          ];
+        }
+        // A refund or dispute of a referred org's payment voids its pending referral reward.
+        case 'charge.refunded':
+        case 'charge.dispute.created': {
+          const charge =
+            e.type === 'charge.refunded'
+              ? e.data.object
+              : await stripe.charges.retrieve(
+                  typeof e.data.object.charge === 'string'
+                    ? e.data.object.charge
+                    : e.data.object.charge.id,
+                );
+          const customer =
+            typeof charge.customer === 'string' ? charge.customer : charge.customer?.id;
+          if (!customer) return [];
+          const subs = await stripe.subscriptions.list({ customer, status: 'all', limit: 10 });
+          return subs.data.flatMap((s) =>
+            s.metadata?.orgId && s.metadata.referrerOrgId
+              ? [
+                  {
+                    ...base(e, s.metadata.orgId),
+                    eventId: `${e.id}:${s.id}`,
+                    type: 'referral.voided' as const,
+                    referrerOrgId: s.metadata.referrerOrgId,
+                  },
+                ]
+              : [],
+          );
         }
         default:
           return [];

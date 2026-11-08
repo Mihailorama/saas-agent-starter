@@ -2,6 +2,7 @@ import { passkeyClient } from '@better-auth/passkey/client';
 import {
   adminClient,
   emailOTPClient,
+  inferAdditionalFields,
   organizationClient,
   twoFactorClient,
 } from 'better-auth/client/plugins';
@@ -17,5 +18,7 @@ export const authClient = createAuthClient({
     twoFactorClient(),
     passkeyClient(),
     adminClient(),
+    // Sign-up's referral (docs/growth.md), as declared in apps/api/src/auth.ts.
+    inferAdditionalFields({ user: { referralCode: { type: 'string', required: false } } }),
   ],
 });

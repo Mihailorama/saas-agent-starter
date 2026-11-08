@@ -1,6 +1,6 @@
 # Transactional email
 
-Better Auth sends three mails: the sign-in code (sign-in and sign-up, ADR 0029), an
+Better Auth sends three mails: the sign-in code (sign-in and sign-up, ADR 0033), an
 email-verification code where Better Auth verifies an address by itself, and organization
 invitations. The privacy flows add "your data export is ready". Design:
 [ADR 0014](adr/0014-transactional-email.md).

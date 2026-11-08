@@ -1,8 +1,8 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { CheckCircle2, Circle, X } from 'lucide-react';
-import { type FormEvent, type ReactNode, useState } from 'react';
-import { toast } from 'sonner';
+import { useState } from 'react';
+import { FormDialog, InviteDialog } from '@/components/invite-dialog';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -12,14 +12,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
@@ -51,51 +43,6 @@ const ITEMS: Record<ItemId, { text: string; action: string; to?: string }> = {
 };
 // Same values as ORG_SIZES in apps/api/src/auth.ts (the API validates them).
 const SIZES = ['1-10', '11-50', '51-200', '201-1000', '1000+'];
-
-/** A small form dialog: one submit, pending state, toast on error (profile and invite). */
-function FormDialog(props: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  title: string;
-  description: string;
-  submit: string;
-  onSubmit: (data: FormData) => Promise<{ error?: { message?: string } | null }>;
-  children: ReactNode;
-}) {
-  const queryClient = useQueryClient();
-  const [pending, setPending] = useState(false);
-  async function onSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setPending(true);
-    const { error } = await props.onSubmit(new FormData(e.currentTarget));
-    setPending(false);
-    if (error) return toast.error(error.message ?? 'Something went wrong');
-    await queryClient.invalidateQueries({ queryKey: ['onboarding'] });
-    toast.success('Saved');
-    props.onOpenChange(false);
-  }
-  return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent>
-        <form onSubmit={onSubmit} className="space-y-4" aria-label={props.title}>
-          <DialogHeader>
-            <DialogTitle>{props.title}</DialogTitle>
-            <DialogDescription>{props.description}</DialogDescription>
-          </DialogHeader>
-          {props.children}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={pending}>
-              {props.submit}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 /**
  * Onboarding checklist on the projects page (docs/onboarding.md). The API returns only the items
@@ -222,21 +169,10 @@ export function OnboardingChecklist({ onNewProject }: { onNewProject: () => void
           />
         </div>
       </FormDialog>
-      <FormDialog
+      <InviteDialog
         open={dialog === 'invite'}
         onOpenChange={(o) => setDialog(o ? 'invite' : undefined)}
-        title="Invite a teammate"
-        description="They get an email with a link to join this organization as a member."
-        submit="Send invitation"
-        onSubmit={(f) =>
-          authClient.organization.inviteMember({ email: String(f.get('email')), role: 'member' })
-        }
-      >
-        <div className="space-y-2">
-          <Label htmlFor="invite-email">Email</Label>
-          <Input id="invite-email" name="email" type="email" required autoFocus />
-        </div>
-      </FormDialog>
+      />
     </Card>
   );
 }

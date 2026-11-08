@@ -1,4 +1,4 @@
-# 0029. Passwordless sign-in with email one-time codes
+# 0033. Passwordless sign-in with email one-time codes
 
 Status: accepted (owner decision, 2026-11-08). Changes ADR 0003 (no email/password) and ADR
 0017 (second factor after a code sign-in).

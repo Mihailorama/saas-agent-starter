@@ -21,7 +21,8 @@ from temporalio.workflow import ParentClosePolicy
 with workflow.unsafe.imports_passed_through():
     import worker.settings as settings
     from worker.activities import Activities, ProjectCreated
-    from worker.billing import BillingActivities, BillingEvent
+    from worker.billing import BillingActivities, BillingEvent, ContractPeriod
+    from worker.credits import GRANT_ATTEMPTS, CreditActivities
     from worker.crm import CrmActivities, CrmEvent
     from worker.mail import SendEmail, send_email
     from worker.privacy import (
@@ -33,8 +34,11 @@ with workflow.unsafe.imports_passed_through():
         PrivacyRequest,
         Step,
     )
+    from worker.rewards import Applied, RewardActivities, RewardRequest
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
+    from worker.telegram import TelegramActivities, TelegramChat, TelegramUpdate
     from worker.tracker import TrackerActivities, TrackerItem
+    from worker.usage import UsageActivities
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
 
 
@@ -86,6 +90,50 @@ class SupportIssueClosedWorkflow:
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5),
         )
+
+
+@workflow.defn(name="TelegramChatWorkflow")
+class TelegramChatWorkflow:
+    """One per chat or topic (id `telegram-chat-<chat>-<thread>`), fed by signal-with-start from
+    POST /api/hooks/telegram: relays its messages one at a time, in order, each step of a message
+    as its own activity. Ends after an idle hour; continues as new every 100 messages."""
+
+    def __init__(self) -> None:
+        self.queue: list[TelegramUpdate] = []
+        self.seen: list[int] = []  # message ids: Telegram redelivers when an answer is slow
+
+    @workflow.signal
+    def message(self, u: TelegramUpdate) -> None:
+        if u.messageId not in self.seen:
+            self.seen = [*self.seen[-199:], u.messageId]
+            self.queue.append(u)
+
+    @workflow.run
+    async def run(self, chat: TelegramChat) -> None:
+        self.queue, self.seen = [*chat.pending, *self.queue], [*chat.seen, *self.seen]
+        for _ in range(100):
+            try:
+                await workflow.wait_condition(lambda: bool(self.queue), timeout=timedelta(hours=1))
+            except TimeoutError:
+                return
+            u, steps = self.queue.pop(0), ["main"]
+            while steps:
+                try:
+                    steps = [
+                        *await workflow.execute_activity_method(
+                            TelegramActivities.handle,
+                            args=[u, steps[0]],
+                            start_to_close_timeout=timedelta(seconds=30),
+                            schedule_to_close_timeout=timedelta(hours=1),  # 429s: keep trying
+                            retry_policy=RetryPolicy(
+                                initial_interval=timedelta(seconds=2), maximum_attempts=0
+                            ),
+                        ),
+                        *steps[1:],
+                    ]
+                except ActivityError:  # failed for good (logged, in Sentry): next step
+                    steps = steps[1:]
+        workflow.continue_as_new(TelegramChat(self.queue, self.seen))
 
 
 @workflow.defn(name="TrackerItemWorkflow")
@@ -156,27 +204,70 @@ RETENTION_SCHEDULE_ID = "privacy-retention"
 async def ensure_maintenance_schedule(
     client: Client, task_queue: str, schedule_id: str = MAINTENANCE_SCHEDULE_ID
 ) -> None:
-    await ensure_daily_schedule(client, WebhookMaintenanceWorkflow.run, task_queue, schedule_id)
+    await ensure_schedule(client, WebhookMaintenanceWorkflow.run, task_queue, schedule_id)
 
 
 async def ensure_retention_schedule(
     client: Client, task_queue: str, schedule_id: str = RETENTION_SCHEDULE_ID
 ) -> None:
-    await ensure_daily_schedule(client, PrivacyRetentionWorkflow.run, task_queue, schedule_id)
+    await ensure_schedule(client, PrivacyRetentionWorkflow.run, task_queue, schedule_id)
 
 
-async def ensure_daily_schedule(
-    client: Client, run: Any, task_queue: str, schedule_id: str
+async def ensure_schedule(
+    client: Client,
+    run: Any,
+    task_queue: str,
+    schedule_id: str,
+    every: timedelta = timedelta(days=1),
 ) -> None:
-    """Creates a daily schedule once; later worker starts leave it as it is (edit or pause it
-    in the Temporal UI). Settings are read by the activities at run time."""
+    """Creates a schedule (daily by default) once; later worker starts leave it as it is (edit
+    or pause it in the Temporal UI). Settings are read by the activities at run time."""
     schedule = Schedule(
         action=ScheduleActionStartWorkflow(run, id=schedule_id, task_queue=task_queue),
-        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(days=1))]),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=every)]),
         policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
     )
     with contextlib.suppress(ScheduleAlreadyRunningError):
         await client.create_schedule(schedule_id, schedule)
+
+
+USAGE_SCHEDULE_ID = "billing-usage-report"
+
+
+async def ensure_usage_schedule(client: Client, task_queue: str) -> None:
+    await ensure_schedule(
+        client, UsageReportWorkflow.run, task_queue, USAGE_SCHEDULE_ID, timedelta(minutes=15)
+    )
+
+
+@workflow.defn(name="UsageReportWorkflow")
+class UsageReportWorkflow:
+    """Every 15 minutes (Temporal Schedule `billing-usage-report`): usage to the provider's
+    meters (worker/usage.py), one activity per org with its own retries. A failed org is picked
+    up from its own mark by the next run; the others go on."""
+
+    @workflow.run
+    async def run(self) -> dict[str, int]:
+        orgs = await workflow.execute_activity_method(
+            UsageActivities.usage_orgs,
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+        results = await asyncio.gather(
+            *(
+                workflow.execute_activity_method(
+                    UsageActivities.report_org_usage,
+                    org,
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+                for org in orgs
+            ),
+            return_exceptions=True,
+        )
+        failed = sum(isinstance(r, BaseException) for r in results)
+        events = sum(r for r in results if isinstance(r, int))
+        return {"orgs": len(orgs), "events": events, "failed": failed}
 
 
 @workflow.defn(name="SendEmailWorkflow")
@@ -199,6 +290,51 @@ class SendEmailWorkflow:
         )
 
 
+@workflow.defn(name="RewardWorkflow")
+class RewardWorkflow:
+    """Started by the API (apps/api/src/billing/rewards.ts) with id `reward-<org>-<rule>-<subject>`
+    and REJECT_DUPLICATE: a rule rewards a subject once. Waits `holdDays` (a Temporal timer), then
+    reserves, applies and settles the grant (worker/rewards.py, docs/growth.md)."""
+
+    @workflow.run
+    async def run(self, r: RewardRequest) -> str:
+        if r.holdDays:
+            await workflow.sleep(timedelta(days=r.holdDays))
+        quick = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
+        res = await workflow.execute_activity_method(
+            RewardActivities.reserve,
+            r,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=quick,
+        )
+        if res is None:
+            return "not eligible"
+        applied = res.applied
+        if applied is None:
+            try:
+                applied = await workflow.execute_activity_method(
+                    RewardActivities.apply,
+                    r,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(
+                        initial_interval=timedelta(seconds=10),
+                        maximum_interval=timedelta(minutes=10),
+                        maximum_attempts=8,
+                    ),
+                )
+            except ActivityError:
+                # API or provider down for good: never drop the reward, operators apply it.
+                applied = Applied("manual", res.reward)
+        # The DB may be down for a while; the provider may already have applied it: keep trying.
+        await workflow.execute_activity_method(
+            RewardActivities.record,
+            args=[r, applied],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+        )
+        return applied.via
+
+
 @workflow.defn(name="BillingEventWorkflow")
 class BillingEventWorkflow:
     """Started by the API's webhook route with id `billing-<provider>-<event id>` (idempotent)."""
@@ -212,6 +348,27 @@ class BillingEventWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
         )
+        # A paid credit pack becomes a grant in the provider (docs/billing.md "Prepaid credits").
+        if event.type == "credits.purchased" and workflow.patched("credit-grants"):
+            try:
+                await workflow.execute_activity_method(
+                    CreditActivities.grant_credits,
+                    event,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    # Inside Stripe's 24-hour idempotency window, so a retry never grants twice.
+                    retry_policy=RetryPolicy(
+                        maximum_interval=timedelta(minutes=5), maximum_attempts=GRANT_ATTEMPTS
+                    ),
+                )
+            except ActivityError:
+                # Any final failure, a timeout included: the paid pack goes on the record.
+                await workflow.execute_activity_method(
+                    CreditActivities.record_grant_failure,
+                    event,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+                )
+                raise
         # Deal stage in the CRM (docs/crm.md), only for events that changed our state. The child
         # maps the subscription row as it is when it runs, so a retried older child cannot move
         # the deal back. A child, so a CRM outage never holds the billing workflow open.
@@ -231,6 +388,24 @@ class BillingEventWorkflow:
                 parent_close_policy=ParentClosePolicy.ABANDON,
             )
         return applied
+
+
+@workflow.defn(name="ContractPeriodWorkflow")
+class ContractPeriodWorkflow:
+    """A durable timer to the end of a manual contract's period, then `end_contract_period`.
+    Started by the operator console with id `billing-contract-<org>-<period end ms>`."""
+
+    @workflow.run
+    async def run(self, p: ContractPeriod) -> str:
+        wait = datetime.fromisoformat(p.periodEnd) - workflow.now()
+        if wait > timedelta(0):
+            await workflow.sleep(wait)
+        return await workflow.execute_activity_method(
+            BillingActivities.end_contract_period,
+            p,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+        )
 
 
 @workflow.defn(name="CrmSyncWorkflow")

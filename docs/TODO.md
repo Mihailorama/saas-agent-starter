@@ -1,10 +1,10 @@
 # Known limitations / backlog
 
-- **No display-name setting** (ADR 0029). A code sign-up names the account after the address's
+- **No display-name setting** (ADR 0033). A code sign-up names the account after the address's
   local part (`ada@example.com` -> `ada`), which mails, invitations and the user menu show. Fix:
   a "Name" field on a profile/settings page calling `authClient.updateUser({ name })`
   (`databaseHooks.user.update.before` already runs), and optionally ask for it once after sign-up.
-- **Email-verification codes have no screen** (ADR 0029). `overrideDefaultEmailVerification`
+- **Email-verification codes have no screen** (ADR 0033). `overrideDefaultEmailVerification`
   mails a code wherever Better Auth verifies an address, but no current flow triggers it (a code
   sign-in verifies the address; email change is off). When email change is turned on, add a code
   step that calls `authClient.emailOtp.verifyEmail`.
@@ -13,6 +13,38 @@
   `signInPaths`. When an upgrade adds `/sign-in/email-otp` there, delete our hook; `mfa.test.ts`
   ("enrols, challenges at sign-in") fails if the challenge ever goes missing. Worth an upstream
   issue/PR.
+- **Infra wizard: deferred parts of `pnpm run infra`** (docs/setup.md, ADR 0032). The MVP covers
+  tier S (one Debian/Ubuntu VPS) with Postgres, S3, SMTP, analytics, LLM and the vault. Still to
+  do, each a separate change:
+  - `infra add` for the components listed as `available: false` in config/components.json:
+    backups (off-site S3 for pgBackRest, `COMPOSE_FILE` overlay; until then the wizard deploys
+    with `--skip-backup` and warns), ops, pii, booking, observability, support (Chatwoot), crm
+    (Twenty), billing (Stripe), langfuse. The heavy ones (Chatwoot, Twenty, Langfuse) also need
+    production compose services first (docs/deploy.md runs them separately today).
+  - The llm-cli install: the image holds proprietary CLIs, so the wizard would have to build it
+    on the server and walk the human through the logins; LLM is connect-only for now.
+  - DNS automation (Cloudflare, Porkbun APIs) to create the A records instead of only checking them.
+  - Multi-server and Kubernetes targets (tier M/L); OSes other than Debian/Ubuntu (dnf, apk).
+  - The `create-saas-agent` package (`npm create saas-agent@latest`: clone, install, start the
+    wizard).
+  - The managed offering reuses `--answers ... --yes`; it lives in a private repository, never here.
+- **Infra wizard: browser analytics need your own web image** (ADR 0032). `VITE_*` values are
+  baked into the web bundle at build time, so with the upstream images the PostHog/Umami script is
+  off even when the wizard connects or installs analytics (server-side PostHog works). Fix: a fork
+  sets the repository variables and releases its own images, or the web image reads its public
+  config at runtime (`/config.js` rendered by nginx from env).
+- **Infra wizard: not covered by the e2e** (deploy/setup/e2e.sh): `ssh-copy-id` with a typed
+  password, real ACME certificates and DNS, the interactive questions (clack), the vault push, the
+  LLM check against a real provider, macOS as the operator machine (sops' default key path there
+  differs; the wizard sets `SOPS_AGE_KEY_FILE`). Also: the vault install leaves `VAULT_SMTP_*`
+  empty (invitation mails), and "connect" for the vault has no reachability check yet.
+- **Vault: CI runs no real `bw` round trip** (docs/secrets.md, ADR 0029). The `vault` CI job only
+  checks Vaultwarden (alive over TLS, admin off, signups closed); `scripts/vault.test.mjs` uses a
+  fake `bw`. The real round trip (invite, register, `unlock`, `put`, `replace`, `get`, `run`, `lock` with
+  `@bitwarden/cli` 2026.10.1, agent profile) passed by hand on 2026-11-08, with registration done by a
+  throwaway script (Bitwarden client crypto) because `bw` cannot register. Fix: pin `@bitwarden/cli`
+  in that job via `npm exec`, register a test user over `/identity/accounts/register/finish`, run
+  the wrapper. Catches a change in the `bw` item JSON or its HTTPS rules.
 - **Onboarding: tour "seen" and checklist "dismissed" are per browser** (docs/onboarding.md,
   `apps/web/src/lib/onboarding.ts`). They live in `localStorage` to avoid a table and a migration,
   so a user on a second device sees the tour once more and the card again. If that bothers users:
@@ -112,6 +144,16 @@
   crash-report dialog (reports attached to an error; its Sentry User Feedback widget support
   was broken, glitchtip-backend issues #403/#468). Re-check GlitchTip's user feedback support
   (or Umami's error tracking, announced for v3.5.0) before building anything.
+- **Formbricks is not in the privacy export/deletion** (`services/worker-py/worker/privacy.py`,
+  docs/privacy.md "Per-tool support"). With an Enterprise license the web identifies people in
+  Formbricks by user id, so a deletion request leaves their contact and responses there. Fix: a
+  Formbricks step in the privacy workflow (Management API: find the contact by `userId`, delete
+  it) behind `FORMBRICKS_URL` / `FORMBRICKS_API_KEY`, like the Chatwoot step.
+- **Config surveys: PostHog fields not verified against a live project** (`survey()` in
+  `scripts/journeys.mjs`). Unit-tested only: `targeting_flag_filters` with `is_date_before -14d` on
+  `first_seen_at`, `linked_flag_id`, `schedule: recurring` + `iteration_*`. Fix: run
+  `pnpm journeys:sync` against a test project once keys exist and compare with a survey made in
+  the UI; adjust the mapping if PostHog stores a field differently.
 - **PostHog `$ai_generation` events from the worker.** Thumbs feedback in PostHog AI
   observability attaches to `$ai_trace_id`, but the worker sends no generations to PostHog, so
   the trace is empty there (Langfuse gets it through OpenTelemetry). To add: in
@@ -187,10 +229,6 @@
 - **Bounce/complaint webhooks.** Providers keep their own suppression lists (docs/email.md);
   nothing in the app reacts to hard bounces or spam complaints. When volumes grow, accept the
   provider's webhook in `apps/api/src/routes/hooks.ts` and alert on bounce rate.
-- **No "invite member" UI.** Invitations are sent through Better Auth's
-  `organization.inviteMember` API (tested in `apps/api/test/api.test.ts`) and accepted on
-  `/accept-invitation/$invitationId`, but the web has no members page to send them from. Add one
-  under the shell (list, invite form, role) when member management is needed.
 - **Mail language is the request's `Accept-Language`.** Users have no stored locale, so an
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then

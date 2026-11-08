@@ -39,6 +39,7 @@ on an image that is not. Their primary software licenses:
 | `towfiqi/serpbear`                                 | keyword rank tracking (`marketing` profile)                    | MIT                         |
 | `twentycrm/twenty`                                 | CRM: people, companies, deals (`crm` profile)                  | AGPL-3.0 + app exception    |
 | `caldiy` (built from calcom/cal.diy)               | booking: "Book a demo" (`booking` profile)                     | MIT                         |
+| `vaultwarden/server`                               | secrets vault for humans and agents (`vault` profile)          | AGPL-3.0                    |
 | `stripe/stripe-mock`                               | Stripe API mock for tests/dev (`billing` profile)              | MIT                         |
 | `node` + `@modelcontextprotocol/server-everything` | reference MCP server, run unmodified via `npx` (`mcp` profile) | MIT / Apache-2.0            |
 | `vllm/vllm-openai`                                 | self-hosted models, GPU (`local-llm` profile)                  | Apache-2.0                  |
@@ -46,6 +47,8 @@ on an image that is not. Their primary software licenses:
 | `ollama/ollama`                                    | self-hosted models, dev (`local-llm` profile)                  | MIT                         |
 | `saas-agent-starter-pgbackup`                      | Postgres + backup tools (`compose.backup.yaml`)                | PostgreSQL + MIT            |
 | `prom/pushgateway`                                 | backup metrics for Prometheus (backup overlay)                 | Apache-2.0                  |
+| `ubuntu`                                           | fresh-server stand-in of the infra e2e (deploy/setup/e2e/)     | various (Debian/Ubuntu OS)  |
+| `registry`                                         | release image registry of the infra e2e (test only)            | Apache-2.0                  |
 
 Base OS layers (Alpine, Debian) contain packages under various licenses, including GPL
 utilities. They are separate programs in the image, not linked into or distributed as part of
@@ -233,6 +236,26 @@ Notes:
     `calcom/cal.com` image, v6.2.0 (2026-03-02, AGPL-3.0 with a commercial `ee/`), is unmaintained
     and not used. Cal.com Cloud, the documented alternative, is an external service. The web and
     the site load the booking host's `embed.js` by URL after consent: no npm dependency.
+- Secrets vault ([docs/secrets.md](secrets.md), ADR 0029), checked 2026-11-08:
+  - `vaultwarden/server` (Vaultwarden 1.37.5, `vault` profile): its
+    [LICENSE.txt](https://github.com/dani-garcia/vaultwarden/blob/main/LICENSE.txt) is the GNU
+    AGPL v3. Run unmodified, not distributed with the app; the permissive twin disables it. Its
+    `vault-db` one-shot reuses the `postgres` image, and `vault-tls` (local TLS in dev) the `caddy`
+    image. Vaultwarden is an unofficial Bitwarden-compatible server, not affiliated with Bitwarden.
+  - Bitwarden CLI `bw` (`@bitwarden/cli` 2026.10.1 on npm, or Bitwarden's standalone binary):
+    the [bitwarden/clients](https://github.com/bitwarden/clients/blob/main/LICENSE.txt) repository
+    is GPL-3.0, with Bitwarden License v1.0 code only under `bitwarden_license/`; the npm package
+    declares "SEE LICENSE IN LICENSE.txt". It is a tool each developer installs and
+    `scripts/vault.mjs` starts as a separate program: no `package.json` lists it, nothing links or
+    ships it, so the code gate never sees it. Do not add it as a dependency.
+  - Evaluated as a permissive twin and not added: OpenBao (MPL-2.0,
+    [LICENSE](https://github.com/openbao/openbao/blob/main/LICENSE), v2.7.2) and Infisical (MIT
+    outside `ee/` directories, whose
+    [Enterprise license](https://github.com/Infisical/infisical/blob/main/backend/src/ee/LICENSE.md)
+    requires a subscription for production use; its CLI repository has the same split). Both are
+    sound vaults, but neither speaks the Bitwarden API, so `bw` and `scripts/vault.mjs` would not
+    work with them. The permissive contour connects to Bitwarden Cloud or a server the client
+    licenses instead (docs/secrets.md "Connect").
 - UI kit ([docs/ui.md](ui.md), [ADR 0023](adr/0023-ui-kit-and-checks.md)); code dependencies,
   checked by the gate: `radix-ui` (MIT; the shadcn/ui primitives, replacing the separate
   `@radix-ui/react-*` packages), `react-hook-form` and `@hookform/resolvers` (MIT), `zod` (MIT),
@@ -283,15 +306,16 @@ docker compose -f docker-compose.yml -f compose.permissive.yaml --profile observ
 # or once: COMPOSE_FILE=docker-compose.yml:compose.permissive.yaml in .env
 ```
 
-| Component            | Default (license)                          | Permissive twin (license)                                                                    | What you lose                                                                                                                                                                                          |
-| -------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Rate-limit store     | Redis 8 (RSALv2/SSPLv1/AGPLv3)             | Valkey 9 (BSD-3-Clause), same protocol and `REDIS_URL`                                       | Nothing the app uses. Redis-only modules/features (e.g. Redis Query Engine) are not in Valkey.                                                                                                         |
-| Logs                 | Loki (AGPL-3.0)                            | none: `docker compose logs`, or ship the collector's logs to any OTLP backend you license    | Central log search, log-to-trace links, log retention. The collector still runs; its Loki log pipeline is dropped.                                                                                     |
-| Dashboards/alerts UI | Grafana (AGPL-3.0)                         | Prometheus UI (graphs, `/alerts`) + Jaeger UI (traces), both Apache-2.0                      | Provisioned dashboards, one pane across logs/metrics/traces, Grafana alerting UI. Alert rules still evaluate in Prometheus (`infra/otel/alerts.yml`); add Alertmanager (Apache-2.0) for notifications. |
-| Error tracking       | GlitchTip (MIT), already permissive        | (Sentry SaaS / self-hosted is FSL: a bigger, not a more permissive, option)                  | n/a                                                                                                                                                                                                    |
-| Object storage       | SeaweedFS (Apache-2.0), already permissive | n/a                                                                                          | n/a                                                                                                                                                                                                    |
-| Social posting       | Postiz (AGPL-3.0, `marketing` profile)     | none in compose: post natively, or run Mixpost Lite (MIT, Laravel + MySQL) separately        | One calendar for every network, scheduling, team approval. SerpBear (MIT) and the site are unaffected.                                                                                                 |
-| CRM                  | Twenty (AGPL-3.0, `crm` profile)           | none in compose: a SaaS CRM behind the same `Crm` class, or Krayin (MIT, Laravel) separately | Customer records in the stack. The sync dry-runs until another CRM is wired in (docs/crm.md "Swapping the CRM").                                                                                       |
+| Component            | Default (license)                          | Permissive twin (license)                                                                      | What you lose                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Rate-limit store     | Redis 8 (RSALv2/SSPLv1/AGPLv3)             | Valkey 9 (BSD-3-Clause), same protocol and `REDIS_URL`                                         | Nothing the app uses. Redis-only modules/features (e.g. Redis Query Engine) are not in Valkey.                                                                                                         |
+| Logs                 | Loki (AGPL-3.0)                            | none: `docker compose logs`, or ship the collector's logs to any OTLP backend you license      | Central log search, log-to-trace links, log retention. The collector still runs; its Loki log pipeline is dropped.                                                                                     |
+| Dashboards/alerts UI | Grafana (AGPL-3.0)                         | Prometheus UI (graphs, `/alerts`) + Jaeger UI (traces), both Apache-2.0                        | Provisioned dashboards, one pane across logs/metrics/traces, Grafana alerting UI. Alert rules still evaluate in Prometheus (`infra/otel/alerts.yml`); add Alertmanager (Apache-2.0) for notifications. |
+| Error tracking       | GlitchTip (MIT), already permissive        | (Sentry SaaS / self-hosted is FSL: a bigger, not a more permissive, option)                    | n/a                                                                                                                                                                                                    |
+| Object storage       | SeaweedFS (Apache-2.0), already permissive | n/a                                                                                            | n/a                                                                                                                                                                                                    |
+| Social posting       | Postiz (AGPL-3.0, `marketing` profile)     | none in compose: post natively, or run Mixpost Lite (MIT, Laravel + MySQL) separately          | One calendar for every network, scheduling, team approval. SerpBear (MIT) and the site are unaffected.                                                                                                 |
+| CRM                  | Twenty (AGPL-3.0, `crm` profile)           | none in compose: a SaaS CRM behind the same `Crm` class, or Krayin (MIT, Laravel) separately   | Customer records in the stack. The sync dry-runs until another CRM is wired in (docs/crm.md "Swapping the CRM").                                                                                       |
+| Secrets vault        | Vaultwarden (AGPL-3.0, `vault` profile)    | none in compose: connect `scripts/vault.mjs` to Bitwarden Cloud or a licensed Bitwarden server | The vault in the stack. The wrapper, the agent rules and the deploy flow are unchanged (docs/secrets.md "Connect").                                                                                    |
 
 SBOMs and notices for a delivery: `pnpm run sbom` writes one CycloneDX SBOM per image (both
 twins, all profiles) and `THIRD_PARTY_NOTICES.md` to `dist/sbom/` (also a CI artifact on
