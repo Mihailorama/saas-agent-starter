@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fast checks before a push (docs/ui.md): Biome, then the visual checks against main (layout
+# guards always; screenshots only when the UI changed, main's side cached per merge-base).
+# `pnpm check` stays the definition of done. Installed by `pnpm install` (the root `prepare`
+# script sets core.hooksPath). Checks the working tree, so stash what you are not pushing.
+set -e
+pnpm exec biome ci .
+pnpm --filter web visual
