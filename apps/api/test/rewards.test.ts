@@ -302,10 +302,8 @@ describe('triggers (flag rewards)', () => {
     const update = (metadata: object) =>
       post(owner, '/api/auth/organization/update', { organizationId: org, data: { metadata } });
     expect((await update({ website: 'https://example.com' })).statusCode).toBe(200);
-    expect(await workflowExists(profile)).toBe(false); // industry missing
-    expect((await update({ website: 'https://example.com', industry: 'saas' })).statusCode).toBe(
-      200,
-    );
+    expect(await workflowExists(profile)).toBe(false); // size missing
+    expect((await update({ website: 'https://example.com', size: '11-50' })).statusCode).toBe(200);
     expect(await workflowExists(profile)).toBe(true);
     flag(false);
   });

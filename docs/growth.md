@@ -37,7 +37,8 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
   anyone can send them.
   - `invitation.accepted`: Better Auth's `afterAcceptInvitation` hook. Subject: the new member.
   - `org.profile_completed`: Better Auth's `afterUpdateOrganization` hook, when the organization's
-    metadata has every key of the rule's `requiredMetadata`, all non-empty. Code that writes
+    metadata has every key of the rule's `requiredMetadata`, all non-empty. The shipped rule uses
+    `size` and `website`, the keys the onboarding "company details" dialog writes. Code that writes
     organization metadata elsewhere (an onboarding flow) calls `triggerRewards('org.profile_completed',
     { orgId, subject: orgId, userId, metadata })` after its commit. Subject: the organization.
   - `referral.converted`: a paid invoice of a referred organization (Referrals below). Subject: the
