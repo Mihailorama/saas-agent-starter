@@ -6,7 +6,8 @@
 # COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback),
 # llm-cli (vendor CLI subscriptions, an image you build yourself: docs/llm-providers.md),
 # booking (Cal.diy, image built by CI from a pinned upstream commit, IMAGE_CALDIY),
-# vault (Vaultwarden, the secrets vault, docs/secrets.md).
+# vault (Vaultwarden, the secrets vault, docs/secrets.md), analytics (Umami, docs/product-analytics.md).
+# `pnpm run infra` (docs/setup.md) writes the env file and picks the profiles for you.
 # Licenses of every image: docs/LICENSES.md.
 
 x-logging: &logging
@@ -27,7 +28,11 @@ services:
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
       CADDY_TLS: ${CADDY_TLS:?set CADDY_TLS to an ACME e-mail or "internal"}
-      # vault site (deploy/Caddyfile): who may reach Vaultwarden's /admin; everyone else gets 403
+      # sites of on-box profiles (deploy/sites/<profile>.caddy, shipped only when enabled)
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+      VAULT_PUBLIC_URL: ${VAULT_PUBLIC_URL:-}
+      UMAMI_PUBLIC_URL: ${UMAMI_PUBLIC_URL:-}
+      # vault site: who may reach Vaultwarden's /admin; everyone else gets 403
       VAULT_ADMIN_IPS: ${VAULT_ADMIN_IPS:-127.0.0.1/32}
     ports:
       - "${PUBLISH_IP:-0.0.0.0}:${HTTP_PORT:-80}:80"
@@ -35,6 +40,7 @@ services:
       - "${PUBLISH_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
       - caddy_data:/data # certificates and ACME account: keep this volume
       - caddy_config:/config
 
@@ -390,8 +396,8 @@ services:
       retries: 30
 
   # --- profile s3: SeaweedFS on this host (single server without managed S3). Internal only;
-  # browser uploads use presigned URLs, so S3_PUBLIC_ENDPOINT must reach it: add the S3 site
-  # in deploy/Caddyfile. Credentials: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY become its admin.
+  # browser uploads use presigned URLs, so S3_PUBLIC_ENDPOINT must reach it: Caddy serves it
+  # (deploy/sites/s3.caddy). Credentials: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY become its admin.
   s3:
     profiles: [s3]
     image: chrislusf/seaweedfs:4.52
@@ -444,12 +450,74 @@ services:
     depends_on:
       postgres: { condition: service_healthy, required: false }
 
+  # --- one-shots of profiles vault and analytics: create their role and database on the on-box
+  # Postgres (profile db), so the backups cover them; idempotent (deploy/db-init.sh). Passwords
+  # come from the env, never argv; `pnpm run infra` generates them. No password set: skipped.
+  vault-db:
+    profiles: [vault]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 64m
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: app
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      DB_PASSWORD: ${VAULT_DB_PASSWORD:-}
+      DB_NAME: vaultwarden
+    entrypoint: ["/bin/sh", "/db-init.sh"]
+    volumes: ["./db-init.sh:/db-init.sh:ro"]
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  umami-db:
+    profiles: [analytics]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 64m
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: app
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      DB_PASSWORD: ${UMAMI_DB_PASSWORD:-}
+      DB_NAME: umami
+    entrypoint: ["/bin/sh", "/db-init.sh"]
+    volumes: ["./db-init.sh:/db-init.sh:ro"]
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  # --- profile analytics: Umami (MIT), self-hosted product analytics (docs/product-analytics.md).
+  # Its own domain through Caddy (deploy/sites/analytics.caddy). PRIVATE_MODE: calls nothing
+  # outside. The default admin/umami login is replaced by UMAMI_ADMIN_PASSWORD after the first
+  # deploy (deploy/setup/umami-admin.sh, run by `pnpm run infra`). PostHog Cloud: leave it off.
+  umami:
+    profiles: [analytics]
+    image: ghcr.io/umami-software/umami:3.4.1
+    logging: *logging
+    init: true
+    mem_limit: 1g
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://umami:${UMAMI_DB_PASSWORD:-}@postgres:5432/umami
+      APP_SECRET: ${UMAMI_APP_SECRET:-}
+      PRIVATE_MODE: "1"
+      DISABLE_TELEMETRY: "1"
+      DISABLE_UPDATES: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/heartbeat >/dev/null"]
+      interval: 5s
+      start_period: 60s
+      retries: 30
+    depends_on:
+      umami-db: { condition: service_completed_successfully }
+
   # --- profile vault: Vaultwarden (AGPL-3.0, unmodified) as the team's secrets vault for humans
   # and coding agents (docs/secrets.md). Its database lives on the app's Postgres server (create
-  # role + database `vaultwarden` once, docs/deploy.md), so the backups cover it. Reachable only
-  # through Caddy over TLS: add the vault site in deploy/Caddyfile. No public signups; accounts are
+  # role + database `vaultwarden`: vault-db), so the backups cover it. Reachable only
+  # through Caddy over TLS (deploy/sites/vault.caddy). No public signups; accounts are
   # invited from /admin, which is on only while VAULT_ADMIN_TOKEN (an argon2 hash) is set and is
-  # reachable only from VAULT_ADMIN_IPS (Caddy).
+  # reachable only from VAULT_ADMIN_IPS (Caddy). Its database: the vault-db one-shot above.
   # Using Bitwarden Cloud or a Vaultwarden you already run: leave the profile off.
   vault:
     profiles: [vault]
@@ -458,9 +526,11 @@ services:
     mem_limit: 128m
     restart: unless-stopped
     # Refuses to start with a plain-text admin token: empty (admin off) or an argon2 PHC hash only.
+    # No VAULT_SMTP_HOST: mail off (Vaultwarden refuses empty SMTP_* values).
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
+        [ -n "$$SMTP_HOST" ] || unset SMTP_HOST SMTP_FROM SMTP_PORT SMTP_SECURITY SMTP_USERNAME SMTP_PASSWORD;
         case "$$ADMIN_TOKEN" in ""|'$$argon2'*) exec /start.sh ;;
         *) echo "VAULT_ADMIN_TOKEN must be an argon2 hash (docs/secrets.md)" >&2; exit 1 ;; esac
     environment:
@@ -487,6 +557,7 @@ services:
       retries: 12
     depends_on:
       postgres: { condition: service_healthy, required: false }
+      vault-db: { condition: service_completed_successfully }
 
 volumes:
   caddy_data:

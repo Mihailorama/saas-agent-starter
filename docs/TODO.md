@@ -1,5 +1,30 @@
 # Known limitations / backlog
 
+- **Infra wizard: deferred parts of `pnpm run infra`** (docs/setup.md, ADR 0032). The MVP covers
+  tier S (one Debian/Ubuntu VPS) with Postgres, S3, SMTP, analytics, LLM and the vault. Still to
+  do, each a separate change:
+  - `infra add` for the components listed as `available: false` in config/components.json:
+    backups (off-site S3 for pgBackRest, `COMPOSE_FILE` overlay; until then the wizard deploys
+    with `--skip-backup` and warns), ops, pii, booking, observability, support (Chatwoot), crm
+    (Twenty), billing (Stripe), langfuse. The heavy ones (Chatwoot, Twenty, Langfuse) also need
+    production compose services first (docs/deploy.md runs them separately today).
+  - The llm-cli install: the image holds proprietary CLIs, so the wizard would have to build it
+    on the server and walk the human through the logins; LLM is connect-only for now.
+  - DNS automation (Cloudflare, Porkbun APIs) to create the A records instead of only checking them.
+  - Multi-server and Kubernetes targets (tier M/L); OSes other than Debian/Ubuntu (dnf, apk).
+  - The `create-saas-agent` package (`npm create saas-agent@latest`: clone, install, start the
+    wizard).
+  - The managed offering reuses `--answers ... --yes`; it lives in a private repository, never here.
+- **Infra wizard: browser analytics need your own web image** (ADR 0032). `VITE_*` values are
+  baked into the web bundle at build time, so with the upstream images the PostHog/Umami script is
+  off even when the wizard connects or installs analytics (server-side PostHog works). Fix: a fork
+  sets the repository variables and releases its own images, or the web image reads its public
+  config at runtime (`/config.js` rendered by nginx from env).
+- **Infra wizard: not covered by the e2e** (deploy/setup/e2e.sh): `ssh-copy-id` with a typed
+  password, real ACME certificates and DNS, the interactive questions (clack), the vault push, the
+  LLM check against a real provider, macOS as the operator machine (sops' default key path there
+  differs; the wizard sets `SOPS_AGE_KEY_FILE`). Also: the vault install leaves `VAULT_SMTP_*`
+  empty (invitation mails), and "connect" for the vault has no reachability check yet.
 - **Vault: CI runs no real `bw` round trip** (docs/secrets.md, ADR 0029). The `vault` CI job only
   checks Vaultwarden (alive over TLS, admin off, signups closed); `scripts/vault.test.mjs` uses a
   fake `bw`. The real round trip (invite, register, `unlock`, `put`, `replace`, `get`, `run`, `lock` with

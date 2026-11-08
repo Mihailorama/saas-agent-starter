@@ -1,0 +1,6 @@
+# Profile analytics (Umami, docs/product-analytics.md): its own domain for the tracking script and
+# the dashboard. Set UMAMI_PUBLIC_URL=https://umami.example.com.
+{$UMAMI_PUBLIC_URL} {
+	tls {$CADDY_TLS}
+	reverse_proxy umami:3000
+}

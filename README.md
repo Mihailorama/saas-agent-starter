@@ -5,6 +5,19 @@ one-command quality gate, small colocated files and an `AGENTS.md` that tells ag
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
 obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
+**From a fresh VPS to a running stack in one command** ([docs/setup.md](docs/setup.md)):
+
+```sh
+pnpm i && pnpm run infra     # server, domain, then install / connect / skip per component
+```
+
+It asks for SSH access to a Debian/Ubuntu server, the domain, and for each component (Postgres,
+S3, SMTP, analytics, LLM provider, secrets vault) whether to install it on the server, connect
+one you already have, or skip it. Then it prepares the server (Docker, a deploy user, firewall,
+key-only SSH), writes the settings encrypted with sops, deploys and checks every component.
+Re-runs show a plan first and keep what was generated. Needs Node, OpenSSH, `sops` and `age` on
+your machine, no Docker. **Back up the age key it creates**: it decrypts every secret.
+
 - **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode; a UI kit of shadcn/ui
