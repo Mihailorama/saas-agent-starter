@@ -46,8 +46,10 @@ usage_blocked = meter.create_counter(
 )
 
 # Currency minor units (ISO 4217 exponent): JPY 0, KWD 3, else 2. Twin of billing/money.ts (API).
-_EXPONENT = {"JPY": 0, "KRW": 0, "VND": 0, "CLP": 0, "ISK": 0}
-_EXPONENT |= {"KWD": 3, "BHD": 3, "JOD": 3, "OMR": 3, "TND": 3}
+_EXPONENT = {
+    **dict.fromkeys(("JPY", "KRW", "VND", "CLP", "ISK"), 0),
+    **dict.fromkeys(("KWD", "BHD", "JOD", "OMR", "TND"), 3),
+}
 
 
 def minor_units(currency: str) -> int:
