@@ -30,6 +30,15 @@ export interface BillingProvider {
   applyCredit?(sub: Subscription, credit: Credit): Promise<string>;
   /** Optional (rewards): adds a coupon to the subscription, keeping its other discounts. */
   applyCoupon?(sub: Subscription, coupon: { couponId: string; key: string }): Promise<string>;
+  /** Referrals' fraud signal: fingerprints of the customer's saved cards (same card = same payer). */
+  cardFingerprints?(customerId: string): Promise<string[]>;
+  /** Referrals: a promotion code for `couponId`, valid on first payments only; returns its id. */
+  createPromotionCode?(p: {
+    code: string;
+    couponId: string;
+    referrerOrgId: string;
+    key: string;
+  }): Promise<string>;
 }
 
 export type Credit = {
@@ -54,6 +63,8 @@ export type CheckoutInput = {
   customerId: string | null;
   /** Page the provider sends the user back to (`?checkout=success|canceled` is appended). */
   returnUrl: string;
+  /** Referred org (docs/growth.md): the referrer's promotion code, echoed back on payments. */
+  referral?: { promotionCode: string; referrerOrgId: string };
 };
 
 export type TopUpInput = {
@@ -85,7 +96,11 @@ export type BillingEvent = {
     | 'payment.succeeded'
     | 'payment.failed'
     /** A paid credit pack: the worker grants the plan's pack value once per eventId. */
-    | 'credits.purchased';
+    | 'credits.purchased'
+    /** A paid invoice of an org that checked out with a referral (docs/growth.md). */
+    | 'referral.converted'
+    /** A refund or dispute of a referred org's payment: its pending referral reward is void. */
+    | 'referral.voided';
   orgId: string;
   /** ISO time the provider produced the event; older events never overwrite newer state. */
   occurredAt: string;
@@ -100,6 +115,10 @@ export type BillingEvent = {
   seats?: number;
   /** Contract reference (order form, PO number), from the subscription's metadata. */
   contractRef?: string;
+  /** payment.succeeded: amount in minor units and the invoice; referral.converted: referrer. */
+  amount?: number;
+  invoiceId?: string;
+  referrerOrgId?: string;
 };
 
 export class WebhookRejected extends Error {}

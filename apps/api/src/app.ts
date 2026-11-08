@@ -32,6 +32,7 @@ import { mcpServerRoutes } from './routes/mcp-servers.ts';
 import { onboardingRoutes } from './routes/onboarding.ts';
 import { privacyRoutes } from './routes/privacy.ts';
 import { projectRoutes } from './routes/projects.ts';
+import { referralRoutes } from './routes/referrals.ts';
 import { rewardRoutes } from './routes/rewards.ts';
 import { securityRoutes } from './routes/security.ts';
 import { supportHookRoutes, supportRoutes } from './routes/support.ts';
@@ -241,6 +242,7 @@ export async function buildApp() {
   await app.register(privacyRoutes, { prefix: '/api/privacy' });
   await app.register(mcpRoutes);
   await app.register(rewardRoutes, { prefix: '/internal/rewards' });
+  await app.register(referralRoutes, { prefix: '/api/referrals' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.
   app.get('/api/openapi.json', { schema: { hide: true } }, async () => app.swagger());

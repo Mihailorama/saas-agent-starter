@@ -363,6 +363,9 @@ class BillingEvent:
     periodStart: str | None = None
     periodEnd: str | None = None
     cancelAtPeriodEnd: bool | None = None
+    amount: int | None = None  # payment.succeeded: minor units
+    invoiceId: str | None = None
+    referrerOrgId: str | None = None  # referral.converted (docs/growth.md)
     seats: int | None = None
     contractRef: str | None = None
 

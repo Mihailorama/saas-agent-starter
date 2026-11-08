@@ -43,6 +43,8 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
     `size` and `website`, the keys the onboarding "company details" dialog writes and the API
     validates (`OrgMetadata`, apps/api/src/auth.ts); a test keeps `requiredMetadata` within them.
     Subject: the organization.
+  - `referral.converted`: the second paid period of a referred organization (Referrals below).
+    Subject: the referred organization; the rewarded org is the referrer.
 - `reward`, one of:
   - `{ "kind": "balance_credit", "amount": "5.00", "currency": "USD" }`: money, written with
     the currency's minor-unit digits (`500` JPY, `5.000` KWD; `apps/api/src/billing/money.ts`);
@@ -99,6 +101,31 @@ succeeded, the credit exists already. Otherwise apply it as a credit note or inv
 it applied (an `operator.reward.applied` audit row with the reference). Reservations stuck for
 over an hour (a workflow that never finished) show there too: mark them applied, or release them
 (status `released`, no longer counted against the cap).
+
+## Referrals
+
+Flag `referrals` (default off). Two ways, side by side; `DUB_API_KEY` picks:
+
+|               | Native (install, default)                                                                                                                                                                                                                                                                                                                                                               | Dub Partners (connect)                                                                                                                       |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setup         | a coupon in the provider; its id in `rewards.json` `referral.couponId`                                                                                                                                                                                                                                                                                                                  | `DUB_API_KEY` on the API; program, rewards and coupons configured in Dub                                                                     |
+| Link          | `/settings/referrals`: `<app>/sign-in?ref=<code>`. Code and provider promotion code (Stripe: `first_time_transaction`) are created once, on the first view                                                                                                                                                                                                                              | `/settings/referrals`: the org's partner link (`POST /partners`, `tenantId` = org id), created once and kept in `organization.referral_link` |
+| Capture       | `?ref=` (or Dub's `?dub_id=`) stays in the sign-up URL, nothing is stored in the browser; the sign-up sends it as the `referralCode` field (`user.referral_code`, sign-up only: update-user cannot set it)                                                                                                                                                                              | same field: Dub's click id                                                                                                                   |
+| Attribution   | the user's first organization gets `referred_by` = the referring org, once                                                                                                                                                                                                                                                                                                              | `referred_by = 'dub'`, lead sent to Dub (`/track/lead`, customer = org id)                                                                   |
+| Referred side | checkout applies the referrer's promotion code; the provider limits it to a first payment                                                                                                                                                                                                                                                                                               | Dub's dual-sided coupon (on its side)                                                                                                        |
+| Conversion    | the **second paid period**: the subscription's first renewal invoice with an amount (`billing_reason: subscription_cycle`) emits `referral.converted` (`audit_log` row `billing.referral.converted`) and starts the referrer's `RewardWorkflow` (rule `referral`, needs flag `rewards` too). Paying once and leaving earns nothing; a $0 trial or 100%-off first invoice is no obstacle | each paid invoice goes to Dub (`/track/sale`); Dub pays partners. Do not also install Dub's Stripe app, or sales count twice                 |
+
+Fraud guards (native): no self-referral (a member of the referring org creating a new org); not the
+same payer (a saved card fingerprint shared by the referrer's and the referred customer, checked
+by the API before the workflow starts); a 30-day hold, after which the referred subscription must
+still be `active` and not set to cancel at period end; a refund or dispute of the referred org's
+payment (`charge.refunded`, `charge.dispute.created`) emits `referral.voided`, which terminates the
+waiting reward workflow; and the rule's cap and one grant per referred org.
+`referral.blockSameEmailDomain` (off by default, since free-mail domains match too) also refuses
+orgs whose owners share an email domain. Referral codes are 10 characters of uppercase letters and
+digits, within the characters Stripe promotion codes accept (letters, digits, dashes). A Dub or provider error never fails the billing
+webhook: Dub calls time out after 3 s and Sentry gets the error (a Dub sale lost that way is not
+retried).
 
 ## Add a rule
 

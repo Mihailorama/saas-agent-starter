@@ -60,6 +60,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       privacy.ts = data export/deletion requests (docs/privacy.md),
                       mcp-servers.ts = the org's external MCP servers (docs/mcp.md),
                       rewards.ts = /internal/rewards (worker -> billing provider, INTERNAL_API_TOKEN),
+                      referrals.ts = the org's referral link (billing/referrals.ts, billing/dub.ts),
                       mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md),
                       onboarding.ts = checklist item ids + conditions, GET /api/onboarding (docs/onboarding.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases

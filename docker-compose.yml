@@ -205,6 +205,8 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       # Rewards (docs/growth.md): the worker calls /internal/rewards with it.
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-local-dev-internal-api-token-change-me}
+      # Referrals through Dub Partners instead of the native ones (docs/growth.md); empty = native.
+      DUB_API_KEY: ${DUB_API_KEY:-}
       # Service desk webhooks + widget identity (docs/support.md); empty = endpoint off.
       CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:-}
       CHATWOOT_HMAC_TOKEN: ${CHATWOOT_HMAC_TOKEN:-}

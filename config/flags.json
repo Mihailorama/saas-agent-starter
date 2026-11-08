@@ -37,6 +37,12 @@
       "default": false,
       "expires": "2027-05-31"
     },
+    "referrals": {
+      "description": "Referral links (settings page, `?ref=` on sign-up) with a first-payment discount for the referred organization and a reward for the referrer (docs/growth.md). With DUB_API_KEY, Dub Partners runs them.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "rewards": {
       "description": "Rewards from config/rewards.json: inviting teammates and completing the organization profile (docs/growth.md). Off: no reward workflow starts; rewards already granted stay.",
       "owner": "@mihailorama",

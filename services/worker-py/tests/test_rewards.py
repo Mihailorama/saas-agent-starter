@@ -247,3 +247,50 @@ async def test_llm_spend_bonus_counts_until_it_expires(pool: asyncpg.Pool) -> No
         eur = await llm_budget(conn, PLANS, org_id, "EUR", datetime.now(UTC))
     assert b.limit == Decimal(1) + Decimal(2)  # free plan's limit + the unexpired reward
     assert eur.limit == Decimal(1)  # only in the reward's currency
+
+
+async def test_referral_guards(pool: asyncpg.Pool) -> None:
+    async def org(domain: str, status: str | None = "active", ending: bool = False) -> str:
+        org_id = await new_org(pool)
+        await new_user(pool, org_id, email=f"{uuid.uuid4()}@{domain}")
+        if status:
+            async with pool.acquire() as conn, conn.transaction():
+                await conn.execute("select set_config('app.org_id', $1, true)", org_id)
+                await conn.execute(
+                    "insert into subscriptions (org_id, plan_id, status, contour, provider,"
+                    " currency, customer_id, cancel_at_period_end)"
+                    " values ($1, 'pro', $2, 'en', 'stripe', 'USD', $1, $3)",
+                    org_id,
+                    status,
+                    ending,
+                )
+        return org_id
+
+    async def referral(referrer: str, referred: str, block: bool = False) -> str:
+        http = httpx2.AsyncClient(transport=httpx2.MockTransport(Api().handle))
+        acts = RewardActivities(pool, RULES, http, "", "", block_same_domain=block)
+        queue = f"test-{uuid.uuid4()}"
+        client = await Client.connect(
+            settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE
+        )
+        async with Worker(
+            client,
+            task_queue=queue,
+            workflows=[RewardWorkflow],
+            activities=[acts.reserve, acts.apply, acts.record],
+        ):
+            return await client.execute_workflow(
+                RewardWorkflow.run,
+                RewardRequest(referrer, "referral", referred, f"org:{referred}"),
+                id=f"reward-{referrer}-referral-{referred}",
+                task_queue=queue,
+            )
+
+    a = await org("a.example.com", status=None)  # a free referrer
+    assert await referral(a, a) == "not eligible"  # self-referral
+    assert await referral(a, await org("b.example.com", "canceled")) == "not eligible"  # refunded
+    ending = await org("b.example.com", ending=True)  # paid once, then cancel at period end
+    assert await referral(a, ending) == "not eligible"
+    assert await referral(a, await org("a.example.com"), block=True) == "not eligible"
+    assert await referral(a, await org("a.example.com")) == "manual"  # guard off; no API link
+    assert await referral(a, await org("c.example.com")) == "manual"

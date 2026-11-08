@@ -81,8 +81,18 @@ export function stripeProvider(opts: {
     invoicing: 'provider',
 
     async checkout(input) {
-      const metadata = { orgId: input.orgId, planId: input.planId };
+      const metadata = {
+        orgId: input.orgId,
+        planId: input.planId,
+        ...(input.referral && { referrerOrgId: input.referral.referrerOrgId }),
+      };
+      // The referrer's promotion code: Stripe applies it only to a first-time customer.
+      const promo = input.referral
+        ? (await stripe.promotionCodes.list({ code: input.referral.promotionCode, limit: 1 }))
+            .data[0]
+        : undefined;
       const session = await stripe.checkout.sessions.create({
+        ...(promo && { discounts: [{ promotion_code: promo.id }] }),
         mode: 'subscription',
         line_items: lineItems(input.prices, input.seats),
         client_reference_id: input.orgId,
@@ -175,6 +185,24 @@ export function stripeProvider(opts: {
       return s.id;
     },
 
+    async createPromotionCode(p) {
+      const promo = await stripe.promotionCodes.create(
+        {
+          promotion: { type: 'coupon', coupon: p.couponId },
+          code: p.code,
+          restrictions: { first_time_transaction: true },
+          metadata: { referrerOrgId: p.referrerOrgId },
+        },
+        { idempotencyKey: p.key },
+      );
+      return promo.id;
+    },
+
+    async cardFingerprints(customerId) {
+      const cards = await stripe.paymentMethods.list({ customer: customerId, type: 'card' });
+      return cards.data.flatMap((p) => (p.card?.fingerprint ? [p.card.fingerprint] : []));
+    },
+
     async webhook(req) {
       const signature = req.headers['stripe-signature'];
       if (typeof signature !== 'string') throw new WebhookRejected('missing signature');
@@ -211,10 +239,65 @@ export function stripeProvider(opts: {
         }
         case 'invoice.paid':
         case 'invoice.payment_failed': {
-          const orgId = e.data.object.parent?.subscription_details?.metadata?.orgId;
+          const invoice = e.data.object;
+          const meta = invoice.parent?.subscription_details?.metadata;
+          const orgId = meta?.orgId;
           if (!orgId) return [];
-          const type = e.type === 'invoice.paid' ? 'payment.succeeded' : 'payment.failed';
-          return [{ ...base(e, orgId), type }];
+          if (e.type === 'invoice.payment_failed')
+            return [{ ...base(e, orgId), type: 'payment.failed' }];
+          const paid = {
+            ...base(e, orgId),
+            amount: invoice.amount_paid,
+            currency: invoice.currency.toUpperCase(),
+            ...(invoice.id && { invoiceId: invoice.id }),
+            ...(typeof invoice.customer === 'string' && { customerId: invoice.customer }),
+          };
+          // A referral converts on the second paid period: the first renewal invoice with an
+          // amount (a $0 trial or 100%-off first invoice converts then too). Later renewals emit
+          // it again; the reward counts each referred org once.
+          const referrerOrgId = meta?.referrerOrgId;
+          const first = invoice.billing_reason === 'subscription_cycle';
+          return [
+            { ...paid, type: 'payment.succeeded' },
+            ...(referrerOrgId && first && invoice.amount_paid > 0
+              ? [
+                  {
+                    ...paid,
+                    eventId: `${e.id}:referral`,
+                    type: 'referral.converted' as const,
+                    referrerOrgId,
+                  },
+                ]
+              : []),
+          ];
+        }
+        // A refund or dispute of a referred org's payment voids its pending referral reward.
+        case 'charge.refunded':
+        case 'charge.dispute.created': {
+          const charge =
+            e.type === 'charge.refunded'
+              ? e.data.object
+              : await stripe.charges.retrieve(
+                  typeof e.data.object.charge === 'string'
+                    ? e.data.object.charge
+                    : e.data.object.charge.id,
+                );
+          const customer =
+            typeof charge.customer === 'string' ? charge.customer : charge.customer?.id;
+          if (!customer) return [];
+          const subs = await stripe.subscriptions.list({ customer, status: 'all', limit: 10 });
+          return subs.data.flatMap((s) =>
+            s.metadata?.orgId && s.metadata.referrerOrgId
+              ? [
+                  {
+                    ...base(e, s.metadata.orgId),
+                    eventId: `${e.id}:${s.id}`,
+                    type: 'referral.voided' as const,
+                    referrerOrgId: s.metadata.referrerOrgId,
+                  },
+                ]
+              : [],
+          );
         }
         default:
           return [];

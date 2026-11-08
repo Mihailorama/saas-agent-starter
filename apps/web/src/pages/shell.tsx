@@ -19,6 +19,7 @@ import {
   CreditCard,
   Eye,
   FolderKanban,
+  Gift,
   KeyRound,
   LifeBuoy,
   Lightbulb,
@@ -375,6 +376,7 @@ export function Shell() {
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const byoProviders = useFlag('byo-llm-providers');
   const mcpTools = useFlag('mcp-tools');
+  const referrals = useFlag('referrals');
   // "Talk to us": configured (booking host + link) and rolled out (flag), docs/crm.md.
   const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
   // Lite Telegram support: rolled out (flag) and the bot's username set (docs/support.md).
@@ -447,6 +449,9 @@ export function Shell() {
             label: 'Settings',
             items: [
               { label: 'Members', icon: Users, to: '/settings/members' as const },
+              ...(referrals
+                ? [{ label: 'Referrals', icon: Gift, to: '/settings/referrals' as const }]
+                : []),
               { label: 'API keys', icon: KeyRound, to: '/settings/api-keys' as const },
               { label: 'Webhooks', icon: Webhook, to: '/settings/webhooks' as const },
               ...(byoProviders

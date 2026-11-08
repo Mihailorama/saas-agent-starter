@@ -140,6 +140,13 @@ const membersRoute = createRoute({
   component: lazyRouteComponent(() => import('@/pages/members'), 'MembersPage'),
 });
 
+const referralsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/settings/referrals',
+  staticData: { crumbs: [{ label: 'Settings' }, { label: 'Referrals' }] },
+  component: lazyRouteComponent(() => import('@/pages/referrals'), 'ReferralsPage'),
+});
+
 const webhooksRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/settings/webhooks',
@@ -219,6 +226,7 @@ const router = createRouter({
       privacyRoute,
       apiKeysRoute,
       membersRoute,
+      referralsRoute,
       webhooksRoute,
       aiProvidersRoute,
       mcpServersRoute,

@@ -8,6 +8,7 @@ import { admin, genericOAuth, organization, twoFactor } from 'better-auth/plugin
 import { z } from 'zod';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
+import { attachReferral, cleanReferral } from './billing/referrals.ts';
 import { triggerRewards } from './billing/rewards.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
@@ -89,17 +90,28 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
   // vouches for): an unverified sign-up must not claim a CRM person who has that email.
+  // Referral the sign-up came with (docs/growth.md); only a well-formed code is stored.
+  user: { additionalFields: { referralCode: { type: 'string', required: false, input: true } } },
   // Disposable addresses (signup-guard.ts) are refused on every user write: email sign-up, SSO,
   // operator-created users and an email change. Invitations are checked in organizationHooks.
   databaseHooks: {
     user: {
       create: {
-        before: async (user) => assertAllowedEmail(user.email),
+        before: async (user) => {
+          await assertAllowedEmail(user.email);
+          return { data: { ...user, referralCode: cleanReferral(user.referralCode) } };
+        },
         after: async (user) => {
           if (user.emailVerified) await personSync(user.id);
         },
       },
-      update: { before: async (user) => assertAllowedEmail(user.email) },
+      update: {
+        // The referral is set at sign-up only: update-user cannot change it (docs/growth.md).
+        before: async (user) => {
+          assertAllowedEmail(user.email);
+          return { data: { ...user, referralCode: undefined } };
+        },
+      },
     },
   },
   emailAndPassword: {
@@ -127,13 +139,15 @@ export const auth = betterAuth({
         beforeCreateOrganization: checkMetadata,
         beforeUpdateOrganization: checkMetadata,
         beforeCreateInvitation: async ({ invitation }) => assertAllowedEmail(invitation.email),
-        afterCreateOrganization: ({ organization, user }) =>
-          crmSync({
+        afterCreateOrganization: async ({ organization, user }) => {
+          await attachReferral(organization.id, user.id);
+          await crmSync({
             kind: 'org.created',
             eventId: `org:${organization.id}`,
             orgId: organization.id,
             userId: user.id,
-          }),
+          });
+        },
         // Rewards (docs/growth.md): both run after Better Auth committed the change. The worker
         // re-checks the conditions (verified, still a member after holdDays; profile complete).
         afterAcceptInvitation: async ({ member, user, organization }) => {

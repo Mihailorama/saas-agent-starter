@@ -14,6 +14,7 @@ import {
 import { fromMinor } from '../billing/money.ts';
 import { contour, type Price, plans, subscribable } from '../billing/plans.ts';
 import { ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
+import { checkoutReferral, onReferralEvent } from '../billing/referrals.ts';
 import { contourOfProvider, providerFor, providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { env } from '../env.ts';
@@ -269,8 +270,10 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
         .select({ n: count() })
         .from(member)
         .where(eq(member.organizationId, req.tenant.orgId));
+      const referral = await checkoutReferral(req.tenant.orgId);
       const result = await viaProvider(req.log, () =>
         providerFor(contourId).checkout!({
+          referral,
           orgId: req.tenant.orgId,
           planId: req.body.planId,
           planName: plan.name,
@@ -419,7 +422,10 @@ export const billingWebhookRoutes: FastifyPluginAsyncZod = async (app) => {
         }
         throw err;
       }
-      for (const event of events) await startBillingEvent(event);
+      for (const event of events) {
+        await startBillingEvent(event);
+        await onReferralEvent(event); // referrer's reward, or the sale reported to Dub
+      }
       req.log.info(
         { provider: req.params.provider, events: events.map((e) => e.type) },
         'billing webhook',

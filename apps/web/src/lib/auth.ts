@@ -1,10 +1,22 @@
 import { passkeyClient } from '@better-auth/passkey/client';
-import { adminClient, organizationClient, twoFactorClient } from 'better-auth/client/plugins';
+import {
+  adminClient,
+  inferAdditionalFields,
+  organizationClient,
+  twoFactorClient,
+} from 'better-auth/client/plugins';
 import { createAuthClient } from 'better-auth/react';
 
 /** Talks to the API's /api/auth/* on the same origin (Vite proxy in dev, nginx in Docker).
  * adminClient only types `user.role` and `session.impersonatedBy` (docs/admin.md): the admin
  * plugin's endpoints are closed; operator actions go through /api/admin. */
 export const authClient = createAuthClient({
-  plugins: [organizationClient(), twoFactorClient(), passkeyClient(), adminClient()],
+  plugins: [
+    organizationClient(),
+    twoFactorClient(),
+    passkeyClient(),
+    adminClient(),
+    // Sign-up's referral (docs/growth.md), as declared in apps/api/src/auth.ts.
+    inferAdditionalFields({ user: { referralCode: { type: 'string', required: false } } }),
+  ],
 });
