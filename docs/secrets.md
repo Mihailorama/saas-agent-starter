@@ -45,8 +45,10 @@ docker compose cp vault-tls:/data/caddy/pki/authorities/local/root.crt ~/.config
   database is covered by pgBackRest like every database on that server; the `/data` volume holds
   only the JWT key and icons ([backups](backups.md), "Not backed up").
 - Production: `COMPOSE_PROFILES=...,vault` with its own domain behind Caddy (public certificate,
-  no CA file needed), `VAULT_DATABASE_URL` on the app's Postgres server, `VAULT_SMTP_*` for the
-  invitations ([deploy](deploy.md), section 4). The same rules: invite, then remove the token.
+  no CA file needed, `deploy/sites/vault.caddy`), `VAULT_DATABASE_URL` on the app's Postgres
+  server, `VAULT_SMTP_*` for the invitations ([deploy](deploy.md), section 4). The same rules:
+  invite, then remove the token. `pnpm run infra` installs it, or connects to yours, and saves
+  the values it generates into the vault ([setup](setup.md)).
 - Permissive contour: `compose.permissive.yaml` switches the profile off (Vaultwarden is
   AGPL-3.0); use Connect. OpenBao and Infisical were evaluated as twins and do not speak the
   Bitwarden API ([LICENSES](LICENSES.md)).

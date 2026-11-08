@@ -1,0 +1,16 @@
+{
+  "env": "e2e",
+  "project": "saas-infra",
+  "server": { "host": "infra-e2e", "admin": "root", "user": "deploy" },
+  "domain": "localhost",
+  "tls": "internal",
+  "images": { "repo": "10.54.54.10:5000/saas-infra", "version": "e2e" },
+  "components": {
+    "postgres": { "mode": "install" },
+    "s3": { "mode": "install" },
+    "smtp": { "mode": "connect", "MAIL_FROM": "Infra e2e <infra-e2e@example.com>" },
+    "analytics": { "mode": "install" },
+    "llm": { "mode": "skip" },
+    "vault": { "mode": "install" }
+  }
+}
