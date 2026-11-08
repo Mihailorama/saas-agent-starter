@@ -33,6 +33,9 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 - **CRM and booking**: Twenty (`crm` profile) gets people, companies, subscription deals, product
   signals and support/booking notes from Temporal workflows; "Book a demo" / "Talk to us" on a
   self-hosted Cal.diy (`booking` profile) or one you connect ([docs/crm.md](docs/crm.md)).
+- **Secrets vault for agents**: Vaultwarden (`vault` profile) or a Bitwarden you connect; coding
+  agents read and save credentials through `scripts/vault.mjs` and the `bw` CLI instead of chat,
+  `.env` files or git ([docs/secrets.md](docs/secrets.md)).
 - **Idea validation**: `/validate-idea` in Claude Code chains an opt-in, pinned founder-skill plugin
   (board, competitors, buyer panel, pricing, CFO), adds SaaS unit economics and ends with a waitlist
   page, price survey and interview plan ([docs/validate-idea.md](docs/validate-idea.md)).

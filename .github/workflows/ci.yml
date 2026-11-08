@@ -135,6 +135,31 @@ jobs:
       - if: failure()
         run: docker compose --profile booking logs --tail 200 caldiy caldiy-db
 
+  # Secrets vault (`vault` profile, docs/secrets.md): Vaultwarden on our Postgres behind the local
+  # TLS proxy, admin page off without a token, public signups refused.
+  vault:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose --profile vault up -d --wait vault-tls
+      - name: Alive over TLS, admin off, signups closed
+        run: |
+          set -euo pipefail
+          docker compose cp vault-tls:/data/caddy/pki/authorities/local/root.crt "$RUNNER_TEMP/ca.crt"
+          v() { curl -sS --cacert "$RUNNER_TEMP/ca.crt" "$@"; }
+          v -f https://localhost:8222/alive
+          v https://localhost:8222/admin | grep -q "disabled, please configure the 'ADMIN_TOKEN'"
+          v -H 'content-type: application/json' \
+            -d '{"email":"stranger@example.com","name":"x","receiveMarketingEmails":false}' \
+            https://localhost:8222/identity/accounts/register/send-verification-email |
+            grep -q 'Registration not allowed'
+          docker compose exec -T postgres psql -U postgres -d vaultwarden -tAc \
+            "select count(*) from information_schema.tables where table_schema = 'public'" |
+            awk '{ exit !($1 > 10) }'
+      - if: failure()
+        run: docker compose --profile vault logs --tail 100 vault vault-tls vault-db
+
   # The production deploy path end to end on the runner (deploy/rehearsal.sh, docs/deploy.md):
   # SOPS-encrypted env, Caddy internal CA, migrate, deploy v1 -> v2, rollback, failing migration.
   deploy-rehearsal:

@@ -37,3 +37,11 @@
 # 	tls {$CADDY_TLS}
 # 	reverse_proxy caldiy:3000
 # }
+
+# Profile vault (Vaultwarden, docs/secrets.md): its own domain, TLS required (the bw CLI refuses
+# plain HTTP). Uncomment and set VAULT_PUBLIC_URL=https://vault.example.com. /admin stays off
+# unless VAULT_ADMIN_TOKEN is set; restrict it further here if you keep it on.
+# vault.example.com {
+# 	tls {$CADDY_TLS}
+# 	reverse_proxy vault:80
+# }

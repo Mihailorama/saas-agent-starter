@@ -126,7 +126,8 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     backup.mjs (`pnpm run backup:now` / `restore`), backup-e2e.sh (CI job),
                     deploy.mjs (`pnpm run deploy -- <env>`), check-migrations.mjs (expand/contract),
                     check-flags.mjs, flags.mjs (flags:sync),
-                    eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs
+                    eval.mjs (`pnpm eval`), langfuse-publish-prompts.mjs, llmops-evaluators.mjs,
+                    vault.mjs (secrets vault for humans and agents over the `bw` CLI)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
@@ -134,6 +135,7 @@ docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/mcp.md         external MCP tools: connect a server, the reference server, the tool loop
+docs/secrets.md     secrets vault: Vaultwarden install or Bitwarden connect, agent rules, vault -> SOPS
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```
 
@@ -196,6 +198,9 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   booking on self-hosted Cal.diy (MIT, `booking` profile, image built by CI from a pinned upstream
   commit; Cal.com Cloud connects the same way). Sync is one Temporal workflow per source event,
   cross-links in Twenty custom fields, no own CRM tables (ADR 0026).
+- Secrets vault: Vaultwarden (AGPL-3.0, unmodified, `vault` profile, data in our Postgres) or any
+  Bitwarden you connect, used through the official `bw` CLI (GPL-3.0, installed by the developer)
+  and `scripts/vault.mjs`; SOPS files stay the deploy path; no own vault code (ADR 0029).
 
 ## Where code goes (TS vs Python vs Rust)
 
@@ -506,6 +511,25 @@ Details: docs/releases.md.
   (never closes it); a bare mention gets nothing.
 - Never create tags or releases by hand; merging the release-please PR does it.
 
+## Secrets for agents
+
+Details: docs/secrets.md, ADR 0029.
+
+- Secrets live in the team vault (Vaultwarden or Bitwarden), one item per `<service>/<env>`, one
+  field per value. Never paste them into chat, `.env`, `.env.example`, git, issues, logs or files,
+  and never ask a human to paste one into chat: ask them to `put` it into the vault.
+- Read: `node scripts/vault.mjs get <item> <field> | <consumer>` (always piped into the tool that
+  needs it, in the same command; never a bare `get`, never `echo`/`cat` of the value), or
+  `node scripts/vault.mjs run <item> <field> <ENV_VAR> -- <command>`. Never `bw get`/`bw list`.
+- Save every credential you create or receive at once:
+  `<command that prints it> | node scripts/vault.mjs put <item> <field>` (stdin only, never argv).
+  `/save-secret` has the steps. Then use it from the vault, not from your context.
+- Locked or logged out (`vault.mjs status` exit 2): stop and ask the human to run
+  `node scripts/vault.mjs unlock` in their terminal. Never search files, env, shell history, other
+  tools or the session file for the credential, and never ask for the master password.
+- Production env files: vault -> `sops set --value-stdin` -> `pnpm run deploy` (docs/secrets.md
+  "Vault to deploy"). The `bw` CLI is GPL-3.0: never add it as a code dependency.
+
 ## Security rules
 
 - Tenant tables: always `orgId()` + `tenantIsolation()`, always accessed via `withTenant`
@@ -524,7 +548,7 @@ Details: docs/releases.md.
   `node_modules`/`.venv`/vendored copies, no forks swapped in for the upstream package. Fixes
   go upstream (issue or PR); until a release lands, work around it in our own code.
 - No real secrets, client names or private data in the repo, ever. Example values use
-  `example.com` and `local-dev-*`.
+  `example.com` and `local-dev-*`. Real secrets go to the vault ("Secrets for agents").
 
 ## Never
 

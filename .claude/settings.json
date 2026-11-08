@@ -28,7 +28,11 @@
       "Bash(uv run pytest *)",
       "Bash(git status)",
       "Bash(git diff *)",
-      "Bash(git log *)"
+      "Bash(git log *)",
+      "Bash(node scripts/vault.mjs status)",
+      "Bash(node scripts/vault.mjs get *)",
+      "Bash(node scripts/vault.mjs run *)",
+      "Bash(node scripts/vault.mjs put *)"
     ],
     "deny": [
       "Read(./.env)",
@@ -36,7 +40,11 @@
       "Bash(git push --force *)",
       "Bash(git push -f *)",
       "Bash(docker compose down -v *)",
-      "Bash(rm -rf *)"
+      "Bash(rm -rf *)",
+      "Read(~/.config/agent-vault/**)",
+      "Bash(bw get *)",
+      "Bash(bw list *)",
+      "Bash(bw export *)"
     ]
   },
   "extraKnownMarketplaces": {
