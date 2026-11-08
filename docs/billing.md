@@ -147,7 +147,8 @@ that stops being enough:
   billing (connect; follow-up).
 
 Each is another provider adapter behind the same interface, plus a meter adapter in the worker
-(`Meters` in `worker/usage.py`: `report(customer, meter, value, identifier, at)`).
+(`Meters` in `worker/usage.py`: `report_usage(customer, meter, value, identifier, at)`, the
+`reportUsage` of the provider surface).
 
 ## Entitlements
 
