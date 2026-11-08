@@ -23,3 +23,5 @@ evals/**/pulled.jsonl
 .lighthouseci/
 # Subscription logins for the llm-cli container (docs/llm-providers.md); never commit them.
 .secrets/
+# Business-idea validation (founder-skill plugin, docs/validate-idea.md): the founder's private idea.
+founder/

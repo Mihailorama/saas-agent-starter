@@ -38,5 +38,24 @@
       "Bash(docker compose down -v *)",
       "Bash(rm -rf *)"
     ]
+  },
+  "extraKnownMarketplaces": {
+    "starter-founder": {
+      "source": {
+        "source": "settings",
+        "name": "starter-founder",
+        "plugins": [
+          {
+            "name": "founder-skill",
+            "description": "Founder skill pack (MIT): board, competitors, consumer panel, pricing, CFO and more. Opt-in: install it yourself, see docs/validate-idea.md.",
+            "source": {
+              "source": "github",
+              "repo": "Jakeschincariol/founder-skill",
+              "sha": "fd9385b0cfe1b96bebce3898fbd506d73eff5a9d"
+            }
+          }
+        ]
+      }
+    }
   }
 }
