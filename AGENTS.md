@@ -55,7 +55,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts (-> S3 + TrackerItemWorkflow) + CRM signals,
-                      support.ts = Chatwoot/Plane/GitHub hooks, crm.ts = booking hook (Cal.diy),
+                      support.ts = Chatwoot/Plane/GitHub/Telegram hooks, crm.ts = booking hook,
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md),
                       mcp-servers.ts = the org's external MCP servers (docs/mcp.md),
@@ -94,6 +94,8 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/webhooks.py  webhook delivery: Standard Webhooks signing, SSRF guard, attempt log,
                       secret decryption, auto-disable, retention (daily Temporal Schedule)
   worker/support.py   service desk triage, return path
+  worker/telegram.py  lite Telegram support: a topic per user in the team's forum group, relay
+                      both ways, /bug /feature -> tracker (Bot API over httpx2, docs/support.md)
   worker/tracker.py   the one tracker client (Plane SDK default, GitHub optional): alerts,
                       feedback, triage items; worker/released.py = release comments
   worker/crm.py       CRM sync (Twenty REST behind the `Crm` protocol), one workflow per source event
@@ -143,7 +145,7 @@ scripts/            license-check.mjs (JS + Python + Rust + images), sbom.mjs (`
                     vault.mjs (secrets vault for humans and agents over the `bw` CLI)
 docs/adr/           why things are the way they are; docs/LICENSES.md for images
 docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does not
-docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
+docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path, lite Telegram bot
 docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync flows, mapping
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention

@@ -24,6 +24,7 @@ from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import Byo, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
+from worker.credits import CreditActivities, Credits, StripeCredits
 from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
@@ -34,6 +35,7 @@ from worker.privacy import PrivacyActivities, configured_tools
 from worker.providers import load_providers, providers_from_config
 from worker.s3 import S3
 from worker.support import Chatwoot, SupportActivities
+from worker.telegram import Bot, TelegramActivities
 from worker.text import backend
 from worker.tracker import TrackerActivities
 from worker.tracker import connect as tracker_connect
@@ -50,6 +52,7 @@ from worker.workflows import (
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
+    TelegramChatWorkflow,
     TrackerItemWorkflow,
     UsageReportWorkflow,
     WebhookEventWorkflow,
@@ -166,12 +169,17 @@ async def main() -> None:
     await ensure_retention_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     await ensure_usage_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
+    stripe = (settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)
+    credits: dict[str, Credits] = (
+        {"stripe": StripeCredits(http, *stripe)} if settings.STRIPE_SECRET_KEY else {}
+    )
+    credit_grants = CreditActivities(pool, plans, credits)
+    if ai:
+        ai.credits = credits  # built before the HTTP client
     usage = UsageActivities(
         pool,
         plans,
-        {"stripe": StripeMeters(http, settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)}
-        if settings.STRIPE_SECRET_KEY
-        else {},
+        {"stripe": StripeMeters(http, *stripe)} if settings.STRIPE_SECRET_KEY else {},
     )
     files = S3(
         endpoint=settings.S3_ENDPOINT,
@@ -204,7 +212,27 @@ async def main() -> None:
     )
     tracker = await tracker_connect(http)  # refuses a completed/cancelled target state
     tracker_items = TrackerActivities(tracker, files)
+    s = settings
+    telegram = (
+        TelegramActivities(
+            bot=Bot(s.TELEGRAM_SUPPORT_BOT_TOKEN, http, s.TELEGRAM_API_URL),
+            token=s.TELEGRAM_SUPPORT_BOT_TOKEN,
+            chat_id=s.TELEGRAM_SUPPORT_CHAT_ID,
+            pool=pool,
+            tracker=tracker,
+            files=files,
+        )
+        if s.TELEGRAM_SUPPORT_BOT_TOKEN and s.TELEGRAM_SUPPORT_CHAT_ID
+        else None
+    )
+    if (
+        telegram
+        and s.TELEGRAM_SUPPORT_WEBHOOK_URL
+        and await flags.is_enabled("telegram-support", user_id="telegram")
+    ):
+        await telegram.register_webhook(s.TELEGRAM_SUPPORT_WEBHOOK_URL)
     support = SupportActivities(
+        telegram=telegram,
         chatwoot=chatwoot,
         tracker=tracker,
         ai=ai,
@@ -239,6 +267,7 @@ async def main() -> None:
             CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
+            TelegramChatWorkflow,
             TrackerItemWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,
@@ -254,9 +283,12 @@ async def main() -> None:
             billing.end_contract_period,
             usage.usage_orgs,
             usage.report_org_usage,
+            credit_grants.grant_credits,
+            credit_grants.record_grant_failure,
             crm.sync,
             support.triage,
             support.issue_closed,
+            *([telegram.handle] if telegram else []),
             tracker_items.file_item,
             webhooks.deliver_webhook,
             webhooks.prune_webhooks,
@@ -288,11 +320,13 @@ async def main() -> None:
     async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
-            " support: chatwoot %s, tracker %s, triage model %s, privacy tools: %s, crm %s)",
+            " support: chatwoot %s, telegram %s, tracker %s, triage model %s, privacy tools: %s,"
+            " crm %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
             "on" if chatwoot else "dry run",
+            "on" if telegram else "off",
             tracker.name,
             triage_model or "off",
             ",".join(t.name for t in privacy_tools.all) or "none",

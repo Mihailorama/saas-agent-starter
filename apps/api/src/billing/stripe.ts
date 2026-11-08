@@ -95,6 +95,35 @@ export function stripeProvider(opts: {
       return { url: session.url };
     },
 
+    // A credit pack: a one-time payment; the worker grants it after checkout.session.completed.
+    async topUp(input) {
+      if (!input.pack.providerPriceId) throw new Error('no Stripe price id for the credit pack');
+      const metadata = { orgId: input.orgId, planId: input.planId, kind: 'credits' };
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer: input.customerId,
+        line_items: [{ price: input.pack.providerPriceId, quantity: 1 }],
+        metadata,
+        payment_intent_data: { metadata },
+        success_url: `${input.returnUrl}?checkout=success`,
+        cancel_url: `${input.returnUrl}?checkout=canceled`,
+      });
+      if (!session.url) throw new Error('Stripe returned a checkout session without url');
+      return { url: session.url };
+    },
+
+    async creditBalance(sub) {
+      if (!sub.customerId) return 0;
+      const summary = await stripe.billing.creditBalanceSummaries.retrieve({
+        customer: sub.customerId,
+        filter: { type: 'applicability_scope', applicability_scope: { price_type: 'metered' } },
+      });
+      return summary.balances
+        .map((b) => b.available_balance.monetary)
+        .filter((m) => m?.currency.toUpperCase() === sub.currency)
+        .reduce((sum, m) => sum + (m?.value ?? 0), 0);
+    },
+
     async portal(sub, returnUrl) {
       if (!sub.customerId) return null;
       const session = await stripe.billingPortal.sessions.create({
@@ -130,6 +159,26 @@ export function stripeProvider(opts: {
         case 'customer.subscription.updated':
         case 'customer.subscription.deleted':
           return subscriptionEvent(e, e.data.object);
+        case 'checkout.session.completed':
+        case 'checkout.session.async_payment_succeeded': {
+          const session = e.data.object;
+          const orgId = session.metadata?.orgId;
+          if (session.metadata?.kind !== 'credits' || !orgId || session.payment_status !== 'paid') {
+            return [];
+          }
+          // The grant is the plan's pack value (the worker reads it), never amount_total, which
+          // includes tax and discounts.
+          return [
+            {
+              ...base(e, orgId),
+              eventId: session.id, // one grant per paid session, whichever event reports it
+              type: 'credits.purchased',
+              planId: session.metadata.planId,
+              currency: session.currency?.toUpperCase(),
+              customerId: typeof session.customer === 'string' ? session.customer : undefined,
+            },
+          ];
+        }
         case 'invoice.paid':
         case 'invoice.payment_failed': {
           const orgId = e.data.object.parent?.subscription_details?.metadata?.orgId;

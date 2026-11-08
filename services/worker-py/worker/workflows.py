@@ -22,6 +22,7 @@ with workflow.unsafe.imports_passed_through():
     import worker.settings as settings
     from worker.activities import Activities, ProjectCreated
     from worker.billing import BillingActivities, BillingEvent, ContractPeriod
+    from worker.credits import GRANT_ATTEMPTS, CreditActivities
     from worker.crm import CrmActivities, CrmEvent
     from worker.mail import SendEmail, send_email
     from worker.privacy import (
@@ -34,6 +35,7 @@ with workflow.unsafe.imports_passed_through():
         Step,
     )
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
+    from worker.telegram import TelegramActivities, TelegramChat, TelegramUpdate
     from worker.tracker import TrackerActivities, TrackerItem
     from worker.usage import UsageActivities
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
@@ -87,6 +89,50 @@ class SupportIssueClosedWorkflow:
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5),
         )
+
+
+@workflow.defn(name="TelegramChatWorkflow")
+class TelegramChatWorkflow:
+    """One per chat or topic (id `telegram-chat-<chat>-<thread>`), fed by signal-with-start from
+    POST /api/hooks/telegram: relays its messages one at a time, in order, each step of a message
+    as its own activity. Ends after an idle hour; continues as new every 100 messages."""
+
+    def __init__(self) -> None:
+        self.queue: list[TelegramUpdate] = []
+        self.seen: list[int] = []  # message ids: Telegram redelivers when an answer is slow
+
+    @workflow.signal
+    def message(self, u: TelegramUpdate) -> None:
+        if u.messageId not in self.seen:
+            self.seen = [*self.seen[-199:], u.messageId]
+            self.queue.append(u)
+
+    @workflow.run
+    async def run(self, chat: TelegramChat) -> None:
+        self.queue, self.seen = [*chat.pending, *self.queue], [*chat.seen, *self.seen]
+        for _ in range(100):
+            try:
+                await workflow.wait_condition(lambda: bool(self.queue), timeout=timedelta(hours=1))
+            except TimeoutError:
+                return
+            u, steps = self.queue.pop(0), ["main"]
+            while steps:
+                try:
+                    steps = [
+                        *await workflow.execute_activity_method(
+                            TelegramActivities.handle,
+                            args=[u, steps[0]],
+                            start_to_close_timeout=timedelta(seconds=30),
+                            schedule_to_close_timeout=timedelta(hours=1),  # 429s: keep trying
+                            retry_policy=RetryPolicy(
+                                initial_interval=timedelta(seconds=2), maximum_attempts=0
+                            ),
+                        ),
+                        *steps[1:],
+                    ]
+                except ActivityError:  # failed for good (logged, in Sentry): next step
+                    steps = steps[1:]
+        workflow.continue_as_new(TelegramChat(self.queue, self.seen))
 
 
 @workflow.defn(name="TrackerItemWorkflow")
@@ -256,6 +302,27 @@ class BillingEventWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
         )
+        # A paid credit pack becomes a grant in the provider (docs/billing.md "Prepaid credits").
+        if event.type == "credits.purchased" and workflow.patched("credit-grants"):
+            try:
+                await workflow.execute_activity_method(
+                    CreditActivities.grant_credits,
+                    event,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    # Inside Stripe's 24-hour idempotency window, so a retry never grants twice.
+                    retry_policy=RetryPolicy(
+                        maximum_interval=timedelta(minutes=5), maximum_attempts=GRANT_ATTEMPTS
+                    ),
+                )
+            except ActivityError:
+                # Any final failure, a timeout included: the paid pack goes on the record.
+                await workflow.execute_activity_method(
+                    CreditActivities.record_grant_failure,
+                    event,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+                )
+                raise
         # Deal stage in the CRM (docs/crm.md), only for events that changed our state. The child
         # maps the subscription row as it is when it runs, so a retried older child cannot move
         # the deal back. A child, so a CRM outage never holds the billing workflow open.

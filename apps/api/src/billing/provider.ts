@@ -12,6 +12,10 @@ export interface BillingProvider {
   readonly invoicing: 'provider' | 'external';
   /** Hosted payment page for the first period of `planId`; returns where to send the browser. */
   checkout?(input: CheckoutInput): Promise<{ url: string }>;
+  /** Optional: hosted payment page for one prepaid credit pack (docs/billing.md). */
+  topUp?(input: TopUpInput): Promise<{ url: string }>;
+  /** Optional: the provider's prepaid balance left, in minor units of the currency. */
+  creditBalance?(sub: Subscription): Promise<number>;
   /** Hosted self-service page (invoices, payment method), or null for this subscription. */
   portal?(sub: Subscription, returnUrl: string): Promise<string | null>;
   /** Stop renewing at the end of the paid period. */
@@ -37,6 +41,15 @@ export type CheckoutInput = {
   returnUrl: string;
 };
 
+export type TopUpInput = {
+  orgId: string;
+  planId: string;
+  customerId: string;
+  /** The plan's `credits` component in the subscription's currency. */
+  pack: Extract<PriceComponent, { model: 'credits' }>;
+  returnUrl: string;
+};
+
 export type WebhookRequest = {
   body: string;
   headers: Record<string, string | string[] | undefined>;
@@ -55,7 +68,9 @@ export type BillingEvent = {
     | 'subscription.past_due'
     | 'subscription.canceled'
     | 'payment.succeeded'
-    | 'payment.failed';
+    | 'payment.failed'
+    /** A paid credit pack: the worker grants the plan's pack value once per eventId. */
+    | 'credits.purchased';
   orgId: string;
   /** ISO time the provider produced the event; older events never overwrite newer state. */
   occurredAt: string;

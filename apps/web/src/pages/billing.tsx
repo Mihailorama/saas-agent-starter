@@ -104,6 +104,11 @@ export function BillingPage() {
     onSuccess: ({ url }) => go(url),
     onError: (err) => toast.error(err.message),
   });
+  const topUp = useMutation({
+    mutationFn: () => ok(client.POST('/api/billing/credits/checkout')),
+    onSuccess: ({ url }) => go(url),
+    onError: (err) => toast.error(err.message),
+  });
   const portal = useMutation({
     mutationFn: () => ok(client.POST('/api/billing/portal')),
     onSuccess: ({ url }) => go(url),
@@ -226,6 +231,20 @@ export function BillingPage() {
             limit={b.usage.projects.limit}
             text={`${b.usage.projects.used} of ${b.usage.projects.limit}`}
           />
+          {b.credits && (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span>
+                Prepaid credit:{' '}
+                {b.credits.balance === null ? 'unavailable' : money(b.credits.balance, b.currency)}
+              </span>
+              {b.canManage && (
+                <Button variant="outline" onClick={() => topUp.mutate()} disabled={topUp.isPending}>
+                  Buy {b.credits.pack.credits} credits for{' '}
+                  {money(b.credits.pack.amount, b.currency)}
+                </Button>
+              )}
+            </div>
+          )}
           {b.llmSpend.map((s) => (
             <div key={s.currency} className="space-y-2">
               <Meter

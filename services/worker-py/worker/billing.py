@@ -78,13 +78,20 @@ class Price:
     amount: str | None = None
     interval: str | None = None
     meter: str | None = None
+    expires_days: int | None = None  # credits: a granted pack expires after this many days
 
 
 def _prices(raw: dict[str, Any] | list[dict[str, Any]]) -> list[Price]:
     """One component or an array; a component without `model` is a (pre-model) flat price."""
     parts = raw if isinstance(raw, list) else [raw]
     return [
-        Price(c.get("model", "flat"), c.get("amount"), c.get("interval"), c.get("meter"))
+        Price(
+            c.get("model", "flat"),
+            c.get("amount") or c.get("pack", {}).get("amount"),  # credits: the pack's price
+            c.get("interval"),
+            c.get("meter"),
+            c.get("expiresDays"),
+        )
         for c in parts
     ]
 
@@ -371,7 +378,7 @@ def _ts(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
-async def _audit_once(conn: PoolConnectionProxy, org_id: str, action: str, target: str) -> None:
+async def audit_once(conn: PoolConnectionProxy, org_id: str, action: str, target: str) -> None:
     await conn.execute(
         "insert into audit_log (org_id, actor_id, action, target)"
         " select $1, 'billing', $2, $3"
@@ -409,7 +416,7 @@ class BillingActivities:
         async with self.pool.acquire() as conn, conn.transaction():
             await conn.execute("select set_config('app.org_id', $1, true)", e.orgId)
             if e.type not in STATUS:  # payment.succeeded / payment.failed: trail only
-                await _audit_once(conn, e.orgId, f"billing.{e.type}", f"{e.provider}:{e.eventId}")
+                await audit_once(conn, e.orgId, f"billing.{e.type}", f"{e.provider}:{e.eventId}")
                 return True
             occurred = datetime.fromisoformat(e.occurredAt)
             prev = await conn.fetchrow(
@@ -459,7 +466,7 @@ class BillingActivities:
                 # Usage is reported from now on, never from before the metered price was attached
                 # (an upgrade from flat, a re-subscription): docs/billing.md "Usage-based".
                 await conn.execute("update subscriptions set usage_reported_until = $1", occurred)
-            await _audit_once(conn, e.orgId, f"billing.{e.type}", f"{e.provider}:{e.eventId}")
+            await audit_once(conn, e.orgId, f"billing.{e.type}", f"{e.provider}:{e.eventId}")
         activity.logger.info("billing event %s (%s) applied for org %s", e.eventId, e.type, e.orgId)
         return True
 
@@ -479,7 +486,7 @@ class BillingActivities:
                 end,
             )
             if status is not None:
-                await _audit_once(
+                await audit_once(
                     conn, p.orgId, f"billing.contract.{status}", f"manual:{p.periodEnd}"
                 )
         activity.logger.info("contract period of org %s ended: %s", p.orgId, status or "unchanged")
