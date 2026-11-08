@@ -111,10 +111,12 @@ class UsageActivities:
                 "org %s: usage before %s is too old for the provider", org_id, end - MAX_AGE
             )
             start = _hour(end - MAX_AGE)
-        sent, hour = 0, start
+        # A mark inside an hour (a metered price attached then): that hour counts from the mark.
+        sent, hour = 0, _hour(start)
         while hour < end and hour < start + HOURS_PER_RUN * HOUR:
+            since = max(hour, start)
             events = await _in_org(
-                self.pool, org_id, lambda c, h=hour: self._hour(c, org_id, sub, h)
+                self.pool, org_id, lambda c, h=hour, f=since: self._hour(c, org_id, sub, h, f)
             )
             for e in events:  # in sequence: Stripe takes one event per customer and meter
                 await meters.report_usage(sub["customer_id"], e.meter, e.value, e.identifier, hour)
@@ -135,8 +137,11 @@ class UsageActivities:
         prices = plan.prices.get(sub["currency"], [])
         return {p.meter for p in prices if p.model == "metered" and p.meter}
 
-    async def _hour(self, conn: Any, org_id: str, sub: Any, hour: datetime) -> list[_Event]:
-        """One event per metered meter of the plan in effect during `hour`, values summed."""
+    async def _hour(
+        self, conn: Any, org_id: str, sub: Any, hour: datetime, since: datetime
+    ) -> list[_Event]:
+        """One event per metered meter of the plan in effect during `hour`, values summed from
+        `since` (the hour's start, or the mark inside it)."""
         plan = self.plans.at(sub, hour)
         meters = {
             p.meter
@@ -151,7 +156,7 @@ class UsageActivities:
                 " from ai_calls where org_id = $1 and created_at >= $2 and created_at < $3"
                 " and status = 'ok' and provider not like 'byo:%' group by cost_currency",
                 org_id,
-                hour,
+                since,
                 hour + HOUR,
             )
             for r in rows:
@@ -166,7 +171,9 @@ class UsageActivities:
                         r["cost_currency"],
                         sub["currency"],
                     )
-        if "api_calls" in meters:
+        # Hourly counters cannot be split: a partial first hour leaves its API calls unbilled
+        # rather than bill requests from before the metered price.
+        if "api_calls" in meters and since == hour:
             values["api_calls"] = int(
                 await conn.fetchval(
                     "select coalesce(sum(count), 0) from usage_counters"

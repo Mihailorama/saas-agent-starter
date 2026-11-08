@@ -3,8 +3,9 @@
 - `CreditActivities.grant_credits`: a paid pack (BillingEventWorkflow, `credits.purchased`)
   becomes one provider credit grant of the plan's pack value. Checked against the audit trail
   first and sent with an idempotency key per payment, so it is granted once. Failures are loud:
-  an exception (Sentry, through the worker's error interceptor) and a
-  `billing.credits.grant_failed` audit row, never a silently kept payment.
+  an exception (Sentry, through the worker's error interceptor) and, once the workflow gives up
+  (last attempt, timeout), a `billing.credits.grant_failed` audit row: never a silently kept
+  payment.
 - `check_credit_balance`: before a priced AI call, the provider's balance less this period's
   not yet invoiced spend (Stripe applies credit only when it finalizes the invoice). No local
   ledger: the balance is the provider's.
@@ -179,7 +180,6 @@ class CreditActivities:
         )
         adapter = self.credits.get(e.provider)
         if pack is None or pack.amount is None or adapter is None or not e.customerId:
-            await self._failed(e, target)
             raise ApplicationError(
                 f"credit pack {e.eventId} was paid but cannot be granted here (plan, currency,"
                 " provider key or customer missing): grant it by hand",
@@ -188,25 +188,20 @@ class CreditActivities:
             )
         days = pack.expires_days
         expires = datetime.fromisoformat(e.occurredAt) + timedelta(days=days) if days else None
-        try:
-            await adapter.grant_credits(
-                e.customerId,
-                currency,
-                to_minor(pack.amount, currency),
-                expires,
-                f"credits-{e.eventId}",
-            )
-        except Exception:
-            if activity.info().attempt >= GRANT_ATTEMPTS:
-                await self._failed(e, target)
-            raise
+        await adapter.grant_credits(
+            e.customerId, currency, to_minor(pack.amount, currency), expires, f"credits-{e.eventId}"
+        )
         balance_cache.pop(e.orgId, None)  # the next call reads the new balance
         async with self.pool.acquire() as conn, conn.transaction():
             await conn.execute("select set_config('app.org_id', $1, true)", e.orgId)
             await audit_once(conn, e.orgId, "billing.credits.granted", target)
         return True
 
-    async def _failed(self, e: BillingEvent, target: str) -> None:
+    @activity.defn(name="record_grant_failure")
+    async def record_grant_failure(self, e: BillingEvent) -> None:
+        """Called by BillingEventWorkflow once grant_credits failed for good (last attempt,
+        timeout or a non-retryable error): the paid pack is on the record for a manual grant."""
+        target = f"{e.provider}:{e.eventId}"
         log.error("credit pack %s of org %s paid but not granted", e.eventId, e.orgId)
         async with self.pool.acquire() as conn, conn.transaction():
             await conn.execute("select set_config('app.org_id', $1, true)", e.orgId)

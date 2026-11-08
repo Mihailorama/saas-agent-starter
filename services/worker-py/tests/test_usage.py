@@ -15,11 +15,11 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from tests.conftest import new_org
-from tests.test_billing import FIXTURE_PLANS, call, fake, in_org, spend, subscribe
+from tests.test_billing import FIXTURE_PLANS, call, event, fake, in_org, spend, subscribe
 from worker import settings
 from worker.ai import AllowedModel, Gateway
 from worker.ai import Price as ModelPrice
-from worker.billing import SpendLimitExceeded, load_plans
+from worker.billing import BillingActivities, SpendLimitExceeded, load_plans
 from worker.s3 import S3
 from worker.usage import StripeMeters, UsageActivities
 from worker.workflows import UsageReportWorkflow
@@ -194,3 +194,60 @@ async def test_pay_as_you_go_warns_over_the_plan_limit_and_stops_at_a_cap(
     monkeypatch.setattr(settings, "FLAGS_ON", frozenset[str]())
     with pytest.raises(SpendLimitExceeded):  # flag off: the plan's limit stops calls as before
         await call(gateway, org)
+
+
+async def test_usage_counts_only_from_when_the_metered_price_was_attached(
+    pool: asyncpg.Pool,
+) -> None:
+    billing = BillingActivities(pool, PLANS)
+    meters = FakeMeters()
+    acts = UsageActivities(pool, PLANS, {"stripe": meters})
+    hour = closed_hour()
+    attached = hour + timedelta(minutes=30)
+
+    async def mark(org: str) -> datetime:
+        [sub] = await in_org(pool, org, "select usage_reported_until from subscriptions")
+        return sub["usage_reported_until"]
+
+    # Upgrade flat -> metered mid-hour: the usage before it is never reported.
+    org = await new_org(pool)
+    await billing.apply_billing_event(event(org, "subscription.activated", hour, planId="starter"))
+    await spend(pool, org, "0.01", hour + timedelta(minutes=10))  # flat plan: not billed
+    await spend(pool, org, "0.02", hour + timedelta(minutes=40))
+    up = event(org, "subscription.activated", attached, planId="payg", customerId=f"cus_{org}")
+    await billing.apply_billing_event(up)
+    assert await mark(org) == attached
+    await acts.report_org_usage(org)
+    assert [e[1:3] for e in meters.events if e[0] == f"cus_{org}"] == [("llm_cost_micros", 20000)]
+
+    # A change between metered plans keeps the mark; a re-subscription resets it.
+    await billing.apply_billing_event(
+        event(org, "subscription.activated", attached + HOUR, planId="growth")
+    )
+    assert await mark(org) == hour + HOUR
+    await billing.apply_billing_event(event(org, "subscription.canceled", attached + 2 * HOUR))
+    again = attached + 3 * HOUR
+    await billing.apply_billing_event(event(org, "subscription.activated", again, planId="payg"))
+    assert await mark(org) == again
+
+
+async def test_pay_as_you_go_refuses_models_priced_in_another_currency(
+    pool: asyncpg.Pool, s3: S3
+) -> None:
+    gateway = Gateway(
+        pool=pool,
+        s3=s3,
+        contour="eu",
+        registry={
+            ("fake", "eur-model"): AllowedModel(
+                frozenset({"project.summary"}), ModelPrice(Decimal("0.001"), Decimal(0), "EUR")
+            )
+        },
+        providers={"fake": fake},
+        retention_days=1,
+        plans=PLANS,
+    )
+    org = await new_org(pool)
+    await subscribe(pool, org, plan_id="payg", customer_id="cus_1")  # bills in USD
+    with pytest.raises(SpendLimitExceeded, match="models priced in EUR cannot be billed"):
+        await call(gateway, org, "eur-model")

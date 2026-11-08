@@ -261,6 +261,7 @@ async def main() -> None:
             usage.usage_orgs,
             usage.report_org_usage,
             credit_grants.grant_credits,
+            credit_grants.record_grant_failure,
             crm.sync,
             support.triage,
             support.issue_closed,

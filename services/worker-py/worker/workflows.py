@@ -259,16 +259,25 @@ class BillingEventWorkflow:
         )
         # A paid credit pack becomes a grant in the provider (docs/billing.md "Prepaid credits").
         if event.type == "credits.purchased" and workflow.patched("credit-grants"):
-            await workflow.execute_activity_method(
-                CreditActivities.grant_credits,
-                event,
-                start_to_close_timeout=timedelta(seconds=30),
-                # Inside Stripe's 24-hour idempotency window, so a retry never grants twice; the
-                # last attempt records the failure (worker/credits.py).
-                retry_policy=RetryPolicy(
-                    maximum_interval=timedelta(minutes=5), maximum_attempts=GRANT_ATTEMPTS
-                ),
-            )
+            try:
+                await workflow.execute_activity_method(
+                    CreditActivities.grant_credits,
+                    event,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    # Inside Stripe's 24-hour idempotency window, so a retry never grants twice.
+                    retry_policy=RetryPolicy(
+                        maximum_interval=timedelta(minutes=5), maximum_attempts=GRANT_ATTEMPTS
+                    ),
+                )
+            except ActivityError:
+                # Any final failure, a timeout included: the paid pack goes on the record.
+                await workflow.execute_activity_method(
+                    CreditActivities.record_grant_failure,
+                    event,
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+                )
+                raise
         # Deal stage in the CRM (docs/crm.md), only for events that changed our state. The child
         # maps the subscription row as it is when it runs, so a retried older child cannot move
         # the deal back. A child, so a CRM outage never holds the billing workflow open.

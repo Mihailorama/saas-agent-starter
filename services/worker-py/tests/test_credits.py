@@ -1,7 +1,6 @@
 """Prepaid credit packs (worker/credits.py) against the compose stack and stripe-mock. Plans: the
 API's test fixture (`prepaid`: metered llm_cost_micros + a 10.00 USD pack, expiring in 365 days)."""
 
-import dataclasses
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -12,9 +11,8 @@ import asyncpg
 import httpx2
 import pytest
 from temporalio import activity
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowFailureError
 from temporalio.exceptions import ApplicationError
-from temporalio.testing import ActivityEnvironment
 from temporalio.worker import Worker
 
 from tests.conftest import new_org
@@ -24,7 +22,7 @@ from worker import settings
 from worker.ai import AllowedModel, Gateway
 from worker.ai import Price as ModelPrice
 from worker.billing import BillingActivities, BillingEvent, SpendLimitExceeded, load_plans
-from worker.credits import GRANT_ATTEMPTS, CreditActivities, StripeCredits, balance_cache
+from worker.credits import CreditActivities, StripeCredits, balance_cache
 from worker.s3 import S3
 from worker.workflows import BillingEventWorkflow, CrmSyncWorkflow
 
@@ -103,20 +101,33 @@ async def test_a_paid_pack_is_granted_once_at_the_plans_pack_value(pool: asyncpg
 
 async def test_a_paid_pack_that_cannot_be_granted_fails_loudly(pool: asyncpg.Pool) -> None:
     org = await new_org(pool)
+    grants = CreditActivities(pool, PLANS, {})  # no provider key here
     with pytest.raises(ApplicationError, match="paid but cannot be granted") as err:
-        await CreditActivities(pool, PLANS, {}).grant_credits(purchase(org))  # no provider key
+        await grants.grant_credits(purchase(org))
     assert err.value.non_retryable
-    # The provider keeps failing: the last attempt records it (and raises, so Sentry sees it).
-    grants = CreditActivities(pool, PLANS, {"stripe": FakeCredits(fail=True)})
-    env = ActivityEnvironment()
-    env.info = dataclasses.replace(env.info, attempt=GRANT_ATTEMPTS)
-    late = purchase(org)
-    with pytest.raises(RuntimeError, match="credit grant failed"):
-        await env.run(grants.grant_credits, late)
+    # In the workflow, any final failure (this one, the last attempt, a timeout) is recorded.
+    e = purchase(org)
+    client = await Client.connect(settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE)
+    queue = f"test-{uuid.uuid4()}"
+    async with Worker(
+        client,
+        task_queue=queue,
+        workflows=[BillingEventWorkflow, CrmSyncWorkflow],
+        activities=[
+            BillingActivities(pool, PLANS).apply_billing_event,
+            grants.grant_credits,
+            grants.record_grant_failure,
+            crm_noop,
+        ],
+    ):
+        with pytest.raises(WorkflowFailureError):
+            await client.execute_workflow(
+                BillingEventWorkflow.run, e, id=f"billing-stripe-{e.eventId}", task_queue=queue
+            )
     rows = await in_org(
-        pool, org, "select target from audit_log where action = $1", "billing.credits.grant_failed"
+        pool, org, "select target from audit_log where action = 'billing.credits.grant_failed'"
     )
-    assert len(rows) == 2 and f"stripe:{late.eventId}" in [r["target"] for r in rows]
+    assert [r["target"] for r in rows] == [f"stripe:{e.eventId}"]
 
 
 async def test_calls_stop_when_the_balance_less_this_periods_spend_is_used_up(
