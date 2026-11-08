@@ -37,6 +37,7 @@ from worker.support import Chatwoot, SupportActivities
 from worker.text import backend
 from worker.tracker import TrackerActivities
 from worker.tracker import connect as tracker_connect
+from worker.usage import StripeMeters, UsageActivities
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
@@ -50,10 +51,12 @@ from worker.workflows import (
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
     TrackerItemWorkflow,
+    UsageReportWorkflow,
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
     ensure_maintenance_schedule,
     ensure_retention_schedule,
+    ensure_usage_schedule,
 )
 
 log = logging.getLogger("worker")
@@ -161,7 +164,15 @@ async def main() -> None:
     )
     await ensure_maintenance_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     await ensure_retention_schedule(client, settings.TEMPORAL_TASK_QUEUE)
+    await ensure_usage_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
+    usage = UsageActivities(
+        pool,
+        plans,
+        {"stripe": StripeMeters(http, settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)}
+        if settings.STRIPE_SECRET_KEY
+        else {},
+    )
     files = S3(
         endpoint=settings.S3_ENDPOINT,
         region=settings.S3_REGION,
@@ -234,12 +245,15 @@ async def main() -> None:
             DataExportWorkflow,
             DataDeletionWorkflow,
             PrivacyRetentionWorkflow,
+            UsageReportWorkflow,
         ],
         activities=[
             activities.fingerprint_project,
             activities.summarize_project,
             billing.apply_billing_event,
             billing.end_contract_period,
+            usage.usage_orgs,
+            usage.report_org_usage,
             crm.sync,
             support.triage,
             support.issue_closed,

@@ -220,6 +220,8 @@ services:
       - POSTHOG_SECRET_KEY
       # billing: plans and LLM spend limits (default: config/plans.json in the image)
       - PLANS_FILE
+      # usage reporting to Stripe Meters (docs/billing.md "Usage-based"); empty = off
+      - STRIPE_SECRET_KEY
       # data-subject rights (docs/privacy.md): retention and per-person export/deletion in tools
       - PRIVACY_EXPORT_TTL_DAYS
       - PRIVACY_ORG_RECORDS_DAYS

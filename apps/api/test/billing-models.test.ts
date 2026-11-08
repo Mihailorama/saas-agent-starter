@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { auditLog, subscriptions, user, withOrg } from '@app/db';
+import { aiCalls, auditLog, subscriptions, usageCounters, user, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import * as OTPAuth from 'otpauth';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -15,7 +15,7 @@ const opEmail = `op-${randomUUID()}@example.com`;
 process.env.OPERATOR_EMAILS = opEmail;
 const { buildApp } = await import('../src/app.ts');
 const { db, pool } = await import('../src/db.ts');
-const { allowedOrigins } = await import('../src/env.ts');
+const { allowedOrigins, env } = await import('../src/env.ts');
 const { closeTemporal, temporal } = await import('../src/temporal.ts');
 const { parsePlans, plans } = await import('../src/billing/plans.ts');
 const { entitlementsOf } = await import('../src/billing/entitlements.ts');
@@ -29,7 +29,7 @@ const password = 'correct-horse-battery';
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 type User = { id: string; cookie: string };
 
-const call = (u: User, method: 'GET' | 'POST' | 'PUT', url: string, payload?: object) =>
+const call = (u: User, method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, payload?: object) =>
   app.inject({
     method,
     url,
@@ -161,6 +161,7 @@ describe('entitlements and line items per model', () => {
     updatedAt: new Date(),
     seats: 7,
     contractRef: null,
+    usageReportedUntil: null,
     ...over,
   });
 
@@ -359,5 +360,90 @@ describe('contracts (operator console)', () => {
         contractRef: 'PO-9',
       },
     ]);
+  });
+});
+
+describe('usage-based billing (flag billing-usage)', () => {
+  const withFlag = (on: boolean) => {
+    env.FLAGS_ON.splice(0, env.FLAGS_ON.length, ...(on ? ['billing-usage'] : []));
+  };
+  afterAll(() => withFlag(false));
+  const subscribe = (orgId: string, planId: string, llmSpendLimits?: Record<string, number>) =>
+    withOrg(db, orgId, (tx) =>
+      tx.insert(subscriptions).values({
+        orgId,
+        planId,
+        status: 'active',
+        contour: 'en',
+        provider: 'stripe',
+        currency: 'USD',
+        customerId: 'cus_1',
+        currentPeriodStart: new Date(Date.now() - 86_400_000),
+        currentPeriodEnd: new Date(Date.now() + 86_400_000),
+        llmSpendLimits,
+      }),
+    );
+
+  it('counts API-key requests per org and hour, only while the flag is on', async () => {
+    const { owner, org } = await ownerWithOrg();
+    const created = await call(owner, 'POST', '/api/api-keys', {
+      name: 'ci',
+      scopes: ['projects:read'],
+      expiresInDays: null,
+    });
+    const withKey = () =>
+      app.inject({
+        url: '/api/projects',
+        remoteAddress: ip(),
+        headers: { authorization: `Bearer ${created.json().key}` },
+      });
+    const counted = async () =>
+      (await withOrg(db, org, (tx) => tx.select().from(usageCounters))).map((r) => r.count);
+    withFlag(false);
+    expect((await withKey()).statusCode).toBe(200);
+    expect(await counted()).toEqual([]);
+    withFlag(true);
+    await withKey();
+    await withKey();
+    expect(await counted()).toEqual([2]);
+    await call(owner, 'GET', '/api/projects'); // a session is not an API call
+    expect(await counted()).toEqual([2]);
+  });
+
+  it('pay as you go: over the plan limit warns; the own cap, else llmSpendMax, blocks', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await subscribe(org, 'payg');
+    const spendMore = (cost: number) =>
+      withOrg(db, org, (tx) =>
+        tx.insert(aiCalls).values({
+          orgId: org,
+          purpose: 'project.summary',
+          provider: 'anthropic',
+          requestModel: 'm',
+          promptTemplateId: 'p',
+          promptTemplateVersion: '1',
+          requestKey: 'k',
+          contentExpiresAt: new Date(),
+          cost,
+          costCurrency: 'USD',
+          latencyMs: 1,
+          status: 'ok',
+          contour: 'eu',
+        }),
+      );
+    await spendMore(150);
+    const level = async () => (await call(owner, 'GET', '/api/billing')).json().llmSpend[0].level;
+    withFlag(false);
+    expect(await level()).toBe('blocked'); // as before: the plan's limit (100) stops calls
+    withFlag(true);
+    expect(await level()).toBe('warning');
+    expect((await call(owner, 'GET', '/api/billing')).json().payg).toBe(true);
+    await call(owner, 'PATCH', '/api/billing/llm-limit', { currency: 'USD', amount: 120 });
+    expect(await level()).toBe('blocked'); // the org's own cap
+    // No own cap: the plan's llmSpendMax (5000) is the hard stop.
+    await withOrg(db, org, (tx) => tx.update(subscriptions).set({ llmSpendLimits: null }));
+    expect(await level()).toBe('warning');
+    await spendMore(4850);
+    expect(await level()).toBe('blocked');
   });
 });
