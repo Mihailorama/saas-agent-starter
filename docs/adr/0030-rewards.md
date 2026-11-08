@@ -54,7 +54,7 @@ Free organizations have no provider customer. Usage: [docs/growth.md](../growth.
 - `invitation.accepted` counts an account once across all organizations (its first accepted
   invitation); deleting an organization deletes its invitations, which reopens that account.
   Keep free fallbacks non-monetary.
-- Money amounts are two-decimal currencies; others are refused by the schema until billing has a
-  minor-unit map.
+- Money amounts use billing's minor-unit map (`money.ts`): the schema checks the digits, the
+  provider call converts with `toMinor`.
 - If the API link fails after the provider applied a reward, the grant is `pending_manual`;
   operators look up its idempotency key at the provider before applying it again.

@@ -44,8 +44,8 @@ engine beyond that file. Everything is behind the `rewards` feature flag (defaul
     validates (`OrgMetadata`, apps/api/src/auth.ts); a test keeps `requiredMetadata` within them.
     Subject: the organization.
 - `reward`, one of:
-  - `{ "kind": "balance_credit", "amount": "5.00", "currency": "USD" }`: money. Two-decimal
-    currencies only for now (the schema refuses JPY, KWD and the like);
+  - `{ "kind": "balance_credit", "amount": "5.00", "currency": "USD" }`: money, written with
+    the currency's minor-unit digits (`500` JPY, `5.000` KWD; `apps/api/src/billing/money.ts`);
   - `{ "kind": "coupon", "couponId": "..." }`: a provider coupon, added to the subscription's
     existing discounts;
   - `{ "kind": "entitlement", "key": "seats" | "projects" | "llmSpendMonthly", "delta": 2,
