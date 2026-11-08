@@ -28,7 +28,9 @@ KEY_ID, KEY = next(iter(KEYS.items()))
 operator_calls: list[str] = []
 
 
-async def operator(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def operator(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     operator_calls.append(model)
     return Completion("operator answer", model, 10, 2, "op-1")
 

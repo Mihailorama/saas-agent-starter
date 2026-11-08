@@ -7,7 +7,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { aiCalls, auditLog, withOrg } from '@app/db';
-import { and, desc, eq, gte, inArray } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, notLike } from 'drizzle-orm';
 import { db, pool } from './db.ts';
 import { getAiContent } from './s3.ts';
 
@@ -30,6 +30,8 @@ export async function exportCalls(orgId: string, o: PullOptions): Promise<TestCa
         and(
           eq(aiCalls.purpose, o.purpose),
           eq(aiCalls.status, 'ok'),
+          // MCP tool calls (provider `mcp` / `mcp:<server>`) are not model calls.
+          notLike(aiCalls.provider, 'mcp%'),
           o.callIds?.length ? inArray(aiCalls.id, o.callIds) : gte(aiCalls.createdAt, since),
         ),
       )
