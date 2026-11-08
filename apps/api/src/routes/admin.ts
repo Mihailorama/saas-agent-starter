@@ -5,6 +5,7 @@ import { auth } from '../auth.ts';
 import { httpError } from '../tenant.ts';
 import { auditUser, authCall, ErrorBody, errorHandler, requireOperator } from './admin-common.ts';
 import { adminOrgRoutes } from './admin-orgs.ts';
+import { adminRewardRoutes } from './admin-rewards.ts';
 import { adminUserRoutes } from './admin-users.ts';
 
 /**
@@ -16,7 +17,7 @@ import { adminUserRoutes } from './admin-users.ts';
  */
 
 export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
-  app.setErrorHandler(errorHandler); // inherited by the two route plugins below
+  app.setErrorHandler(errorHandler); // inherited by the route plugins below
   const op = { preHandler: requireOperator, schema: { tags: ['admin'], hide: true } };
   app.get(
     '/me',
@@ -29,6 +30,7 @@ export const adminRoutes: FastifyPluginAsyncZod = async (app) => {
 
   await app.register(adminOrgRoutes);
   await app.register(adminUserRoutes);
+  await app.register(adminRewardRoutes);
 };
 
 /** Ends "view as user" (no operator guard: the session is the user's, marked impersonatedBy). */

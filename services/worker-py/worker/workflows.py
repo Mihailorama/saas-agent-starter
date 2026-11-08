@@ -33,6 +33,7 @@ with workflow.unsafe.imports_passed_through():
         PrivacyRequest,
         Step,
     )
+    from worker.rewards import Applied, RewardActivities, RewardRequest
     from worker.support import SupportActivities, SupportConversation, SupportIssueClosed
     from worker.tracker import TrackerActivities, TrackerItem
     from worker.webhooks import WebhookActivities, WebhookDelivery, WebhookEvent
@@ -197,6 +198,49 @@ class SendEmailWorkflow:
                 maximum_interval=timedelta(minutes=5),
             ),
         )
+
+
+@workflow.defn(name="RewardWorkflow")
+class RewardWorkflow:
+    """Started by the API (apps/api/src/billing/rewards.ts) with id `reward-<org>-<rule>-<subject>`
+    and REJECT_DUPLICATE: a rule rewards a subject once. Waits `holdDays` (a Temporal timer), then
+    checks, applies and records (worker/rewards.py, docs/growth.md)."""
+
+    @workflow.run
+    async def run(self, r: RewardRequest) -> str:
+        if r.holdDays:
+            await workflow.sleep(timedelta(days=r.holdDays))
+        quick = RetryPolicy(initial_interval=timedelta(seconds=5), maximum_attempts=5)
+        reward = await workflow.execute_activity_method(
+            RewardActivities.eligible,
+            r,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=quick,
+        )
+        if reward is None:
+            return "not eligible"
+        try:
+            applied = await workflow.execute_activity_method(
+                RewardActivities.apply,
+                r,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(
+                    initial_interval=timedelta(seconds=10),
+                    maximum_interval=timedelta(minutes=10),
+                    maximum_attempts=8,
+                ),
+            )
+        except ActivityError:
+            # API or provider down for good: never drop the reward, operators apply it.
+            applied = Applied("manual", reward)
+        # The DB may be down for a while; the provider may already have applied it: keep trying.
+        await workflow.execute_activity_method(
+            RewardActivities.record,
+            args=[r, applied],
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+        )
+        return applied.via
 
 
 @workflow.defn(name="BillingEventWorkflow")

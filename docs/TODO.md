@@ -163,10 +163,6 @@
 - **Bounce/complaint webhooks.** Providers keep their own suppression lists (docs/email.md);
   nothing in the app reacts to hard bounces or spam complaints. When volumes grow, accept the
   provider's webhook in `apps/api/src/routes/hooks.ts` and alert on bounce rate.
-- **No "invite member" UI.** Invitations are sent through Better Auth's
-  `organization.inviteMember` API (tested in `apps/api/test/api.test.ts`) and accepted on
-  `/accept-invitation/$invitationId`, but the web has no members page to send them from. Add one
-  under the shell (list, invite form, role) when member management is needed.
 - **Mail language is the request's `Accept-Language`.** Users have no stored locale, so an
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then

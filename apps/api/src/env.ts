@@ -105,6 +105,9 @@ const schema = z
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     /** Only for stripe-mock in tests/dev, e.g. http://localhost:12111; empty = api.stripe.com. */
     STRIPE_API_URL: z.union([z.url(), z.literal('')]).optional(),
+    /** Shared with the worker: it asks /internal/rewards to apply money rewards through the
+     * billing provider (docs/growth.md). Empty = route off; such rewards wait for operators. */
+    INTERNAL_API_TOKEN: z.string().optional(),
     // Service desk (docs/support.md). Every secret empty = that endpoint is off (401/404).
     /** Secret of the Chatwoot account webhook (Settings -> Integrations -> Webhooks). */
     CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
@@ -152,6 +155,7 @@ const schema = z
         e.CHATWOOT_HMAC_TOKEN,
         e.GITHUB_WEBHOOK_SECRET,
         e.BOOKING_WEBHOOK_SECRET,
+        e.INTERNAL_API_TOKEN,
       ].some((v) => v?.startsWith('local-dev')),
     { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   )

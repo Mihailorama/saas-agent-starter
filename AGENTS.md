@@ -56,10 +56,12 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       support.ts = Chatwoot/Plane/GitHub hooks, crm.ts = booking hook (Cal.diy),
                       admin*.ts = operator console (requireOperator; the only withOperatorRead callers)
                       privacy.ts = data export/deletion requests (docs/privacy.md),
+                      rewards.ts = /internal/rewards (worker -> billing provider, INTERNAL_API_TOKEN),
                       mcp.ts = MCP server at /mcp for API keys; tools call the REST routes (docs/mcp.md)
   src/eval-pull.ts    `pnpm eval:pull`: logged calls (ai_calls + S3) -> Promptfoo test cases
   src/billing/        plans config, entitlements() + requireEntitlement, payment providers
-                      (Stripe) behind one interface (docs/billing.md)
+                      (Stripe) behind one interface (docs/billing.md); rewards.ts = reward rules,
+                      triggers and the one dispatcher (docs/growth.md)
   src/temporal.ts     Temporal client + workflow contracts with the worker
   src/email.ts        transactional mail templates (EN/RU, React Email renderer), docs/email.md
   src/s3.ts           S3 client, presigned upload/download URLs
@@ -93,13 +95,14 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
   worker/pii.py       redact(): Presidio PII redaction; `python -m worker.pii` = API sidecar
   worker/mail.py      SMTP delivery activity for SendEmailWorkflow (smtplib, SMTP_URL)
   worker/billing.py   LLM spend limit, provider events -> subscriptions
+  worker/rewards.py   RewardWorkflow activities: hold, conditions, cap, apply, reward_grants
   worker/privacy.py   data export/deletion in DB, S3 and each tool (PostHog, Langfuse, Chatwoot,
                       GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
 config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
                     plans.json (plans, limits, prices per currency, billing contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
-                    flags.json (feature flag catalog),
+                    flags.json (feature flag catalog), rewards.json (reward rules, docs/growth.md),
                     webhook-events.json (outbound webhook event catalog),
                     crm.json (deal stages, product signals; `pnpm crm:sync`)
 prompts/            prompt templates, one immutable file per version; lock.json pins hashes
@@ -129,6 +132,7 @@ docs/ai-act.md      what the AI layer covers for the EU AI Act, and what it does
 docs/support.md     service desk: Chatwoot setup, channels, triage, tracker return path
 docs/crm.md         CRM (Twenty) and booking (Cal.diy): install or connect, sync flows, mapping
 docs/admin.md       operator console: who is an operator, actions, audit, impersonation
+docs/growth.md      rewards: rules, triggers, behaviour per pricing model, operators' pending list
 docs/privacy.md     data map, export/deletion flows, per-tool support matrix, retention
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 ```

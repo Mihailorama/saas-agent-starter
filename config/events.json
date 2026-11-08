@@ -84,6 +84,11 @@
       "pii": false,
       "props": {}
     },
+    "member_invited": {
+      "description": "An org admin invited someone by email from the members page. `role` is member or admin.",
+      "pii": false,
+      "props": { "role": "string" }
+    },
     "org_created": {
       "description": "An organization was created from the onboarding card or the org switcher.",
       "pii": false,

@@ -46,7 +46,7 @@ await migrate(db, { migrationsFolder: new URL('../migrations', import.meta.url).
 await run('GRANT USAGE ON SCHEMA public TO %I', role);
 await run('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I', role);
 // Append-only tables: the app can add and read records, never rewrite or remove them.
-for (const table of ['ai_calls']) {
+for (const table of ['ai_calls', 'reward_grants']) {
   await run('REVOKE UPDATE, DELETE, TRUNCATE ON %I FROM %I', table, role);
 }
 await run('GRANT USAGE ON SCHEMA public TO %I', OPERATOR_READ_ROLE);

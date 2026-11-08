@@ -17,7 +17,41 @@ export interface BillingProvider {
   webhook(req: WebhookRequest): Promise<BillingEvent[]>;
   /** The subscription in the provider's own dashboard, for operators (docs/admin.md). */
   dashboardUrl(sub: Subscription): string | null;
+  /** What this provider can do, independent of any one customer (docs/billing.md). */
+  capabilities(): ProviderCapabilities;
+  /** Whether the customer has usage-based (metered) prices; needed only with `creditGrants`. */
+  usageBased?(sub: Subscription): Promise<boolean>;
+  /** Credits money (`balanceCredit` / `creditGrants`); returns the provider object's id. */
+  applyCredit?(sub: Subscription, credit: Credit): Promise<string>;
+  /** Applies a provider coupon to the recurring charge (`coupons`); returns the object's id. */
+  applyCoupon?(sub: Subscription, coupon: { couponId: string; key: string }): Promise<string>;
 }
+
+/**
+ * Provider capabilities. Rewards read only these keys (docs/growth.md); other billing features
+ * add theirs to the same object.
+ */
+export type ProviderCapabilities = {
+  /** `external`: invoices are issued outside the provider (manual contract): rewards go to operators. */
+  invoicing: 'provider' | 'external';
+  /** A credit on the customer's balance, used by the next invoices. */
+  balanceCredit: boolean;
+  /** Credits restricted to usage-based (metered) charges, e.g. Stripe billing credit grants. */
+  creditGrants: boolean;
+  /** Percentage or fixed discounts (coupons) on a recurring charge. */
+  coupons: boolean;
+};
+
+export type RewardPrimitive = 'credit_grant' | 'balance_credit' | 'coupon';
+export type Credit = {
+  via: 'credit_grant' | 'balance_credit';
+  /** Decimal string in major units ("5.00"), in `currency` (ISO 4217, the customer's). */
+  amount: string;
+  currency: string;
+  description: string;
+  /** Idempotency key: the same key never credits twice (also across retries). */
+  key: string;
+};
 
 export type CheckoutInput = {
   orgId: string;

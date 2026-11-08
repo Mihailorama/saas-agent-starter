@@ -159,3 +159,9 @@ GA4_SERVICE_ACCOUNT_JSON = os.environ.get("GA4_SERVICE_ACCOUNT_JSON", "")
 
 # Billing (docs/billing.md): plans and limits, shared with the API.
 PLANS_FILE = Path(os.environ.get("PLANS_FILE", _ROOT / "config" / "plans.json"))
+# Rewards (docs/growth.md): the rules, and the API that applies money rewards through the billing
+# provider (POST /internal/rewards/apply, same INTERNAL_API_TOKEN as the API). Either empty =
+# money and coupon rewards are recorded as pending_manual for operators.
+REWARDS_FILE = Path(os.environ.get("REWARDS_FILE", _ROOT / "config" / "rewards.json"))
+API_INTERNAL_URL = os.environ.get("API_INTERNAL_URL", "")
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")

@@ -76,6 +76,7 @@ test('signed-in pages', async ({ page }) => {
   for (const [path, heading] of [
     ['/ai-calls', 'AI calls'],
     ['/settings/api-keys', 'API keys'],
+    ['/settings/members', 'Members'],
     ['/settings/webhooks', 'Webhooks'],
     ['/settings/security', 'Security'],
     ['/settings/billing', 'Billing'],

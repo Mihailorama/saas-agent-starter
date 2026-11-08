@@ -100,6 +100,67 @@ const Empty = ({ cols, text }: { cols: number; text: string }) => (
   </TableRow>
 );
 
+type PendingReward = {
+  id: string;
+  orgId: string;
+  orgName: string;
+  ruleId: string;
+  reward: Record<string, unknown>;
+  createdAt: string;
+};
+
+/** Rewards the billing provider could not apply (docs/growth.md): apply each by hand, then mark it. */
+function PendingRewards() {
+  const queryClient = useQueryClient();
+  const pending = useQuery({
+    queryKey: ['admin', 'rewards'],
+    queryFn: () => api<PendingReward[]>('/api/admin/rewards/pending'),
+  });
+  if (!pending.data?.length) return null;
+  return (
+    <Section
+      title="Rewards to apply"
+      description="Organizations without a payment provider (manual contracts) or where it failed. Apply each as a credit note or invoice line, then mark it applied."
+    >
+      <Table>
+        <TableBody>
+          {pending.data.map((r) => (
+            <TableRow key={r.id}>
+              <TableCell>
+                <Link to="/admin/orgs/$orgId" params={{ orgId: r.orgId }} className="underline">
+                  {r.orgName}
+                </Link>
+              </TableCell>
+              <TableCell>{r.ruleId}</TableCell>
+              <TableCell className="font-mono text-xs">{JSON.stringify(r.reward)}</TableCell>
+              <TableCell>{dateTime(r.createdAt)}</TableCell>
+              <TableCell className="text-right">
+                <ReasonDialog
+                  trigger={
+                    <Button size="sm" variant="outline">
+                      Mark applied
+                    </Button>
+                  }
+                  title="Mark the reward applied"
+                  description="Say how it was applied (credit note or invoice reference). It is recorded in the organization's audit log."
+                  confirm="Mark applied"
+                  onConfirm={async (reason) => {
+                    await api(`/api/admin/rewards/${r.id}/applied`, {
+                      method: 'POST',
+                      json: { orgId: r.orgId, reason },
+                    });
+                    await queryClient.invalidateQueries({ queryKey: ['admin', 'rewards'] });
+                  }}
+                />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Section>
+  );
+}
+
 export function AdminOrgsPage() {
   const [filters, setFilters] = useState({ q: '', plan: '', status: '', createdFrom: '' });
   const [offset, setOffset] = useState(0);
@@ -123,6 +184,7 @@ export function AdminOrgsPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Organizations</h1>
+      <PendingRewards />
       <div className="grid gap-3 sm:grid-cols-4">
         <div className="space-y-1">
           <Label htmlFor="f-q">Search</Label>

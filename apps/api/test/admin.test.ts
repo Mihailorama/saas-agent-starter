@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { auditLog, session, user as users, withOperatorRead, withOrg } from '@app/db';
+import { auditLog, rewardGrants, session, user as users, withOperatorRead, withOrg } from '@app/db';
 import { and, eq, like } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import * as OTPAuth from 'otpauth';
@@ -438,6 +438,7 @@ describe('the RLS exception is limited to the operator console', () => {
     const callers = sources.filter(([, src]) => /withOperatorRead\(/.test(src)).map(([p]) => p);
     expect(callers.sort()).toEqual([
       'apps/api/src/routes/admin-orgs.ts',
+      'apps/api/src/routes/admin-rewards.ts',
       'apps/api/src/routes/admin-users.ts',
     ]);
   });
@@ -464,5 +465,39 @@ describe('the RLS exception is limited to the operator console', () => {
       'apps/api/src/routes/admin-common.ts',
       'packages/db/src/index.ts', // its definition
     ]);
+  });
+});
+
+describe('rewards waiting for operators (docs/growth.md)', () => {
+  it('lists pending_manual grants until an operator marks them applied, with a reason', async () => {
+    const [g] = await withOrg(db, org.id, (tx) =>
+      tx
+        .insert(rewardGrants)
+        .values({
+          orgId: org.id,
+          ruleId: 'team-invite',
+          subject: randomUUID(),
+          via: 'manual',
+          status: 'pending_manual',
+          reward: { kind: 'balance_credit', amount: '5.00', currency: 'USD' },
+        })
+        .returning(),
+    );
+    const pending = async () =>
+      ((await get(op, '/api/admin/rewards/pending')).json() as { id: string }[]).map((r) => r.id);
+    expect(await pending()).toContain(g!.id);
+    expect((await get(owner, '/api/admin/rewards/pending')).statusCode).toBe(403);
+    const mark = () =>
+      post(op, `/api/admin/rewards/${g!.id}/applied`, {
+        orgId: org.id,
+        reason: 'credit note CN-1',
+      });
+    expect((await mark()).statusCode).toBe(204);
+    expect(await pending()).not.toContain(g!.id);
+    expect((await mark()).statusCode).toBe(404);
+    expect((await operatorRows(org.id, 'operator.reward.applied'))[0]).toMatchObject({
+      target: g!.id,
+      reason: 'credit note CN-1',
+    });
   });
 });

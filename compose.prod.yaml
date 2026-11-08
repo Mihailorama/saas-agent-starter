@@ -106,6 +106,8 @@ services:
       - BILLING_CONTOUR
       - STRIPE_SECRET_KEY
       - STRIPE_WEBHOOK_SECRET
+      # rewards (docs/growth.md): the worker applies money rewards through /internal/rewards
+      - INTERNAL_API_TOKEN
       # operator console (docs/admin.md); empty OPERATOR_EMAILS = no operators
       - OPERATOR_EMAILS
       - OPERATOR_SESSION_MAX_AGE_MINUTES
@@ -203,6 +205,10 @@ services:
       - POSTHOG_SECRET_KEY
       # billing: plans and LLM spend limits (default: config/plans.json in the image)
       - PLANS_FILE
+      # rewards (docs/growth.md): rules (default config/rewards.json) and the API link
+      - REWARDS_FILE
+      - API_INTERNAL_URL=${API_INTERNAL_URL:-http://api:3000}
+      - INTERNAL_API_TOKEN
       # data-subject rights (docs/privacy.md): retention and per-person export/deletion in tools
       - PRIVACY_EXPORT_TTL_DAYS
       - PRIVACY_ORG_RECORDS_DAYS

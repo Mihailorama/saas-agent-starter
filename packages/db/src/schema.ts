@@ -361,3 +361,40 @@ export const privacyRequests = pgTable(
     ),
   ],
 );
+
+/**
+ * One reward granted to an organization (docs/growth.md, rules in config/rewards.json), written by
+ * the worker's RewardWorkflow. Append-only like ai_calls (packages/db/src/migrate.ts): the unique
+ * key makes a rule count a subject once. `reward` is what was given (the rule's reward or its
+ * fallback); `via` how; `pending_manual` rows wait for an operator, who resolves them with an
+ * `operator.reward.applied` audit row (docs/admin.md), never by rewriting this one.
+ */
+export const rewardGrants = pgTable(
+  'reward_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    ruleId: text('rule_id').notNull(),
+    /** What the rule counts once: the invited user's id, the org's own id, the referred org's id. */
+    subject: text('subject').notNull(),
+    via: text('via', {
+      enum: ['entitlement', 'credit_grant', 'balance_credit', 'coupon', 'manual'],
+    }).notNull(),
+    status: text('status', { enum: ['applied', 'pending_manual'] }).notNull(),
+    reward: jsonb('reward').$type<Record<string, unknown>>().notNull(),
+    /** The provider's object (credit grant, balance transaction, subscription) when it applied it. */
+    providerRef: text('provider_ref'),
+    /** Entitlement rewards count in entitlements() until then. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.orgId, t.ruleId, t.subject),
+    check(
+      'reward_grants_via',
+      sql`${t.via} in ('entitlement', 'credit_grant', 'balance_credit', 'coupon', 'manual')`,
+    ),
+    check('reward_grants_status', sql`${t.status} in ('applied', 'pending_manual')`),
+    tenantIsolation(),
+  ],
+);

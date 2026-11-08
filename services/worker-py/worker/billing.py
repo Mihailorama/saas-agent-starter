@@ -194,6 +194,13 @@ async def llm_budget(
     raised: dict[str, Any] = json.loads(sub["llm_spend_limits"] or "{}") if sub else {}
     if plan.llm_limit_raise and currency in raised and currency in plan.llm_spend_max:
         limit = min(Decimal(str(raised[currency])), plan.llm_spend_max[currency])
+    if limit is not None:  # entitlement rewards (docs/growth.md), as entitlements() in the API
+        bonus: Decimal = await conn.fetchval(
+            "select coalesce(sum((reward->>'delta')::numeric), 0) from reward_grants"
+            " where via = 'entitlement' and reward->>'key' = 'llmSpendMonthly' and expires_at > $1",
+            now,
+        )
+        limit += bonus
     return Budget(plan_id, spent, limit)
 
 

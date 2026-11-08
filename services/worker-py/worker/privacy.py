@@ -654,6 +654,7 @@ class PrivacyActivities:
             "ai_calls": "select * from ai_calls where actor_id = $1",
             "projects": "select * from projects where reviewed_by = $1",
             "attachments": "select * from attachments where created_by = $1",
+            "reward_grants": "select * from reward_grants where subject = $1",
         }
         for table, sql in per_org.items():
 
@@ -691,6 +692,7 @@ class PrivacyActivities:
             "webhook_deliveries",
             "webhook_attempts",
             "subscriptions",
+            "reward_grants",
         )
 
         async def q(conn: Conn, _: str) -> dict[str, list[Doc]]:

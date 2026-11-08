@@ -57,6 +57,13 @@
       "when": 1794075231353,
       "tag": "0007_operator_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794142025448,
+      "tag": "0009_reward_grants",
+      "breakpoints": true
     }
   ]
 }
