@@ -83,7 +83,7 @@ const ErrorBody = z.object({ error: z.string() });
 
 const currentSubscription = async (tx: Tx) => (await tx.select().from(subscriptions))[0] ?? null;
 const basePrice = (price: Price | undefined) =>
-  price?.find((c) => c.model === 'flat' || c.model === 'per_seat');
+  price?.flatMap((c) => (c.model === 'flat' || c.model === 'per_seat' ? [c] : []))[0];
 /** Whether the contour's provider sells these components through its checkout. */
 function sellable(contourId: string, price: Price | undefined) {
   if (!price || !subscribable(price).length) return false; // free, contract or packs only

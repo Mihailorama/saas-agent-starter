@@ -82,10 +82,6 @@ export function stripeProvider(opts: {
       portal: true,
       cancel: true,
       priceModels: ['flat', 'per_seat', 'metered', 'contract'],
-      usageReporting: false,
-      creditBalance: false,
-      merchantOfRecord: false,
-      invoicing: 'provider',
     }),
 
     async checkout(input) {
@@ -102,25 +98,6 @@ export function stripeProvider(opts: {
       });
       if (!session.url) throw new Error('Stripe returned a checkout session without url');
       return { url: session.url };
-    },
-
-    // Contract billed by invoice: no payment page; Stripe emails the invoice (bank transfer).
-    async invoice(input) {
-      const metadata = { orgId: input.orgId, planId: input.planId, contractRef: input.contractRef };
-      const customer =
-        input.customerId ??
-        (await stripe.customers.create({ name: input.orgName, metadata: { orgId: input.orgId } }))
-          .id;
-      await stripe.subscriptions.create(
-        {
-          customer,
-          items: lineItems(input.prices, 1),
-          collection_method: 'send_invoice',
-          days_until_due: input.daysUntilDue,
-          metadata,
-        },
-        { idempotencyKey: `contract-${input.orgId}-${input.contractRef}` },
-      );
     },
 
     async portal(sub, returnUrl) {

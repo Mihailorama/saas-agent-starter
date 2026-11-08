@@ -48,9 +48,9 @@
   prices are sold at checkout, but the worker does not report `llm_cost_micros`, `llm_tokens` or
   `api_calls` to the provider's meters yet, so usage is not billed. Next PR (`billing-usage`): an
   idempotent `report_usage` activity, one meter event per `ai_calls` id, batched per org.
-- **Billing: prepaid credit packs are not sold yet** (docs/billing.md "Prepaid credits"). Plans
-  with `credits` are refused at checkout. Next PR (`billing-credits`): top-up checkout, Stripe
-  credit grants after payment, balance check in the gateway.
+- **Billing: prepaid credit packs** (docs/billing.md "Pricing models"). Next PR
+  (`billing-credits`): a `credits` price model, top-up checkout, Stripe credit grants after
+  payment, balance check in the gateway.
 - **llm-cli limits are per process** (services/llm-cli/src/pool.ts): run one replica. If one is not
   enough, move the per-subscription counters and cooldowns to Redis.
 - **vLLM CPU path not verified end to end.** On the dev host (AVX2 only, load ~25) the

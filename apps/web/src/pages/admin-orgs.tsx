@@ -348,7 +348,7 @@ function ContractDialog({ org, onDone }: { org: OrgDetail; onDone: () => Promise
         </Button>
       }
       title="Set contract"
-      description="Plan and period of a signed contract. Invoiced by you (manual): the period ends past due unless you extend it. Invoiced by the provider: it creates the subscription and emails the invoice."
+      description="Plan and period of a signed contract you invoice yourself. At the period end it becomes past due unless you extend it. Contracts invoiced by Stripe are created in the Stripe dashboard."
       confirm="Save contract"
       onConfirm={async (reason, form) => {
         const [planId, currency] = String(form.get('plan')).split('|');
