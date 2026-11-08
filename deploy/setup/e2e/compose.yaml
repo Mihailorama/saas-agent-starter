@@ -1,0 +1,29 @@
+# Infra e2e (deploy/setup/e2e.sh, .github/workflows/infra-e2e.yml): a fresh "server" (sshd, its own
+# Docker once bootstrapped), a registry with the release images, Mailpit as the SMTP server to
+# connect. Fixed addresses: the server pulls from 10.54.54.10:5000, the same name this machine
+# resolves digests at. Test only; host ports on loopback.
+name: saas-infra
+networks:
+  e2e:
+    ipam:
+      config: [{ subnet: 10.54.54.0/24 }]
+services:
+  server:
+    build: .
+    privileged: true
+    init: true
+    networks: { e2e: { ipv4_address: 10.54.54.20 } }
+    ports:
+      - "127.0.0.1:${E2E_SSH_PORT:-54022}:22"
+      - "127.0.0.1:${E2E_HTTPS_PORT:-54443}:443"
+    volumes: [docker:/var/lib/docker]
+  registry:
+    image: registry:3.0.0
+    networks: { e2e: { ipv4_address: 10.54.54.10 } }
+    ports: ["127.0.0.1:${E2E_REGISTRY_PORT:-54500}:5000"]
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    networks: { e2e: { ipv4_address: 10.54.54.11 } }
+    ports: ["127.0.0.1:${E2E_MAILPIT_PORT:-54825}:8025"]
+volumes:
+  docker:

@@ -24,30 +24,13 @@
 	}
 }
 
-# Profile s3 (SeaweedFS on this host): presigned browser uploads need a public S3 endpoint.
-# Uncomment, set S3_PUBLIC_ENDPOINT=https://s3.example.com and S3_PUBLIC_ORIGIN to the same.
-# s3.example.com {
-# 	tls {$CADDY_TLS}
-# 	reverse_proxy s3:8333
-# }
+# Sites of on-box profiles (s3, vault, analytics): scripts/deploy.mjs copies
+# deploy/sites/<profile>.caddy for each profile in COMPOSE_PROFILES into sites/ on the server.
+import /etc/caddy/sites/*.caddy
 
 # Profile booking (Cal.diy on this host, docs/crm.md): its own domain. Uncomment, set
 # CALDIY_PUBLIC_URL=https://cal.example.com, BOOKING_PUBLIC_URL and VITE_BOOKING_ORIGIN to it.
 # cal.example.com {
 # 	tls {$CADDY_TLS}
 # 	reverse_proxy caldiy:3000
-# }
-
-# Profile vault (Vaultwarden, docs/secrets.md): its own domain, TLS required (the bw CLI refuses
-# plain HTTP). Uncomment and set VAULT_PUBLIC_URL=https://vault.example.com. /admin answers 403
-# except from VAULT_ADMIN_IPS (space-separated CIDRs; the default 127.0.0.1/32 matches no client,
-# so /admin stays closed until you set your address).
-# vault.example.com {
-# 	tls {$CADDY_TLS}
-# 	@admin {
-# 		path /admin /admin/*
-# 		not remote_ip {$VAULT_ADMIN_IPS}
-# 	}
-# 	respond @admin 403
-# 	reverse_proxy vault:80
 # }
