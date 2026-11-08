@@ -25,6 +25,12 @@
       "default": false,
       "expires": "2027-05-31"
     },
+    "onboarding": {
+      "description": "Onboarding checklist on the projects page and the first-visit product tour (docs/onboarding.md).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
     "telegram-support": {
       "description": "Lite support in Telegram: the bot relays users' messages to a topic per user in the team's forum group and the team's replies back; \"Telegram\" in the app's Help menu (docs/support.md). Needs TELEGRAM_SUPPORT_BOT_TOKEN, TELEGRAM_SUPPORT_CHAT_ID and, for the menu, VITE_TELEGRAM_SUPPORT_BOT.",
       "owner": "@mihailorama",

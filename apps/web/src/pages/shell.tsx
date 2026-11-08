@@ -13,6 +13,7 @@ import {
   CalendarClock,
   Check,
   ChevronsUpDown,
+  Compass,
   Cookie,
   Cpu,
   CreditCard,
@@ -62,6 +63,7 @@ import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/
 import { authClient } from '@/lib/auth';
 import { bookingUrl, onBookingClick } from '@/lib/booking';
 import { useFlag } from '@/lib/flags';
+import { startTour, stored, tourKey } from '@/lib/onboarding';
 import {
   openSupport,
   resetSupport,
@@ -172,6 +174,7 @@ function UserMenu() {
   const navigate = useNavigate();
   const { data: session } = authClient.useSession();
   const user = session?.user;
+  const tour = useFlag('onboarding') && !session?.session.impersonatedBy;
 
   return (
     <DropdownMenu>
@@ -193,6 +196,16 @@ function UserMenu() {
         <DropdownMenuItem onSelect={() => navigate({ to: '/settings/privacy' })}>
           <Lock className="size-4" /> Privacy
         </DropdownMenuItem>
+        {tour && user && (
+          <DropdownMenuItem
+            onSelect={async () => {
+              await navigate({ to: '/' });
+              await startTour(user.id, true);
+            }}
+          >
+            <Compass className="size-4" /> Product tour
+          </DropdownMenuItem>
+        )}
         {user?.role === 'operator' && !session?.session.impersonatedBy && (
           <DropdownMenuItem onSelect={() => navigate({ to: '/admin' })}>
             <ShieldAlert className="size-4" /> Operator console
@@ -365,6 +378,15 @@ export function Shell() {
   const booking = useFlag('booking') && Boolean(bookingUrl) && !viewedBy;
   // Lite Telegram support: rolled out (flag) and the bot's username set (docs/support.md).
   const telegram = useFlag('telegram-support') && telegramConfigured;
+  // Product tour (docs/onboarding.md): once per user and browser, on the projects page.
+  const onboarding = useFlag('onboarding') && !viewedBy && Boolean(orgs?.length) && !mustEnrol;
+  const onProjects = useLocation({ select: (l) => l.pathname === '/' });
+  useEffect(() => {
+    // Blocked storage (undefined) counts as seen: never start a tour that cannot be remembered.
+    if (!onboarding || !userId || !onProjects || stored(tourKey(userId)) !== null) return;
+    const t = setTimeout(() => startTour(userId), 500); // let the page render first
+    return () => clearTimeout(t);
+  }, [onboarding, userId, onProjects]);
 
   const banner = viewedBy && session && (
     <ImpersonationBanner
@@ -444,7 +466,7 @@ export function Shell() {
       banner={banner}
       sidebarHeader={
         <SidebarMenu>
-          <SidebarMenuItem>
+          <SidebarMenuItem data-tour="org-switcher">
             <OrgSwitcher />
           </SidebarMenuItem>
         </SidebarMenu>
@@ -468,7 +490,7 @@ export function Shell() {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          <SidebarMenuItem>
+          <SidebarMenuItem data-tour="user-menu">
             <UserMenu />
           </SidebarMenuItem>
         </SidebarMenu>
