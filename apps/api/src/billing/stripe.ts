@@ -82,10 +82,6 @@ export function stripeProvider(opts: {
       portal: true,
       cancel: true,
       priceModels: ['flat', 'per_seat', 'metered', 'credits', 'contract'],
-      usageReporting: true, // the worker's Stripe Meters adapter (worker/usage.py)
-      creditBalance: true, // credit grants on metered prices (granted by the worker)
-      merchantOfRecord: false,
-      invoicing: 'provider',
     }),
 
     async checkout(input) {
@@ -104,26 +100,7 @@ export function stripeProvider(opts: {
       return { url: session.url };
     },
 
-    // Contract billed by invoice: no payment page; Stripe emails the invoice (bank transfer).
-    async invoice(input) {
-      const metadata = { orgId: input.orgId, planId: input.planId, contractRef: input.contractRef };
-      const customer =
-        input.customerId ??
-        (await stripe.customers.create({ name: input.orgName, metadata: { orgId: input.orgId } }))
-          .id;
-      await stripe.subscriptions.create(
-        {
-          customer,
-          items: lineItems(input.prices, 1),
-          collection_method: 'send_invoice',
-          days_until_due: input.daysUntilDue,
-          metadata,
-        },
-        { idempotencyKey: `contract-${input.orgId}-${input.contractRef}` },
-      );
-    },
-
-    // A credit pack: a one-time payment; the grant follows from checkout.session.completed.
+    // A credit pack: a one-time payment; the worker grants it after checkout.session.completed.
     async topUp(input) {
       if (!input.pack.providerPriceId) throw new Error('no Stripe price id for the credit pack');
       const metadata = { orgId: input.orgId, planId: input.planId, kind: 'credits' };
@@ -194,6 +171,8 @@ export function stripeProvider(opts: {
           if (session.metadata?.kind !== 'credits' || !orgId || session.payment_status !== 'paid') {
             return [];
           }
+          // The grant is the plan's pack value (the worker reads it), never amount_total, which
+          // includes tax and discounts.
           return [
             {
               ...base(e, orgId),
@@ -202,7 +181,6 @@ export function stripeProvider(opts: {
               planId: session.metadata.planId,
               currency: session.currency?.toUpperCase(),
               customerId: typeof session.customer === 'string' ? session.customer : undefined,
-              amount: session.amount_total ?? 0,
             },
           ];
         }

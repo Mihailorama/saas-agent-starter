@@ -22,6 +22,7 @@ with workflow.unsafe.imports_passed_through():
     import worker.settings as settings
     from worker.activities import Activities, ProjectCreated
     from worker.billing import BillingActivities, BillingEvent, ContractPeriod
+    from worker.credits import GRANT_ATTEMPTS, CreditActivities
     from worker.crm import CrmActivities, CrmEvent
     from worker.mail import SendEmail, send_email
     from worker.privacy import (
@@ -196,22 +197,31 @@ async def ensure_usage_schedule(client: Client, task_queue: str) -> None:
 @workflow.defn(name="UsageReportWorkflow")
 class UsageReportWorkflow:
     """Every 15 minutes (Temporal Schedule `billing-usage-report`): usage to the provider's
-    meters (worker/usage.py). The previous run's `until` is this run's start; a failed run is
-    covered by the next one (the provider deduplicates the overlap by identifier)."""
+    meters (worker/usage.py), one activity per org with its own retries. A failed org is picked
+    up from its own mark by the next run; the others go on."""
 
     @workflow.run
-    async def run(self) -> dict[str, Any]:
-        last: dict[str, Any] = (
-            workflow.get_last_completion_result(dict[str, Any]) or {}
-            if workflow.has_last_completion_result()
-            else {}
-        )
-        return await workflow.execute_activity_method(
-            UsageActivities.report_usage,
-            last.get("until"),
-            start_to_close_timeout=timedelta(minutes=14),
+    async def run(self) -> dict[str, int]:
+        orgs = await workflow.execute_activity_method(
+            UsageActivities.usage_orgs,
+            start_to_close_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
+        results = await asyncio.gather(
+            *(
+                workflow.execute_activity_method(
+                    UsageActivities.report_org_usage,
+                    org,
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+                for org in orgs
+            ),
+            return_exceptions=True,
+        )
+        failed = sum(isinstance(r, BaseException) for r in results)
+        events = sum(r for r in results if isinstance(r, int))
+        return {"orgs": len(orgs), "events": events, "failed": failed}
 
 
 @workflow.defn(name="SendEmailWorkflow")
@@ -250,12 +260,14 @@ class BillingEventWorkflow:
         # A paid credit pack becomes a grant in the provider (docs/billing.md "Prepaid credits").
         if event.type == "credits.purchased" and workflow.patched("credit-grants"):
             await workflow.execute_activity_method(
-                UsageActivities.grant_credits,
+                CreditActivities.grant_credits,
                 event,
                 start_to_close_timeout=timedelta(seconds=30),
-                # Within Stripe's 24-hour idempotency window, so a retry never grants twice.
-                schedule_to_close_timeout=timedelta(hours=12),
-                retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=5)),
+                # Inside Stripe's 24-hour idempotency window, so a retry never grants twice; the
+                # last attempt records the failure (worker/credits.py).
+                retry_policy=RetryPolicy(
+                    maximum_interval=timedelta(minutes=5), maximum_attempts=GRANT_ATTEMPTS
+                ),
             )
         # Deal stage in the CRM (docs/crm.md), only for events that changed our state. The child
         # maps the subscription row as it is when it runs, so a retried older child cannot move

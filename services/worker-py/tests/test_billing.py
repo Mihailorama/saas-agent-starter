@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -46,6 +47,8 @@ from worker.s3 import S3
 from worker.workflows import BillingEventWorkflow, ContractPeriodWorkflow
 
 PLANS = load_plans(settings.PLANS_FILE)
+# One plan per pricing model, shared with the API tests.
+FIXTURE_PLANS = Path(__file__).resolve().parents[3] / "apps/api/test/fixtures/plans.json"
 reader = InMemoryMetricReader()
 metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
 provider_calls: list[str] = []
@@ -461,10 +464,8 @@ def test_price_override_wins_then_litellm_map_then_refusal() -> None:
 
 def test_price_models_parse_and_old_prices_stay_flat() -> None:
     assert PLANS.plans["pro"].prices["USD"] == [Price("flat", "29.00", "month")]  # no `model`
-    examples = load_plans(settings.PLANS_FILE.with_name("plans.examples.json")).plans
+    examples = load_plans(FIXTURE_PLANS).plans
     assert [p.model for p in examples["growth"].prices["USD"]] == ["flat", "metered"]
-    pack = Price("credits", None, None, "llm_cost_micros", 365)
-    assert examples["prepaid"].prices["USD"][1] == pack
     assert examples["enterprise"].prices["USD"] == [Price("contract")]
 
 

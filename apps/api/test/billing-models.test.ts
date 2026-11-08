@@ -1,4 +1,4 @@
-// Pricing models (docs/billing.md "Pricing models") on config/plans.examples.json: config shape,
+// Pricing models (docs/billing.md "Pricing models") on test/fixtures/plans.json: config shape,
 // entitlements per model, Stripe line items (stripe-mock), and the manual contract provider.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ import * as OTPAuth from 'otpauth';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 // Plans and the operator list are read once at import: set them before the app loads.
-const examples = new URL('../../../config/plans.examples.json', import.meta.url);
+const examples = new URL('fixtures/plans.json', import.meta.url);
 process.env.PLANS_FILE = fileURLToPath(examples);
 const opEmail = `op-${randomUUID()}@example.com`;
 process.env.OPERATOR_EMAILS = opEmail;
@@ -104,13 +104,30 @@ describe('price models in config', () => {
     ]);
   });
 
+  it('amounts follow the currency minor unit (JPY 0, USD 2, KWD 3 decimals)', () => {
+    const at = (currency: string, amount: string) =>
+      JSON.stringify({
+        ...doc,
+        plans: {
+          ...doc.plans,
+          x: {
+            ...doc.plans.starter,
+            prices: { [currency]: { ...doc.plans.starter.prices.USD, amount } },
+          },
+        },
+      });
+    expect(() => parsePlans(at('JPY', '3000'))).not.toThrow();
+    expect(() => parsePlans(at('JPY', '30.00'))).toThrow(/JPY amounts have 0 decimals/);
+    expect(() => parsePlans(at('KWD', '9.500'))).not.toThrow();
+    expect(() => parsePlans(at('USD', '9.5'))).toThrow(/USD amounts have 2 decimals/);
+  });
+
   it('refuses shapes a provider cannot sell', () => {
     const flat = doc.plans.starter.prices.USD;
     const contract = doc.plans.enterprise.prices.USD;
-    const pack = doc.plans.prepaid.prices.USD[1];
     expect(() => parsePlans(withPrice([flat, flat]))).toThrow(/at most one flat or per_seat/);
     expect(() => parsePlans(withPrice([flat, contract]))).toThrow(/contract price stands alone/);
-    expect(() => parsePlans(withPrice([flat, pack]))).toThrow(/need a metered component/);
+    expect(() => parsePlans(withPrice({ ...flat, model: 'per_seat' }))).not.toThrow();
     expect(() => parsePlans(withPrice({ ...flat, model: 'barter' }))).toThrow();
   });
 });
@@ -133,6 +150,7 @@ describe('entitlements and line items per model', () => {
     updatedAt: new Date(),
     seats: 7,
     contractRef: null,
+    usageReportedUntil: null,
     ...over,
   });
 
@@ -158,7 +176,7 @@ describe('entitlements and line items per model', () => {
 });
 
 describe('checkout per model (stripe-mock)', () => {
-  it('sells flat, per-seat, metered and hybrid plans; contracts and packs go elsewhere', async () => {
+  it('sells flat, per-seat, metered and hybrid plans; contracts go through sales', async () => {
     const { owner } = await ownerWithOrg();
     const billing = (await call(owner, 'GET', '/api/billing')).json();
     const sold = Object.fromEntries(
@@ -170,16 +188,19 @@ describe('checkout per model (stripe-mock)', () => {
       team: true,
       payg: true,
       growth: true,
-      prepaid: true, // the metered part; packs are bought afterwards (top-up)
       enterprise: false,
       'enterprise-invoiced': false,
     });
-    for (const planId of ['starter', 'team', 'payg', 'growth', 'prepaid']) {
+    for (const planId of ['starter', 'team', 'payg', 'growth']) {
       const res = await call(owner, 'POST', '/api/billing/checkout', { planId });
       expect(res.statusCode, `${planId}: ${res.body}`).toBe(200);
     }
     const contract = await call(owner, 'POST', '/api/billing/checkout', { planId: 'enterprise' });
     expect(contract.statusCode).toBe(400);
+    const invoiced = await call(owner, 'POST', '/api/billing/checkout', {
+      planId: 'enterprise-invoiced',
+    });
+    expect(invoiced.statusCode).toBe(400);
   });
 });
 
@@ -200,6 +221,7 @@ describe('contracts (operator console)', () => {
     };
     expect((await put(org, { ...contract, planId: 'starter' })).statusCode).toBe(400);
     expect((await put(org, { ...contract, periodEnd: undefined })).statusCode).toBe(400);
+    expect((await put(org, { ...contract, periodEnd: start.toISOString() })).statusCode).toBe(400);
     const asOwner = { ...contract, reason: 'not an operator' };
     expect((await call(owner, 'PUT', `/api/admin/orgs/${org}/contract`, asOwner)).statusCode).toBe(
       403,
@@ -236,24 +258,87 @@ describe('contracts (operator console)', () => {
     expect((await call(owner, 'POST', '/api/billing/cancel')).statusCode).toBe(409);
     const detail = (await call(op, 'GET', `/api/admin/orgs/${org}`)).json();
     expect(detail.subscription).toMatchObject({ contractRef: 'PO-4711', dashboardUrl: null });
-    expect(detail.contractPlans.map((p: { id: string }) => p.id)).toEqual([
-      'enterprise',
-      'enterprise-invoiced',
-    ]);
+    expect(detail.contractPlans.map((p: { id: string }) => p.id)).toEqual(['enterprise']);
   });
 
-  it('Stripe: a send_invoice subscription for bank-transfer contracts', async () => {
+  it('only manual, and never next to an active provider subscription (no double billing)', async () => {
     const { org } = await ownerWithOrg();
-    const res = await put(org, {
-      planId: 'enterprise-invoiced',
+    const contract = {
       currency: 'USD',
       contractRef: 'PO-1',
-    });
-    expect(res.statusCode, res.body).toBe(204);
-    const audit = await withOrg(db, org, (tx) =>
-      tx.select().from(auditLog).where(eq(auditLog.action, 'operator.contract.invoiced')),
+      periodStart: start.toISOString(),
+      periodEnd: end.toISOString(),
+    };
+    // A Stripe-invoiced contract is created in the Stripe dashboard, not here.
+    expect((await put(org, { ...contract, planId: 'enterprise-invoiced' })).statusCode).toBe(400);
+    await withOrg(db, org, (tx) =>
+      tx.insert(subscriptions).values({
+        orgId: org,
+        planId: 'starter',
+        status: 'active',
+        contour: 'en',
+        provider: 'stripe',
+        currency: 'USD',
+        providerSubscriptionId: 'sub_1',
+      }),
     );
-    expect(audit).toHaveLength(1);
+    expect((await put(org, { ...contract, planId: 'enterprise' })).statusCode).toBe(409);
+    const [row] = await withOrg(db, org, (tx) => tx.select().from(subscriptions));
+    expect(row).toMatchObject({ provider: 'stripe', planId: 'starter' });
+  });
+
+  it('a send_invoice subscription made in the Stripe dashboard arrives through the webhook', async () => {
+    const secret = 'whsec_local-dev-test';
+    const provider = stripeProvider({
+      contour: 'en',
+      secretKey: 'sk_test_123',
+      webhookSecret: secret,
+    });
+    const payload = JSON.stringify({
+      id: 'evt_1',
+      object: 'event',
+      type: 'customer.subscription.created',
+      created: 1_800_000_000,
+      data: {
+        object: {
+          id: 'sub_1',
+          object: 'subscription',
+          status: 'active',
+          currency: 'usd',
+          customer: 'cus_1',
+          cancel_at_period_end: false,
+          collection_method: 'send_invoice',
+          metadata: { orgId: 'org_1', contractRef: 'PO-9' },
+          items: {
+            data: [
+              {
+                price: { id: 'price_example_enterprise_year_usd' },
+                quantity: 1,
+                current_period_start: 1_800_000_000,
+                current_period_end: 1_831_536_000,
+              },
+            ],
+          },
+        },
+      },
+    });
+    const signature = await new Stripe('sk_test_123').webhooks.generateTestHeaderStringAsync({
+      payload,
+      secret,
+    });
+    const events = await provider.webhook({
+      body: payload,
+      headers: { 'stripe-signature': signature },
+      ip: '',
+    });
+    expect(events).toMatchObject([
+      {
+        type: 'subscription.activated',
+        orgId: 'org_1',
+        planId: 'enterprise-invoiced',
+        contractRef: 'PO-9',
+      },
+    ]);
   });
 });
 
@@ -304,26 +389,28 @@ describe('usage-based billing (flag billing-usage)', () => {
     expect(await counted()).toEqual([2]);
   });
 
-  it('pay as you go: over the plan limit warns, the own cap blocks', async () => {
+  it('pay as you go: over the plan limit warns; the own cap, else llmSpendMax, blocks', async () => {
     const { owner, org } = await ownerWithOrg();
     await subscribe(org, 'payg');
-    await withOrg(db, org, (tx) =>
-      tx.insert(aiCalls).values({
-        orgId: org,
-        purpose: 'project.summary',
-        provider: 'anthropic',
-        requestModel: 'm',
-        promptTemplateId: 'p',
-        promptTemplateVersion: '1',
-        requestKey: 'k',
-        contentExpiresAt: new Date(),
-        cost: 150,
-        costCurrency: 'USD',
-        latencyMs: 1,
-        status: 'ok',
-        contour: 'eu',
-      }),
-    );
+    const spendMore = (cost: number) =>
+      withOrg(db, org, (tx) =>
+        tx.insert(aiCalls).values({
+          orgId: org,
+          purpose: 'project.summary',
+          provider: 'anthropic',
+          requestModel: 'm',
+          promptTemplateId: 'p',
+          promptTemplateVersion: '1',
+          requestKey: 'k',
+          contentExpiresAt: new Date(),
+          cost,
+          costCurrency: 'USD',
+          latencyMs: 1,
+          status: 'ok',
+          contour: 'eu',
+        }),
+      );
+    await spendMore(150);
     const level = async () => (await call(owner, 'GET', '/api/billing')).json().llmSpend[0].level;
     withFlag(false);
     expect(await level()).toBe('blocked'); // as before: the plan's limit (100) stops calls
@@ -331,90 +418,11 @@ describe('usage-based billing (flag billing-usage)', () => {
     expect(await level()).toBe('warning');
     expect((await call(owner, 'GET', '/api/billing')).json().payg).toBe(true);
     await call(owner, 'PATCH', '/api/billing/llm-limit', { currency: 'USD', amount: 120 });
+    expect(await level()).toBe('blocked'); // the org's own cap
+    // No own cap: the plan's llmSpendMax (5000) is the hard stop.
+    await withOrg(db, org, (tx) => tx.update(subscriptions).set({ llmSpendLimits: null }));
+    expect(await level()).toBe('warning');
+    await spendMore(4850);
     expect(await level()).toBe('blocked');
-  });
-});
-
-describe('prepaid credit packs (flag billing-credits)', () => {
-  const withFlag = (on: boolean) => {
-    env.FLAGS_ON.splice(0, env.FLAGS_ON.length, ...(on ? ['billing-credits'] : []));
-  };
-  afterAll(() => withFlag(false));
-
-  it('sells a pack to a prepaid plan and shows the balance', async () => {
-    const { owner, org } = await ownerWithOrg();
-    await withOrg(db, org, (tx) =>
-      tx.insert(subscriptions).values({
-        orgId: org,
-        planId: 'prepaid',
-        status: 'active',
-        contour: 'en',
-        provider: 'stripe',
-        currency: 'USD',
-        customerId: 'cus_123',
-        currentPeriodStart: new Date(Date.now() - 86_400_000),
-        currentPeriodEnd: new Date(Date.now() + 86_400_000),
-      }),
-    );
-    withFlag(false);
-    expect((await call(owner, 'GET', '/api/billing')).json().credits).toBeNull();
-    expect((await call(owner, 'POST', '/api/billing/credits/checkout')).statusCode).toBe(409);
-    withFlag(true);
-    const billing = (await call(owner, 'GET', '/api/billing')).json();
-    // stripe-mock's balance fixture has a placeholder currency: nothing in USD.
-    expect(billing.credits).toEqual({ balance: 0, pack: { credits: 1000, amount: '10.00' } });
-    const res = await call(owner, 'POST', '/api/billing/credits/checkout');
-    expect(res.statusCode, res.body).toBe(200);
-    expect(res.json().url).toMatch(/^https:\/\//);
-  });
-
-  it('maps a paid pack session to one credits.purchased event per session', async () => {
-    const secret = 'whsec_local-dev-test';
-    const provider = stripeProvider({
-      contour: 'en',
-      secretKey: 'sk_test_123',
-      webhookSecret: secret,
-      apiUrl: env.STRIPE_API_URL,
-    });
-    const stripe = new Stripe('sk_test_123');
-    const deliver = async (type: string, object: object) => {
-      const payload = JSON.stringify({
-        id: `evt_${randomUUID()}`,
-        object: 'event',
-        type,
-        created: 1_800_000_000,
-        data: { object },
-      });
-      const signature = await stripe.webhooks.generateTestHeaderStringAsync({ payload, secret });
-      return provider.webhook({
-        body: payload,
-        headers: { 'stripe-signature': signature },
-        ip: '',
-      });
-    };
-    const session = {
-      id: 'cs_1',
-      object: 'checkout.session',
-      metadata: { orgId: 'org_1', planId: 'prepaid', kind: 'credits' },
-      payment_status: 'paid',
-      currency: 'usd',
-      customer: 'cus_1',
-      amount_total: 1000,
-    };
-    for (const type of ['checkout.session.completed', 'checkout.session.async_payment_succeeded']) {
-      expect(await deliver(type, session)).toMatchObject([
-        {
-          type: 'credits.purchased',
-          eventId: 'cs_1',
-          orgId: 'org_1',
-          amount: 1000,
-          currency: 'USD',
-        },
-      ]);
-    }
-    expect(
-      await deliver('checkout.session.completed', { ...session, payment_status: 'unpaid' }),
-    ).toEqual([]);
-    expect(await deliver('checkout.session.completed', { ...session, metadata: {} })).toEqual([]);
   });
 });

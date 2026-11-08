@@ -24,6 +24,7 @@ from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
 from worker.ai import Byo, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
+from worker.credits import CreditActivities, Credits, StripeCredits
 from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
@@ -37,7 +38,7 @@ from worker.support import Chatwoot, SupportActivities
 from worker.text import backend
 from worker.tracker import TrackerActivities
 from worker.tracker import connect as tracker_connect
-from worker.usage import Credits, StripeCredits, StripeMeters, UsageActivities
+from worker.usage import StripeMeters, UsageActivities
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
@@ -170,14 +171,14 @@ async def main() -> None:
     credits: dict[str, Credits] = (
         {"stripe": StripeCredits(http, *stripe)} if settings.STRIPE_SECRET_KEY else {}
     )
+    credit_grants = CreditActivities(pool, plans, credits)
+    if ai:
+        ai.credits = credits  # built before the HTTP client
     usage = UsageActivities(
         pool,
         plans,
         {"stripe": StripeMeters(http, *stripe)} if settings.STRIPE_SECRET_KEY else {},
-        credits,
     )
-    if ai:
-        ai.credits = credits  # built before the HTTP client
     files = S3(
         endpoint=settings.S3_ENDPOINT,
         region=settings.S3_REGION,
@@ -257,8 +258,9 @@ async def main() -> None:
             activities.summarize_project,
             billing.apply_billing_event,
             billing.end_contract_period,
-            usage.report_usage,
-            usage.grant_credits,
+            usage.usage_orgs,
+            usage.report_org_usage,
+            credit_grants.grant_credits,
             crm.sync,
             support.triage,
             support.issue_closed,

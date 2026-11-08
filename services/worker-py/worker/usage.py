@@ -1,43 +1,42 @@
-"""Usage and prepaid credits in the payment provider (docs/billing.md "Usage-based",
-"Prepaid credits").
+"""Usage reporting to the payment provider's meters (docs/billing.md "Usage-based").
 
-`UsageActivities.report_usage` runs on a Temporal Schedule (UsageReportWorkflow). For each org
-whose plan in force has a `metered` price it sends one meter event per `ai_calls` row
-(`llm_cost_micros`, `llm_tokens`) and one per closed hour of API-key requests (`api_calls`,
-from `usage_counters`). Identifiers are deterministic (`<meter>:<id>`), so a retried or
-overlapping run is deduplicated by the provider; the window's end is the workflow's result and
-the next run's start, like the privacy retention job. No usage ledger of our own: the provider
-rates and invoices.
-
-Credits: `grant_credits` turns a paid pack (BillingEventWorkflow, `credits.purchased`) into a
-provider credit grant, once per payment; `check_credit_balance` stops priced AI calls once the
-provider's prepaid balance is used up. No local ledger: the balance is the provider's.
+UsageReportWorkflow (Temporal Schedule, every 15 minutes) runs one `report_org_usage` activity
+per organization, each with its own retries, so one failing org never holds up the others. An
+org's progress is `subscriptions.usage_reported_until`: each closed hour after it is aggregated
+(one event per meter and hour, identifier `<meter>:<org>:<hour>`, so the provider deduplicates a
+resend) and the mark moves after every hour. Hours older than the provider accepts are skipped
+with a warning, so an org that failed for long never stays stuck. No usage ledger of our own:
+the provider rates and invoices.
 """
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Protocol
 
 import asyncpg
 import httpx2
 from temporalio import activity
 
-from worker.billing import BillingEvent, Plans, SpendLimitExceeded, audit_once
+from worker.billing import Plans
 from worker.flags import is_enabled
 
 log = logging.getLogger(__name__)
 
-SETTLE = timedelta(minutes=1)  # rows younger than this may still be committing
-FIRST_WINDOW = timedelta(days=1)  # first run ever: report the last day
 HOUR = timedelta(hours=1)
+SETTLE = timedelta(minutes=5)  # an hour is reported once it closed this long ago
+MAX_AGE = timedelta(days=34)  # Stripe takes meter events up to 35 days old
+HOURS_PER_RUN = 72  # catching up after an outage is spread over runs
+_SUB = (
+    "select plan_id, status, currency, customer_id, provider, current_period_start,"
+    " current_period_end, usage_reported_until from subscriptions"
+)
 
 
 class Meters(Protocol):
-    """The worker half of a provider with usageReporting (apps/api/src/billing/provider.ts)."""
+    """A provider's usage meters (Stripe: StripeMeters); the API has the rest of the adapter."""
 
     async def report(
         self, customer_id: str, meter: str, value: int, identifier: str, at: datetime
@@ -74,221 +73,117 @@ class StripeMeters:
             raise RuntimeError(f"Stripe meter event failed: {res.status_code} {code}")
 
 
-class Credits(Protocol):
-    """The worker half of a provider with creditBalance (apps/api/src/billing/provider.ts)."""
-
-    async def balance(self, customer_id: str, currency: str) -> int: ...
-
-    async def grant(
-        self, customer_id: str, currency: str, amount: int, expires: datetime | None, key: str
-    ) -> None: ...
-
-
-class StripeCredits:
-    """Stripe credit grants (billing/credit_grants), which apply to metered prices only."""
-
-    def __init__(self, http: httpx2.AsyncClient, secret_key: str, api_url: str | None) -> None:
-        self.http, self.key = http, secret_key
-        self.base = f"{(api_url or 'https://api.stripe.com').rstrip('/')}/v1/billing"
-
-    async def balance(self, customer_id: str, currency: str) -> int:
-        res = await self.http.get(
-            f"{self.base}/credit_balance_summary",
-            auth=(self.key, ""),
-            params={
-                "customer": customer_id,
-                "filter[type]": "applicability_scope",
-                "filter[applicability_scope][price_type]": "metered",
-            },
-        )
-        _raise(res, "credit balance")
-        return sum(
-            int(m["value"])
-            for b in res.json()["balances"]
-            if (m := b["available_balance"].get("monetary"))
-            and str(m["currency"]).upper() == currency
-        )
-
-    async def grant(
-        self, customer_id: str, currency: str, amount: int, expires: datetime | None, key: str
-    ) -> None:
-        data = {
-            "customer": customer_id,
-            "name": "Prepaid credit pack",
-            "category": "paid",
-            "amount[type]": "monetary",
-            "amount[monetary][currency]": currency.lower(),
-            "amount[monetary][value]": str(amount),
-            "applicability_config[scope][price_type]": "metered",
-        }
-        if expires:
-            data["expires_at"] = str(int(expires.timestamp()))
-        # Stripe keeps idempotency keys for 24 hours; the activity retries well within that.
-        res = await self.http.post(
-            f"{self.base}/credit_grants",
-            auth=(self.key, ""),
-            data=data,
-            headers={"Idempotency-Key": key},
-        )
-        _raise(res, "credit grant")
-
-
-def _raise(res: httpx2.Response, what: str) -> None:
-    if res.is_error:  # status and Stripe's error code only: bodies can echo request fields
-        code = res.json().get("error", {}).get("code") if res.content else None
-        raise RuntimeError(f"Stripe {what} failed: {res.status_code} {code}")
-
-
-BALANCE_TTL = 30.0  # seconds a balance read is reused by the gateway
-balance_cache: dict[str, tuple[float, int]] = {}
-
-
-async def check_credit_balance(
-    pool: asyncpg.Pool, plans: Plans, credits: dict[str, Credits], org_id: str
-) -> None:
-    """Raises SpendLimitExceeded when the org's plan sells credit packs and the provider's
-    prepaid balance is used up (flag billing-credits).
-
-    ponytail: the balance is read at most every BALANCE_TTL seconds per org and process, so a
-    burst of calls can overdraw by those calls; the provider bills any overdraft as usage.
-    """
-
-    async def read(conn: Any) -> Any:
-        return await conn.fetchrow(
-            "select plan_id, status, currency, customer_id, provider, current_period_start,"
-            " current_period_end from subscriptions"
-        )
-
-    sub = await _in_org(pool, org_id, read)
-    _, plan = plans.effective(sub, datetime.now(UTC))
-    if sub is None or not sub["customer_id"] or sub["provider"] not in credits:
-        return
-    if not any(p.model == "credits" for p in plan.prices.get(sub["currency"], [])):
-        return
-    if not await is_enabled("billing-credits", user_id=org_id, org_id=org_id):
-        return
-    now = asyncio.get_running_loop().time()
-    cached = balance_cache.get(org_id)
-    if cached is None or now - cached[0] > BALANCE_TTL:
-        balance = await credits[sub["provider"]].balance(sub["customer_id"], sub["currency"])
-        cached = balance_cache[org_id] = (now, balance)
-    if cached[1] <= 0:
-        log.warning("org %s: prepaid credit used up, call refused", org_id)
-        raise SpendLimitExceeded("prepaid credit is used up; buy a credit pack on the billing page")
-
-
 @dataclass(frozen=True)
 class _Event:
     meter: str
     value: int
     identifier: str
-    at: datetime
 
 
 class UsageActivities:
-    def __init__(
-        self,
-        pool: asyncpg.Pool,
-        plans: Plans,
-        meters: dict[str, Meters],
-        credits: dict[str, Credits] | None = None,
-    ) -> None:
-        self.pool, self.plans, self.meters = pool, plans, meters  # provider id -> adapter
-        self.credits = credits or {}
+    def __init__(self, pool: asyncpg.Pool, plans: Plans, meters: dict[str, Meters]) -> None:
+        self.pool, self.plans, self.meters = pool, plans, meters  # provider id -> meters
 
-    @activity.defn(name="grant_credits")
-    async def grant_credits(self, e: BillingEvent) -> bool:
-        """A paid pack -> one credit grant in the provider (idempotency key per payment), then
-        one audit row. False if the provider has no credits adapter here."""
-        adapter = self.credits.get(e.provider)
-        if adapter is None or not e.customerId or not e.currency or not e.amount:
-            activity.logger.warning("credit pack %s cannot be granted here", e.eventId)
-            return False
-        plan = self.plans.plans.get(e.planId or "")
-        pack = next(
-            (p for p in (plan.prices.get(e.currency, []) if plan else []) if p.model == "credits"),
-            None,
-        )
-        days = pack.expires_days if pack else None
-        expires = datetime.fromisoformat(e.occurredAt) + timedelta(days=days) if days else None
-        await adapter.grant(e.customerId, e.currency, e.amount, expires, f"credits-{e.eventId}")
-        balance_cache.pop(e.orgId, None)  # the next call reads the new balance
+    @activity.defn(name="usage_orgs")
+    async def usage_orgs(self) -> list[str]:
+        # ponytail: every org, one activity each per run; past ~10k orgs batch them into child
+        # workflows (workflow history limit).
+        return [r["id"] for r in await self.pool.fetch("select id from organization")]
 
-        async def audit(conn: Any) -> None:
-            await audit_once(conn, e.orgId, "billing.credits.granted", f"{e.provider}:{e.eventId}")
-
-        await _in_org(self.pool, e.orgId, audit)
-        return True
-
-    @activity.defn(name="report_usage")
-    async def report_usage(self, since: str | None) -> dict[str, Any]:
-        until = datetime.now(UTC) - SETTLE
-        start = datetime.fromisoformat(since) if since else until - FIRST_WINDOW
-        orgs = events = 0
-        # ponytail: every org is visited, one RLS transaction each; fine for thousands of orgs.
-        for (org_id,) in await self.pool.fetch("select id from organization"):
-            sent = await self._report_org(org_id, start, until)
-            orgs, events = orgs + (sent is not None), events + (sent or 0)
-        log.info("usage reported: %d events for %d organizations", events, orgs)
-        return {"until": until.isoformat(), "orgs": orgs, "events": events}
-
-    async def _report_org(self, org_id: str, start: datetime, until: datetime) -> int | None:
-        """Events sent for one org; None if its plan meters nothing or it is not set up."""
-
-        async def read(conn: Any) -> tuple[Any, list[_Event]] | None:
-            sub = await conn.fetchrow(
-                "select plan_id, status, currency, customer_id, provider, current_period_start,"
-                " current_period_end from subscriptions"
-            )
-            _, plan = self.plans.effective(sub, until)
-            if sub is None or not sub["customer_id"] or sub["provider"] not in self.meters:
-                return None
-            prices = plan.prices.get(sub["currency"], [])
-            meters = {p.meter for p in prices if p.model == "metered" and p.meter}
-            if not meters:
-                return None
-            return sub, await _events(conn, meters, org_id, start, until)
-
-        found = await _in_org(self.pool, org_id, read)
-        if found is None or not await is_enabled("billing-usage", user_id=org_id, org_id=org_id):
-            return None
-        sub, todo = found
+    @activity.defn(name="report_org_usage")
+    async def report_org_usage(self, org_id: str) -> int:
+        """Reports the org's closed hours since its mark; returns the events sent. Safe to retry
+        or re-run: identifiers are per meter and hour, the mark moves only after an hour."""
+        # One short transaction per step: no connection is held over provider calls.
+        sub = await _in_org(self.pool, org_id, lambda c: c.fetchrow(_SUB))
+        if sub is None or not sub["customer_id"] or sub["provider"] not in self.meters:
+            return 0
+        if not await is_enabled("billing-usage", user_id=org_id, org_id=org_id):
+            return 0
+        if not any(self._meters(sub, t) for t in (sub["current_period_start"], datetime.now(UTC))):
+            return 0  # the plan meters nothing
         meters = self.meters[sub["provider"]]
-        for e in todo:  # in sequence: one concurrent event per customer and meter
-            await meters.report(sub["customer_id"], e.meter, e.value, e.identifier, e.at)
-        return len(todo)
-
-
-async def _events(
-    conn: Any, meters: set[str], org_id: str, start: datetime, until: datetime
-) -> list[_Event]:
-    out: list[_Event] = []
-    if meters & {"llm_cost_micros", "llm_tokens"}:
-        # Index range scan on ai_calls (org_id, created_at), like the spend limit.
-        for r in await conn.fetch(
-            "select id, cost, total_tokens, created_at from ai_calls where org_id = $1"
-            " and created_at > $2 and created_at <= $3 and status = 'ok'",
-            org_id,
-            start,
-            until,
-        ):
-            cost = int((r["cost"] or Decimal(0)) * 1_000_000)  # millionths of the cost currency
-            for meter, value in (("llm_cost_micros", cost), ("llm_tokens", r["total_tokens"])):
-                if meter in meters and value:  # Stripe takes positive integers only
-                    out.append(_Event(meter, value, f"{meter}:{r['id']}", r["created_at"]))
-    if "api_calls" in meters:
-        # Hours that closed inside the window: reported once, with their final count.
-        for r in await conn.fetch(
-            "select hour, count from usage_counters where meter = 'api_calls'"
-            " and hour + interval '1 hour' > $1 and hour + interval '1 hour' <= $2",
-            start,
-            until,
-        ):
-            stamp = r["hour"].strftime("%Y%m%dT%H")
-            out.append(
-                _Event("api_calls", r["count"], f"api_calls:{org_id}:{stamp}", r["hour"] + HOUR)
+        now = datetime.now(UTC)
+        end = _hour(now - SETTLE)
+        start = sub["usage_reported_until"] or _hour(sub["current_period_start"] or end - HOUR)
+        if start < end - MAX_AGE:
+            log.warning(
+                "org %s: usage before %s is too old for the provider", org_id, end - MAX_AGE
             )
-    return out
+            start = _hour(end - MAX_AGE)
+        sent, hour = 0, start
+        while hour < end and hour < start + HOURS_PER_RUN * HOUR:
+            events = await _in_org(
+                self.pool, org_id, lambda c, h=hour: self._hour(c, org_id, sub, h)
+            )
+            for e in events:  # in sequence: Stripe takes one event per customer and meter
+                await meters.report(sub["customer_id"], e.meter, e.value, e.identifier, hour)
+            hour += HOUR
+            await _in_org(
+                self.pool,
+                org_id,
+                lambda c, h=hour: c.execute(
+                    "update subscriptions set usage_reported_until = $1", h
+                ),
+            )
+            sent += len(events)
+        return sent
+
+    def _meters(self, sub: Any, at: datetime | None) -> set[str]:
+        """Meters of the plan in effect at `at`, in the subscription's currency."""
+        plan = self.plans.at(sub, at or datetime.now(UTC))
+        prices = plan.prices.get(sub["currency"], [])
+        return {p.meter for p in prices if p.model == "metered" and p.meter}
+
+    async def _hour(self, conn: Any, org_id: str, sub: Any, hour: datetime) -> list[_Event]:
+        """One event per metered meter of the plan in effect during `hour`, values summed."""
+        plan = self.plans.at(sub, hour)
+        meters = {
+            p.meter
+            for p in plan.prices.get(sub["currency"], [])
+            if p.model == "metered" and p.meter
+        }
+        values: dict[str, int] = {}
+        if meters & {"llm_cost_micros", "llm_tokens"}:
+            # Index range scan on ai_calls (org_id, created_at), like the spend limit.
+            rows = await conn.fetch(
+                "select cost_currency, sum(cost) as cost, sum(total_tokens) as tokens"
+                " from ai_calls where org_id = $1 and created_at >= $2 and created_at < $3"
+                " and status = 'ok' and provider not like 'byo:%' group by cost_currency",
+                org_id,
+                hour,
+                hour + HOUR,
+            )
+            for r in rows:
+                values["llm_tokens"] = values.get("llm_tokens", 0) + int(r["tokens"] or 0)
+                if r["cost_currency"] == sub["currency"]:  # one currency per meter, never mixed
+                    micros = (r["cost"] or Decimal(0)) * 1_000_000
+                    values["llm_cost_micros"] = int(micros.quantize(Decimal(1), ROUND_HALF_UP))
+                elif r["cost_currency"]:
+                    log.warning(
+                        "org %s: LLM cost in %s is not billed on a %s subscription",
+                        org_id,
+                        r["cost_currency"],
+                        sub["currency"],
+                    )
+        if "api_calls" in meters:
+            values["api_calls"] = int(
+                await conn.fetchval(
+                    "select coalesce(sum(count), 0) from usage_counters"
+                    " where meter = 'api_calls' and hour = $1",
+                    hour,
+                )
+            )
+        stamp = f"{org_id}:{hour:%Y%m%dT%H}"
+        return [
+            _Event(m, v, f"{m}:{stamp}")
+            for m, v in sorted(values.items())
+            if m in meters and v > 0  # Stripe takes positive integers only
+        ]
+
+
+def _hour(t: datetime) -> datetime:
+    return t.replace(minute=0, second=0, microsecond=0)
 
 
 async def _in_org[T](pool: asyncpg.Pool, org_id: str, fn: Callable[[Any], Awaitable[T]]) -> T:

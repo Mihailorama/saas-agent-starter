@@ -105,7 +105,7 @@ services/worker-py  Python, Temporal workflows + activities (AI/data work goes h
                       GA4), retention of AI content/exports (daily Temporal Schedule), ADR 0022
 config/             ai-models.json (providers, allowed models per contour/purpose, price overrides),
                     plans.json (plans, limits, priced components per currency, billing
-                    contours; plans.examples.json: one plan per pricing model),
+                    contours),
                     ai-transparency.json (public /ai-transparency page),
                     events.json (analytics event catalog), journeys.json (journeys as code),
                     flags.json (feature flag catalog),

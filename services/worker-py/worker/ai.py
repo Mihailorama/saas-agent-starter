@@ -32,6 +32,7 @@ from worker.billing import (
     check_llm_usage,
     ensure_org_active,
 )
+from worker.credits import Credits, check_credit_balance
 from worker.flags import is_enabled
 from worker.mcp import McpConfig, Toolbox, ToolResult, toolbox
 from worker.posthog import PostHogAi
@@ -50,7 +51,6 @@ from worker.providers import Completion as Completion
 from worker.providers import Message as Message
 from worker.providers import Provider as Provider
 from worker.s3 import S3
-from worker.usage import Credits, check_credit_balance
 from worker.webhooks import decrypt_secret
 
 log = logging.getLogger(__name__)

@@ -11,7 +11,7 @@ import {
   requireEntitlement,
   type Subscription,
 } from '../billing/entitlements.ts';
-import { contour, type Price, plans, subscribable } from '../billing/plans.ts';
+import { contour, minorUnits, type Price, plans, subscribable } from '../billing/plans.ts';
 import { NotSupported, ProviderNotConfigured, WebhookRejected } from '../billing/provider.ts';
 import { contourOfProvider, providerFor, providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
@@ -94,7 +94,7 @@ const ErrorBody = z.object({ error: z.string() });
 
 const currentSubscription = async (tx: Tx) => (await tx.select().from(subscriptions))[0] ?? null;
 const basePrice = (price: Price | undefined) =>
-  price?.find((c) => c.model === 'flat' || c.model === 'per_seat');
+  price?.flatMap((c) => (c.model === 'flat' || c.model === 'per_seat' ? [c] : []))[0];
 /** Whether the contour's provider sells these components through its checkout. */
 function sellable(contourId: string, price: Price | undefined) {
   if (!price || !subscribable(price).length) return false; // free, contract or packs only
@@ -125,13 +125,18 @@ async function packOf(e: Entitlements) {
   return { sub, pack };
 }
 
-async function creditsOf(log: FastifyBaseLogger, e: Entitlements) {
+/** Credit left: the provider's balance less this period's not yet invoiced spend (Stripe applies
+ * credit only when it finalizes the invoice), as the worker's gateway counts it. */
+async function creditsOf(log: FastifyBaseLogger, e: Entitlements, spent: Record<string, number>) {
   const found = await packOf(e);
   if (!found) return null;
+  const { currency } = found.sub;
   let balance: number | null = null;
   try {
     const minor = await providerOf(found.sub).creditBalance?.(found.sub);
-    balance = minor === undefined ? null : minor / 100; // ponytail: 2-decimal currencies only
+    if (minor !== undefined) {
+      balance = Math.max(0, minor / 10 ** minorUnits(currency) - (spent[currency] ?? 0));
+    }
   } catch (err) {
     log.warn({ err }, 'credit balance unavailable'); // the page still renders
   }
@@ -173,8 +178,8 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
           .from(member)
           .where(eq(member.organizationId, orgId));
         const spent = await llmSpend(tx, orgId, e.period);
-        // Pay as you go (flag billing-usage): over the plan's limit is a warning; calls stop only
-        // at the org's own cap, as in the worker's gateway.
+        // Pay as you go (flag billing-usage): over the plan's limit is a warning; calls stop at the
+        // org's own cap or the plan's llmSpendMax, as in the worker's gateway.
         const payg = e.payg && (await isEnabled('billing-usage', { userId: orgId, orgId }));
         return {
           planId: e.planId,
@@ -188,7 +193,7 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
           canManage: rank >= 2,
           selfService: selfService(sub),
           payg,
-          credits: await creditsOf(req.log, e),
+          credits: await creditsOf(req.log, e, spent),
           usage: {
             seats: { used: seatCount?.n ?? 0, limit: e.limits.seats },
             projects: { used: projectCount?.n ?? 0, limit: e.limits.projects },
@@ -197,7 +202,8 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
             const limit = e.llmSpendLimit(cur);
             if (limit === undefined) return [];
             const s = spent[cur] ?? 0;
-            const cap = payg ? e.llmSpendCap(cur) : limit;
+            // Pay as you go: the org's own cap, else the plan's llmSpendMax (as in the worker).
+            const cap = payg ? (e.llmSpendCap(cur) ?? e.plan.llmSpendMax[cur]) : limit;
             const level =
               cap !== undefined && s >= cap
                 ? 'blocked'
@@ -289,7 +295,6 @@ export const billingRoutes: FastifyPluginAsyncZod = async (app) => {
         provider.topUp!({
           orgId: req.tenant.orgId,
           planId: e.planId,
-          currency: found.sub.currency,
           customerId: found.sub.customerId!,
           pack: found.pack,
           returnUrl,

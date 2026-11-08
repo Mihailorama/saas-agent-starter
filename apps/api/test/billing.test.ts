@@ -135,6 +135,7 @@ describe('plans and entitlements', () => {
     updatedAt: new Date(),
     seats: null,
     contractRef: null,
+    usageReportedUntil: null,
     ...over,
   });
   const now = new Date('2026-11-20T00:00:00Z');

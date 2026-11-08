@@ -31,7 +31,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { entitlementsOf, type LimitOverrides, llmSpend } from '../billing/entitlements.ts';
 import { type Limit, plans } from '../billing/plans.ts';
-import { providerFor, providerOf } from '../billing/registry.ts';
+import { providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { env } from '../env.ts';
 import { startContractPeriod } from '../temporal.ts';
@@ -96,10 +96,11 @@ const safeUrl = (raw: string) => {
   }
 };
 
-/** The contract component of a plan in a currency (a contract price stands alone). */
+/** The manual contract price of a plan in a currency (a contract price stands alone). Stripe
+ * contracts are created in the Stripe dashboard instead (docs/billing.md "Contract"). */
 const contractOf = (planId: string, currency: string) => {
   const c = plans.plans[planId]?.prices[currency]?.[0];
-  return c?.model === 'contract' ? c : undefined;
+  return c?.model === 'contract' && c.provider === 'manual' ? c : undefined;
 };
 const contractPlans = Object.entries(plans.plans).flatMap(([id, p]) => {
   const currencies = Object.keys(p.prices).filter((cur) => contractOf(id, cur));
@@ -528,17 +529,17 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
     },
   );
 
-  // A negotiated contract (docs/billing.md "Contract"). `manual` (invoiced outside any PSP): the
-  // row is ours, written here, and a Temporal timer marks it past_due at the period end unless an
-  // operator extends it. A provider that sends invoices (Stripe `send_invoice`) creates the
-  // subscription itself; its state arrives through the webhook. Seats/projects: PATCH .../limits.
+  // A manual contract (docs/billing.md "Contract"): invoiced outside any PSP, so the row is ours.
+  // A Temporal timer marks it past_due at the period end unless an operator extends it; it is
+  // started inside the transaction (deterministic id), so no contract is committed without one.
+  // Seats/projects: PATCH .../limits.
   const Contract = WithReason.extend({
     planId: z.string().min(1).max(64),
     currency: z.string().length(3),
     contractRef: z.string().trim().min(1).max(200),
-    periodStart: z.iso.datetime().optional(),
-    periodEnd: z.iso.datetime().optional(),
-  });
+    periodStart: z.iso.datetime(),
+    periodEnd: z.iso.datetime(),
+  }).refine((b) => Date.parse(b.periodStart) < Date.parse(b.periodEnd), 'periodEnd before start');
   app.put(
     '/orgs/:id/contract',
     {
@@ -553,63 +554,45 @@ export const adminOrgRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const id = req.params.id;
       const b = req.body;
-      const contract = contractOf(b.planId, b.currency);
-      if (!contract) throw httpError(400, `${b.planId} has no contract price in ${b.currency}`);
-      const target = `${b.planId} ${b.contractRef}`;
-      const [org, sub] = await withOrg(db, id, async (tx) => [
-        (await tx.select().from(organization).where(eq(organization.id, id)))[0],
-        (await tx.select().from(subscriptions))[0],
-      ]);
-      if (!org) throw httpError(404, 'not found');
-      if (sub && PAID.includes(sub.status as 'active') && sub.provider !== contract.provider) {
-        throw httpError(
-          409,
-          `the organization has a ${sub.provider} subscription: cancel it first`,
-        );
+      if (!contractOf(b.planId, b.currency)) {
+        throw httpError(400, `${b.planId} has no manual contract price in ${b.currency}`);
       }
-      const contourId = sub?.contour ?? env.BILLING_CONTOUR;
-      if (contract.provider !== 'manual') {
-        const provider = providerFor(contourId, contract.provider);
-        if (!provider.invoice) throw httpError(400, `${contract.provider} cannot invoice`);
-        await provider.invoice({
-          orgId: id,
-          orgName: org.name,
-          planId: b.planId,
-          planName: plans.plans[b.planId]!.name,
-          currency: b.currency,
-          prices: [contract],
-          customerId: sub?.customerId ?? null,
-          contractRef: b.contractRef,
-          daysUntilDue: contract.daysUntilDue,
-        });
-        await withOrg(db, id, (tx) => audit(tx, req, id, 'contract.invoiced', target, b.reason));
-        return reply.code(204).send(null);
-      }
-      if (!b.periodStart || !b.periodEnd || b.periodStart >= b.periodEnd) {
-        throw httpError(400, 'a manual contract needs periodStart before periodEnd');
-      }
-      const row = {
-        planId: b.planId,
-        status: 'active' as const,
-        contour: contourId,
-        provider: 'manual',
-        providerSubscriptionId: null,
-        currency: b.currency,
-        currentPeriodStart: new Date(b.periodStart),
-        currentPeriodEnd: new Date(b.periodEnd),
-        cancelAtPeriodEnd: false,
-        contractRef: b.contractRef,
-        lastEventAt: new Date(),
-        updatedAt: new Date(),
-      };
       await withOrg(db, id, async (tx) => {
+        const [org] = await tx
+          .select()
+          .from(organization)
+          .where(eq(organization.id, id))
+          .for('update');
+        if (!org) throw httpError(404, 'not found');
+        const [sub] = await tx.select().from(subscriptions);
+        // Never next to a self-serve or provider-invoiced subscription: it would bill twice.
+        if (sub && PAID.includes(sub.status as 'active') && sub.provider !== 'manual') {
+          throw httpError(409, `the organization has a ${sub.provider} subscription: end it first`);
+        }
+        const row = {
+          planId: b.planId,
+          status: 'active' as const,
+          contour: sub?.contour ?? env.BILLING_CONTOUR,
+          provider: 'manual',
+          providerSubscriptionId: null,
+          currency: b.currency,
+          currentPeriodStart: new Date(b.periodStart),
+          currentPeriodEnd: new Date(b.periodEnd),
+          cancelAtPeriodEnd: false,
+          contractRef: b.contractRef,
+          lastEventAt: new Date(),
+          updatedAt: new Date(),
+        };
         await tx
           .insert(subscriptions)
           .values({ orgId: id, ...row })
           .onConflictDoUpdate({ target: subscriptions.orgId, set: row });
-        await audit(tx, req, id, 'contract.set', `${target} until ${b.periodEnd}`, b.reason);
+        const target = `${b.planId} ${b.contractRef} until ${row.currentPeriodEnd.toISOString()}`;
+        await audit(tx, req, id, 'contract.set', target, b.reason);
+        // Before commit: Temporal down = no contract. A timer whose row then rolls back finds no
+        // matching period at its end and does nothing.
+        await startContractPeriod({ orgId: id, periodEnd: row.currentPeriodEnd.toISOString() });
       });
-      await startContractPeriod({ orgId: id, periodEnd: row.currentPeriodEnd.toISOString() });
       return reply.code(204).send(null);
     },
   );
