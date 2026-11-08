@@ -25,6 +25,11 @@ const schema = z
     TEMPORAL_TASK_QUEUE: z.string().default('projects'),
     /** Task queue of the worker's SendEmailWorkflow (docs/email.md). */
     EMAIL_TASK_QUEUE: z.string().default('email'),
+    /** Refuse disposable addresses at sign-up, email change and invitation (docs/security.md). */
+    SIGNUP_BLOCK_DISPOSABLE: z.stringbool().default(true),
+    /** Domains (and their subdomains) always accepted / always refused, comma-separated. */
+    SIGNUP_EMAIL_ALLOW_DOMAINS: list.transform((l) => l.map((d) => d.toLowerCase())),
+    SIGNUP_EMAIL_DENY_DOMAINS: list.transform((l) => l.map((d) => d.toLowerCase())),
     S3_ENDPOINT: z.url().optional(),
     /** Endpoint browsers use for presigned URLs; defaults to S3_ENDPOINT. */
     S3_PUBLIC_ENDPOINT: z.url().optional(),

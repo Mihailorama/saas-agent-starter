@@ -82,6 +82,9 @@ services:
       # profile pii: PII_REDACT_URL=http://pii:8000 (docs/support.md "Personal data")
       - PII_REDACT_URL
       - EMAIL_TASK_QUEUE
+      - SIGNUP_BLOCK_DISPOSABLE
+      - SIGNUP_EMAIL_ALLOW_DOMAINS
+      - SIGNUP_EMAIL_DENY_DOMAINS
       - FLAGS_ON
       - FLAGS_OFF
       - POSTHOG_KEY

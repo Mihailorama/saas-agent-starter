@@ -3,6 +3,7 @@ import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { createAuthMiddleware } from 'better-auth/api';
 import { randomUUID } from 'node:crypto';
 import { admin, emailOTP, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
@@ -12,6 +13,7 @@ import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
 import { mfaGuard } from './mfa.ts';
 import { operatorGuard } from './operator-guard.ts';
+import { assertAllowedEmail } from './signup-guard.ts';
 import { type CrmEvent, startCrmSync, startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
@@ -72,16 +74,22 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg', schema }),
   // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
   // vouches for): an unverified sign-up must not claim a CRM person who has that email.
+  // Disposable addresses (signup-guard.ts) are refused on every user write: email sign-up, SSO,
+  // operator-created users and an email change. Invitations are checked in organizationHooks.
   databaseHooks: {
     user: {
       create: {
         // A code sign-up sends no name; mails and invitations greet by it, so start with the
         // address's local part (the user can change it).
-        before: async (user) => ({ data: { ...user, name: user.name || user.email.split('@')[0] } }),
+        before: async (user) => {
+          assertAllowedEmail(user.email);
+          return { data: { ...user, name: user.name || user.email.split('@')[0] } };
+        },
         after: async (user) => {
           if (user.emailVerified) await personSync(user.id);
         },
       },
+      update: { before: async (user) => assertAllowedEmail(user.email) },
     },
   },
   // Passwordless (ADR 0029): one-time e-mail codes, passkeys and SSO. No passwords anywhere.
@@ -110,6 +118,7 @@ export const auth = betterAuth({
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
       organizationHooks: {
+        beforeCreateInvitation: async ({ invitation }) => assertAllowedEmail(invitation.email),
         afterCreateOrganization: ({ organization, user }) =>
           crmSync({
             kind: 'org.created',
@@ -131,12 +140,23 @@ export const auth = betterAuth({
     }),
     apiKeys,
     totp,
-    // The twoFactor plugin only challenges password sign-ins; run its same step after a code
-    // sign-in, so an account with TOTP gets { twoFactorRedirect } and no session.
     {
-      id: 'two-factor-email-otp',
+      id: 'email-otp-guards',
       hooks: {
-        after: [{ matcher: (c) => c.path === '/sign-in/email-otp', handler: totp.hooks.after[0]!.handler }],
+        // No code (and no mail) for a disposable address: refused before one is created.
+        before: [
+          {
+            matcher: (c) => c.path === '/email-otp/send-verification-otp',
+            handler: createAuthMiddleware(async (ctx) =>
+              assertAllowedEmail((ctx.body as { email?: string } | undefined)?.email),
+            ),
+          },
+        ],
+        // The twoFactor plugin only challenges password sign-ins; run its same step after a code
+        // sign-in, so an account with TOTP gets { twoFactorRedirect } and no session.
+        after: [
+          { matcher: (c) => c.path === '/sign-in/email-otp', handler: totp.hooks.after[0]!.handler },
+        ],
       },
     },
     // A passkey sign-in is multi-factor on its own (device + PIN/biometric): no TOTP step.
