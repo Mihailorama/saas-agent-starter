@@ -1,4 +1,77 @@
 {
   "$comment": "Feature flag catalog (docs/feature-flags.md). Every isEnabled('<name>') / useFlag('<name>') / is_enabled(\"<name>\") call in apps/web, apps/api and services/worker-py must use a name listed here; `pnpm check:flags` enforces it and warns once `expires` has passed. Entry: description (what the flag gates, user-visible terms), owner (GitHub handle or team that removes it), default (value when PostHog is not configured or does not know the flag), expires (YYYY-MM-DD: full rollout done and flag removed from code and catalog by then). Example: \"new-project-form\": { \"description\": \"Two-step project creation form.\", \"owner\": \"@example\", \"default\": false, \"expires\": \"2027-03-31\" }",
-  "flags": {}
+  "flags": {
+    "booking": {
+      "description": "Booking a call with the team: \"Talk to us\" in the app sidebar and \"Book a demo\" on the marketing site (docs/crm.md). Needs VITE_BOOKING_ORIGIN and VITE_BOOKING_LINK as well.",
+      "owner": "@Mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "billing-credits": {
+      "description": "Prepaid credit packs: \"Buy credits\" and the balance on the billing page, credit grants after payment, and AI calls stop when the prepaid balance is used up.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "billing-usage": {
+      "description": "Usage-based billing: usage reported to the payment provider's meters, API-key requests counted, and on pay-as-you-go plans the LLM spend limit as a warning (calls stop only at the organization's own cap).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "byo-llm-providers": {
+      "description": "Settings page where organization admins add their own AI provider (API key or OpenAI-compatible endpoint).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-03-31"
+    },
+    "csat-survey": {
+      "description": "CSAT popover (1-5) after a user creates a project; survey `csat-project` in config/journeys.json, linked to this flag in PostHog.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "mcp-tools": {
+      "description": "Settings page where organization admins connect external MCP servers whose allowed tools AI features may call.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "referrals": {
+      "description": "Referral links (settings page, `?ref=` on sign-up) with a first-payment discount for the referred organization and a reward for the referrer (docs/growth.md). With DUB_API_KEY, Dub Partners runs them.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "rewards": {
+      "description": "Rewards from config/rewards.json: inviting teammates and completing the organization profile (docs/growth.md). Off: no reward workflow starts; rewards already granted stay.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "mcp-server": {
+      "description": "MCP endpoint (/mcp) where customers' AI agents use the product with an organization API key.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "nps-survey": {
+      "description": "NPS popover (0-10) on project pages for users active for 14+ days, re-asked every 90 days; survey `nps` in config/journeys.json, linked to this flag in PostHog.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "onboarding": {
+      "description": "Onboarding checklist on the projects page and the first-visit product tour (docs/onboarding.md).",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    },
+    "telegram-support": {
+      "description": "Lite support in Telegram: the bot relays users' messages to a topic per user in the team's forum group and the team's replies back; \"Telegram\" in the app's Help menu (docs/support.md). Needs TELEGRAM_SUPPORT_BOT_TOKEN, TELEGRAM_SUPPORT_CHAT_ID and, for the menu, VITE_TELEGRAM_SUPPORT_BOT.",
+      "owner": "@mihailorama",
+      "default": false,
+      "expires": "2027-05-31"
+    }
+  }
 }

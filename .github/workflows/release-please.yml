@@ -37,6 +37,8 @@ jobs:
       issues: write
       pull-requests: read
     uses: ./.github/workflows/released.yml
+    secrets:
+      PLANE_API_TOKEN: ${{ secrets.PLANE_API_TOKEN }}
     with:
       tag: ${{ needs.release-please.outputs.tag }}
 

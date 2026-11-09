@@ -1,0 +1,41 @@
+name: Infra e2e
+
+# `pnpm run infra` end to end (deploy/setup/e2e.sh, docs/setup.md "Tests"): a fresh Ubuntu "server"
+# in Docker-in-Docker, bootstrap, deploy, verify, re-run. It builds the release images and runs the
+# whole stack (~20 minutes), so it runs on main, on PRs labelled `infra-e2e`, and on demand.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'infra-e2e')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install sops and age (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          bin=$RUNNER_TEMP/bin && mkdir -p "$bin" && cd "$RUNNER_TEMP"
+          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          curl -fsSLO https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  sops" | sha256sum -c
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  age-v1.3.2-linux-amd64.tar.gz" | sha256sum -c
+          tar xzf age-v1.3.2-linux-amd64.tar.gz
+          install -m 755 sops age/age age/age-keygen "$bin/"
+          echo "$bin" >> "$GITHUB_PATH"
+      - run: deploy/setup/e2e.sh

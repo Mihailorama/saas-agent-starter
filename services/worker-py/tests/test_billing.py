@@ -6,10 +6,12 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import asyncpg
 import pytest
+from litellm.exceptions import RateLimitError
 from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
@@ -23,29 +25,40 @@ from worker import settings
 from worker.ai import (
     AllowedModel,
     Completion,
+    Fallback,
     Gateway,
     Message,
     ModelNotAllowed,
-    Price,
     load_registry,
 )
+from worker.ai import Price as ModelPrice
 from worker.billing import (
     BillingActivities,
     BillingEvent,
+    ContractPeriod,
+    Price,
     SpendLimitExceeded,
+    UsageLimitExceeded,
+    from_minor,
     llm_budget,
     load_plans,
+    to_minor,
 )
+from worker.providers import ProviderConfig, load_providers
 from worker.s3 import S3
-from worker.workflows import BillingEventWorkflow
+from worker.workflows import BillingEventWorkflow, ContractPeriodWorkflow
 
 PLANS = load_plans(settings.PLANS_FILE)
+# One plan per pricing model, shared with the API tests.
+FIXTURE_PLANS = Path(__file__).resolve().parents[3] / "apps/api/test/fixtures/plans.json"
 reader = InMemoryMetricReader()
 metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
 provider_calls: list[str] = []
 
 
-async def fake(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+async def fake(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
     provider_calls.append(model)
     return Completion("ok", model, 1000, 100, "fake-1")
 
@@ -66,7 +79,7 @@ async def s3() -> AsyncIterator[S3]:
 
 @pytest.fixture
 def gateway(pool: asyncpg.Pool, s3: S3) -> Gateway:
-    price = Price(Decimal("0.001"), Decimal("0.002"), "USD")  # 1000 in + 100 out = 0.0012
+    price = ModelPrice(Decimal("0.001"), Decimal("0.002"), "USD")  # 1000 in + 100 out = 0.0012
     return Gateway(
         pool=pool,
         s3=s3,
@@ -313,3 +326,191 @@ async def test_billing_event_workflow_applies_once(pool: asyncpg.Pool) -> None:
             await start()
     [sub] = await in_org(pool, org_id, "select plan_id, status from subscriptions")
     assert (sub["plan_id"], sub["status"]) == ("pro", "active")
+
+
+async def unmetered_calls(pool: asyncpg.Pool, org_id: str, n: int, tokens: int = 10) -> None:
+    await in_org(
+        pool,
+        org_id,
+        "insert into ai_calls (org_id, purpose, provider, request_model, prompt_template_id,"
+        " prompt_template_version, request_key, content_expires_at, total_tokens, latency_ms,"
+        " status, contour) select $1, 'project.summary', 'fake', 'self-hosted', 't', '1', 'k',"
+        " now(), $3, 1, 'ok', 'eu' from generate_series(1, $2)",
+        org_id,
+        n,
+        tokens,
+    )
+
+
+async def test_unmetered_models_are_limited_by_calls_and_tokens(
+    gateway: Gateway, pool: asyncpg.Pool
+) -> None:
+    usage = PLANS.plans["free"].llm_usage_monthly
+    assert usage == {"calls": 200, "tokens": 400000}
+    calls = await new_org(pool)
+    await unmetered_calls(pool, calls, usage["calls"] - 1)
+    await spend(pool, calls, "0.5")  # priced calls do not count against the usage limit
+    await call(gateway, calls, "self-hosted")  # the 200th call is allowed
+    before = len(provider_calls)
+    with pytest.raises(UsageLimitExceeded, match=r"usage limit \(calls\)"):
+        await call(gateway, calls, "self-hosted")
+    assert len(provider_calls) == before
+    await call(gateway, calls)  # priced models follow the money limit only
+
+    tokens = await new_org(pool)
+    await unmetered_calls(pool, tokens, 1, usage["tokens"])
+    with pytest.raises(UsageLimitExceeded, match=r"usage limit \(tokens\)"):
+        await call(gateway, tokens, "self-hosted")
+    assert issubclass(UsageLimitExceeded, SpendLimitExceeded)  # activities handle both alike
+
+    paid = await new_org(pool)  # pro: 5000 calls
+    await subscribe(pool, paid)
+    await unmetered_calls(pool, paid, usage["calls"])
+    await call(gateway, paid, "self-hosted")
+
+
+async def rate_limited(
+    model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+) -> Completion:
+    raise RateLimitError("429 from the subscription", llm_provider="openai", model=model)
+
+
+async def test_rate_limited_call_falls_back_once(pool: asyncpg.Pool, s3: S3) -> None:
+    allowed = frozenset({"project.summary"})
+    gateway = Gateway(
+        pool=pool,
+        s3=s3,
+        contour="eu",
+        registry={
+            ("sub", "m"): AllowedModel(allowed, None, True, Fallback("fake", "self-hosted")),
+            ("fake", "self-hosted"): AllowedModel(allowed, None, True, Fallback("sub", "m")),
+            ("sub", "no-fallback"): AllowedModel(allowed, None, True),
+            ("sub", "to-unconfigured"): AllowedModel(allowed, None, True, Fallback("api", "x")),
+            ("api", "x"): AllowedModel(allowed, ModelPrice(Decimal(1), Decimal(1), "USD")),
+        },
+        providers={"sub": rate_limited, "fake": fake, "api": fake},
+        provider_configs={
+            "api": ProviderConfig("api", "api", "anthropic", None, None, 10)  # no key
+        },
+        retention_days=1,
+        plans=PLANS,
+    )
+    org_id = await new_org(pool)
+    result = await gateway.call_llm(
+        "project.summary",
+        [Message("user", "hi")],
+        model="m",
+        provider="sub",
+        org_id=org_id,
+        actor_id=None,
+        prompt_template_id="t",
+        prompt_template_version="1",
+        max_tokens=16,
+    )
+    assert result.text == "ok"
+    rows = await in_org(
+        pool, org_id, "select provider, status, error_class from ai_calls order by created_at"
+    )
+    assert [tuple(r) for r in rows] == [
+        ("sub", "error", "RateLimitError"),  # every attempt is on the record
+        ("fake", "ok", None),
+    ]
+    for model in ("no-fallback", "to-unconfigured"):
+        with pytest.raises(RateLimitError):
+            await gateway.call_llm(
+                "project.summary",
+                [Message("user", "hi")],
+                model=model,
+                provider="sub",
+                org_id=org_id,
+                actor_id=None,
+                prompt_template_id="t",
+                prompt_template_version="1",
+                max_tokens=16,
+            )
+
+
+def test_price_override_wins_then_litellm_map_then_refusal() -> None:
+    configs = load_providers(
+        settings.AI_MODELS_FILE,
+        {"ANTHROPIC_API_KEY": "local-dev-anthropic"},
+        cli_url="",
+        cli_token="",
+        timeout=1,
+        cli_timeout=1,
+    )
+    registry = load_registry(settings.AI_MODELS_FILE, "eu")
+    gw = Gateway(
+        pool=None,  # type: ignore[arg-type] - price lookups only
+        s3=None,  # type: ignore[arg-type]
+        contour="eu",
+        registry=registry
+        | {
+            ("anthropic", "overridden"): AllowedModel(
+                frozenset(), ModelPrice(Decimal(5), Decimal(6), "EUR")
+            )
+        }
+        | {("anthropic", "unknown-model"): AllowedModel(frozenset({"project.summary"}), None)},
+        providers={"anthropic": fake},
+        provider_configs=configs,
+        retention_days=1,
+    )
+    assert gw.price_of("anthropic", "claude-haiku-5-5") == ModelPrice(
+        Decimal("0.0001"), Decimal("0.0005"), "USD"
+    )
+    assert gw.price_of("anthropic", "overridden") == ModelPrice(Decimal(5), Decimal(6), "EUR")
+    assert gw.price_of("claude_cli", "claude-haiku-5-5") is None  # subscription: unmetered
+    with pytest.raises(ModelNotAllowed, match="no price"):
+        gw._route("project.summary", "anthropic", "unknown-model")  # pyright: ignore[reportPrivateUsage]
+
+
+def test_price_models_parse_and_old_prices_stay_flat() -> None:
+    assert PLANS.plans["pro"].prices["USD"] == [Price("flat", "29.00", "month")]  # no `model`
+    examples = load_plans(FIXTURE_PLANS).plans
+    assert [p.model for p in examples["growth"].prices["USD"]] == ["flat", "metered"]
+    assert examples["enterprise"].prices["USD"] == [Price("contract")]
+
+
+async def test_contract_period_end_marks_past_due_once(pool: asyncpg.Pool) -> None:
+    acts = BillingActivities(pool, PLANS)
+    org_id, renewed = await new_org(pool), await new_org(pool)
+    end = datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=2)
+    for org in (org_id, renewed):
+        await subscribe(pool, org, provider="manual", current_period_end=end, contract_ref="PO-1")
+    # An operator extended this one before the timer fired: the old timer changes nothing.
+    await in_org(pool, renewed, "update subscriptions set current_period_end = $1", end + DAYS)
+    queue = f"test-{uuid.uuid4()}"
+    client = await Client.connect(settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE)
+    async with Worker(
+        client,
+        task_queue=queue,
+        workflows=[ContractPeriodWorkflow],
+        activities=[acts.end_contract_period],
+    ):
+        for org, expected in ((org_id, "past_due"), (renewed, "unchanged")):
+            result = await client.execute_workflow(
+                ContractPeriodWorkflow.run,
+                ContractPeriod(org, end.isoformat()),
+                id=f"billing-contract-{org}-{int(end.timestamp() * 1000)}",
+                task_queue=queue,
+            )
+            assert result == expected
+    assert await acts.end_contract_period(ContractPeriod(org_id, end.isoformat())) == "unchanged"
+    [sub] = await in_org(pool, org_id, "select status from subscriptions")
+    assert sub["status"] == "past_due"
+    audit = await in_org(pool, org_id, "select action from audit_log")
+    assert [a["action"] for a in audit] == ["billing.contract.past_due"]
+    [sub] = await in_org(pool, renewed, "select status from subscriptions")
+    assert sub["status"] == "active"
+
+
+DAYS = timedelta(days=30)
+
+
+def test_minor_units_per_currency() -> None:  # twin of apps/api/src/billing/money.ts
+    assert [to_minor("29.00", "USD"), to_minor("3000", "JPY"), to_minor("9.500", "KWD")] == [
+        2900,
+        3000,
+        9500,
+    ]
+    assert from_minor(9500, "KWD") == Decimal("9.5")

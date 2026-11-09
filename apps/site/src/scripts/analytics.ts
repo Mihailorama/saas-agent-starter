@@ -8,6 +8,7 @@ import {
   showPrivacyChoices,
   track,
 } from '../../../web/src/lib/analytics.ts';
+import { onBookingClick } from '../../../web/src/lib/booking.ts';
 
 initAnalytics();
 // Static pages have no ids in their paths, so the path is the route.
@@ -24,4 +25,6 @@ if (choices && privacyChoicesLabel) {
 document.addEventListener('click', (e) => {
   const cta = (e.target as HTMLElement).closest<HTMLElement>('[data-cta]')?.dataset.cta;
   if (cta) track('site_cta_clicked', { cta });
+  // "Book a demo" (data-booking): Cal.com's embed after consent, else the link (docs/crm.md).
+  if ((e.target as HTMLElement).closest('[data-booking]')) onBookingClick(e, 'site');
 });

@@ -1,0 +1,7 @@
+# Profile s3 (SeaweedFS on this host): presigned browser uploads need a public S3 endpoint.
+# scripts/deploy.mjs ships deploy/sites/<profile>.caddy for each enabled profile. Set
+# S3_PUBLIC_ENDPOINT=https://s3.example.com and S3_PUBLIC_ORIGIN to the same.
+{$S3_PUBLIC_ENDPOINT} {
+	tls {$CADDY_TLS}
+	reverse_proxy s3:8333
+}

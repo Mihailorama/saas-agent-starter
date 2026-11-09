@@ -1,14 +1,13 @@
 {
-  "$comment": "Customer journeys as code (docs/product-analytics.md). Steps are event names from config/events.json, in order. `pnpm journeys:sync` turns each journey into a PostHog funnel insight plus a threshold alert (conversion below minConversion) and an Umami funnel; `pnpm journeys:report` prints the current funnel. windowDays: how long a user has to finish the journey. minConversion: overall first-to-last-step conversion in percent below which the PostHog alert fires. maxStepSeconds: target time per step, reported (median from PostHog) but not alerted on.",
+  "$comment": "Customer journeys as code (docs/product-analytics.md). Steps are event names from config/events.json, in order. `pnpm journeys:sync` turns each journey into a PostHog funnel insight plus a threshold alert (conversion below minConversion) and an Umami funnel; `pnpm journeys:report` prints the current funnel. windowDays: how long a user has to finish the journey. minConversion: overall first-to-last-step conversion in percent below which the PostHog alert fires. maxStepSeconds: target time per step, reported (median from PostHog) but not alerted on. surveys: in-app surveys (PostHog popovers, synced by the same command). type: nps (0-10) or csat (1-5). followUp: optional open question after the rating. trigger: `event` from config/events.json (not pii) and/or `url` (substring of the page URL). activeForDays: only users first seen at least that many days ago. waitDays: skip users who saw any survey in the last N days. repeat: { everyDays, times } re-asks; absent = ask once. flag: the config/flags.json entry the survey is linked to; it shows only where that flag is on.",
   "journeys": [
     {
       "name": "activation",
-      "description": "A new visitor signs up, creates an organization and a first project.",
+      "description": "A new user (account created by the first code sign-in) creates an organization and a first project.",
       "windowDays": 1,
       "minConversion": 30,
       "steps": [
-        { "event": "signup_started" },
-        { "event": "signup_completed", "maxStepSeconds": 300 },
+        { "event": "signup_completed" },
         { "event": "org_created", "maxStepSeconds": 600 },
         { "event": "project_created", "maxStepSeconds": 1800 }
       ]
@@ -24,15 +23,56 @@
       ]
     },
     {
+      "name": "onboarding-tour",
+      "description": "A new user who sees the product tour finishes it (docs/onboarding.md).",
+      "windowDays": 1,
+      "minConversion": 40,
+      "steps": [
+        { "event": "onboarding_tour_started" },
+        { "event": "onboarding_tour_completed", "maxStepSeconds": 120 }
+      ]
+    },
+    {
+      "name": "demo-booking",
+      "description": "A visitor or user opens a booking link and books a call in the Cal.com embed (docs/crm.md). Bookings made on the Cal.com page after the link opened there are counted in Cal.com, not here.",
+      "windowDays": 1,
+      "minConversion": 10,
+      "steps": [
+        { "event": "booking_opened" },
+        { "event": "booking_completed", "maxStepSeconds": 600 }
+      ]
+    },
+    {
       "name": "site-to-signup",
       "description": "A marketing-site visitor clicks a call to action and creates an account in the app. Needs the site and the app on one PostHog/Umami project (docs/marketing.md).",
       "windowDays": 1,
       "minConversion": 5,
       "steps": [
         { "event": "site_cta_clicked" },
-        { "event": "signup_started", "maxStepSeconds": 120 },
+        { "event": "signin_code_requested", "maxStepSeconds": 120 },
         { "event": "signup_completed", "maxStepSeconds": 300 }
       ]
+    }
+  ],
+  "surveys": [
+    {
+      "id": "nps",
+      "type": "nps",
+      "question": "How likely are you to recommend us to a friend or colleague?",
+      "followUp": "What is the main reason for your score?",
+      "trigger": { "url": "/projects/" },
+      "activeForDays": 14,
+      "waitDays": 30,
+      "repeat": { "everyDays": 90, "times": 8 },
+      "flag": "nps-survey"
+    },
+    {
+      "id": "csat-project",
+      "type": "csat",
+      "question": "How satisfied are you with creating a project?",
+      "trigger": { "event": "project_created" },
+      "waitDays": 14,
+      "flag": "csat-survey"
     }
   ]
 }

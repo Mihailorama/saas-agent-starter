@@ -168,6 +168,13 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
       <a href={site.repo} data-cta="hero_github" class={primary}>View on GitHub</a>
       <a href={agentsMd} data-cta="hero_agents_md" class={secondary}>Read AGENTS.md</a>
       <a href="#quickstart" class="px-2 py-2.5 font-medium text-primary hover:underline">Quickstart</a>
+      {
+        site.booking && (
+          <a href={site.booking} target="_blank" rel="noopener" data-cta="book_demo" data-booking class={secondary}>
+            Book a demo
+          </a>
+        )
+      }
     </div>
   </section>
 

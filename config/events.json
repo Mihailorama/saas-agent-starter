@@ -13,18 +13,23 @@
       "pii": false,
       "props": { "cta": "string" }
     },
-    "signup_started": {
-      "description": "The sign-up form was opened on the sign-in page.",
+    "waitlist_joined": {
+      "description": "A visitor joined the waitlist on a landing page drafted by /validate-idea (docs/validate-idea.md). `variant` is the page variant id (e.g. the price under test, `pro_29`), never the email or any free text.",
+      "pii": false,
+      "props": { "variant": "string" }
+    },
+    "signin_code_requested": {
+      "description": "A sign-in code was mailed from the sign-in page (first step of sign-in and sign-up; resends count too).",
       "pii": false,
       "props": {}
     },
     "signup_completed": {
-      "description": "Account created (email/password).",
+      "description": "Account created by the first sign-in with an email code.",
       "pii": false,
       "props": {}
     },
     "signin_completed": {
-      "description": "Signed in (email/password).",
+      "description": "Signed in with an email code (after the authenticator step when 2FA is on).",
       "pii": false,
       "props": {}
     },
@@ -69,20 +74,20 @@
       "pii": false,
       "props": {}
     },
-    "password_reset_requested": {
-      "description": "A password reset link was requested from the sign-in page (mailed only if the account exists).",
-      "pii": false,
-      "props": {}
-    },
-    "password_reset_completed": {
-      "description": "A new password was set from the emailed reset link.",
-      "pii": false,
-      "props": {}
-    },
     "invitation_accepted": {
       "description": "An organization invitation was accepted from the emailed link.",
       "pii": false,
       "props": {}
+    },
+    "referral_link_copied": {
+      "description": "An org admin copied the organization's referral link on the referrals page.",
+      "pii": false,
+      "props": {}
+    },
+    "member_invited": {
+      "description": "An org admin invited someone by email from the members page. `role` is member or admin.",
+      "pii": false,
+      "props": { "role": "string" }
     },
     "org_created": {
       "description": "An organization was created from the onboarding card or the org switcher.",
@@ -154,6 +159,16 @@
       "pii": false,
       "props": { "scopes": "number", "expires": "boolean" }
     },
+    "ai_provider_created": {
+      "description": "An org admin added the organization's own AI provider. `kind` is api, aggregator or custom; `purposes` how many uses it serves.",
+      "pii": false,
+      "props": { "kind": "string", "purposes": "number" }
+    },
+    "mcp_server_connected": {
+      "description": "An org admin connected an external MCP server. `tools` is how many tools AI features may call on it; `has_auth` whether it has an auth header.",
+      "pii": false,
+      "props": { "tools": "number", "has_auth": "boolean" }
+    },
     "webhook_endpoint_created": {
       "description": "An org admin added a webhook endpoint. `event_types` is how many events it subscribes to.",
       "pii": false,
@@ -166,8 +181,38 @@
         "analytics": "boolean"
       }
     },
+    "booking_opened": {
+      "description": "A booking link (site \"Book a demo\", app \"Talk to us\") was clicked; docs/crm.md. `source` is site or app. Opens the Cal.com embed or, without booking consent, the Cal.com page.",
+      "pii": false,
+      "props": { "source": "string" }
+    },
+    "booking_completed": {
+      "description": "The Cal.com embed reported a booking (bookingSuccessfulV2). Bookings made on the Cal.com page itself are not seen here; the CRM gets every booking from the webhook (docs/crm.md).",
+      "pii": false,
+      "props": { "source": "string" }
+    },
+    "onboarding_tour_started": {
+      "description": "The product tour on the projects page started (docs/onboarding.md). `manual` is true when restarted from the user menu.",
+      "pii": false,
+      "props": { "manual": "boolean" }
+    },
+    "onboarding_tour_completed": {
+      "description": "The product tour was closed on its last step.",
+      "pii": false,
+      "props": {}
+    },
+    "onboarding_tour_dismissed": {
+      "description": "The product tour was closed before its last step. `step` is the 0-based step it was closed on.",
+      "pii": false,
+      "props": { "step": "number" }
+    },
+    "onboarding_checklist_dismissed": {
+      "description": "The onboarding checklist card was dismissed. `done` is how many items were done.",
+      "pii": false,
+      "props": { "done": "number" }
+    },
     "support_opened": {
-      "description": "The Help menu opened the support widget (docs/support.md). `kind` is what the user picked: question, bug or feature_request.",
+      "description": "The Help menu opened the support widget or the Telegram support bot (docs/support.md). `kind` is what the user picked: question, bug, feature_request or telegram.",
       "pii": false,
       "props": {
         "kind": "string"

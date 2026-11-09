@@ -2,52 +2,39 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 import * as OTPAuth from 'otpauth';
-import { mailedLink } from './mail';
+import { signIn } from './mail';
 
-const password = 'correct-horse-battery';
 // Many steps against a dev server that compiles on first use: the 30s default is too tight.
 test.describe.configure({ timeout: 90_000 });
 
+/** A new account named `grace-<id>` (code sign-up names it after the address) with an org. */
 async function signUpWithOrg(page: Page) {
-  const email = `${randomUUID()}@example.com`;
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await page.getByLabel('Name').fill('Grace Hopper');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
-  await page.goto(await mailedLink(email, /Confirm/));
+  const name = `grace-${randomUUID().slice(0, 8)}`;
+  const email = `${name}@example.com`;
+  await signIn(page, email);
   await page.getByLabel('Organization name').fill('Compilers');
   await page.getByRole('button', { name: 'Create organization' }).click();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
-  return email;
+  return { email, name };
 }
 
-async function openSecurity(page: Page) {
-  await page
-    .getByRole('button', { name: /Grace Hopper/ })
-    .first()
-    .click();
+async function openSecurity(page: Page, name: string) {
+  await page.getByRole('button', { name }).first().click();
   await page.getByRole('menuitem', { name: 'Security' }).click();
   await expect(page.getByRole('heading', { name: 'Security' })).toBeVisible();
 }
 
-async function signOut(page: Page) {
-  await page
-    .getByRole('button', { name: /Grace Hopper/ })
-    .first()
-    .click();
+async function signOut(page: Page, name: string) {
+  await page.getByRole('button', { name }).first().click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/sign-in/);
 }
 
 test('set up TOTP, then sign in with a code', async ({ page }) => {
-  const email = await signUpWithOrg(page);
-  await openSecurity(page);
+  const { email, name } = await signUpWithOrg(page);
+  await openSecurity(page, name);
 
   await page.getByRole('button', { name: 'Set up two-factor' }).click();
-  await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('img', { name: 'QR code for your authenticator app' })).toBeVisible();
   const secret = (await page.getByTestId('totp-secret').textContent()) ?? '';
@@ -60,10 +47,9 @@ test('set up TOTP, then sign in with a code', async ({ page }) => {
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByText('On', { exact: true })).toBeVisible();
 
-  await signOut(page);
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  // The email code is the first step; with TOTP on, the authenticator code follows.
+  await signOut(page, name);
+  await signIn(page, email);
   await expect(page.getByRole('heading', { name: 'Two-factor authentication' })).toBeVisible();
   await page.getByLabel('Authentication code').fill('000000');
   await page.getByRole('button', { name: 'Verify' }).click();
@@ -91,8 +77,8 @@ test('add, rename, sign in with and delete a passkey', async ({ page }) => {
     },
   });
 
-  await signUpWithOrg(page);
-  await openSecurity(page);
+  const { name } = await signUpWithOrg(page);
+  await openSecurity(page, name);
   await page.getByLabel('Name (optional)').fill('Test laptop');
   await page.getByRole('button', { name: 'Add passkey' }).click();
   const list = page.getByRole('list', { name: 'Your passkeys' });
@@ -104,11 +90,11 @@ test('add, rename, sign in with and delete a passkey', async ({ page }) => {
   await expect(list.getByText('Work laptop')).toBeVisible();
 
   // Discoverable credential: no email needed.
-  await signOut(page);
+  await signOut(page, name);
   await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
 
-  await openSecurity(page);
+  await openSecurity(page, name);
   await page.getByRole('button', { name: 'Delete Work laptop' }).click();
   await page.getByRole('button', { name: 'Delete', exact: true }).click();
   await expect(page.getByText('No passkeys yet.')).toBeVisible();

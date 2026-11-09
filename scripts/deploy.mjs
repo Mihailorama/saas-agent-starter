@@ -5,11 +5,13 @@
 // --skip-backup: deploy without the pre-migration backup (logged on the target; docs/deploy.md 6)
 //
 // Decrypts deploy/env/<env>.enc.env with sops in memory (key: SOPS_AGE_KEY_FILE or SOPS_AGE_KEY),
-// then runs docker compose on DEPLOY_HOST over SSH, or on this machine with DEPLOY_HOST=local.
+// then runs docker compose on DEPLOY_HOST over SSH (DEPLOY_SSH_CONFIG: an ssh config file to use),
+// or on this machine with DEPLOY_HOST=local. Image digests come from the registry's HTTP API, so
+// this machine needs no Docker (REGISTRY_AUTH=user:token for a private registry).
 // Secrets travel only on the stdin of `ssh ... sh -s`: never in argv, never printed.
 // Design and server layout: docs/deploy.md, ADR 0016.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 process.chdir(new URL('..', import.meta.url).pathname);
 const USAGE = 'usage: pnpm run deploy -- <env> (--version <tag> | --rollback | --status)';
@@ -59,7 +61,64 @@ const port = cfg('HTTPS_PORT', '443');
 const ip = [undefined, '', '0.0.0.0'].includes(env.PUBLISH_IP) ? '127.0.0.1' : env.PUBLISH_IP;
 
 // --- the release: one digest per app image ---
-function digest(name) {
+// Upstream images until a fork has its own `v*` release (docs/setup.md).
+const UPSTREAM_REPO = 'ghcr.io/mihailorama/saas-agent-starter';
+
+/** `repo@sha256:...` of repo:tag from the registry's HTTP API (OCI distribution spec). */
+async function registryDigest(repo, tag) {
+  const env = process.env;
+  const [host, ...path] = repo.split('/'); // IMAGE_REPO starts with the registry host
+  const name = path.join('/');
+  if (!(host.includes('.') || /^localhost(:\d+)?$/.test(host)) || !name) {
+    throw new Error(`IMAGE_REPO ${repo}: must start with a registry host (ghcr.io/owner/name)`);
+  }
+  // Plain HTTP only for loopback or when asked (a local test registry); then never credentials.
+  const http = /^(localhost|127\.)/.test(host) || env.REGISTRY_INSECURE === '1';
+  const url = `${http ? 'http' : 'https'}://${host}/v2/${name}/manifests/${tag}`;
+  const accept = [
+    'application/vnd.oci.image.index.v1+json',
+    'application/vnd.docker.distribution.manifest.list.v2+json',
+    'application/vnd.oci.image.manifest.v1+json',
+    'application/vnd.docker.distribution.manifest.v2+json',
+  ].join(', ');
+  let res = await fetch(url, { method: 'HEAD', headers: { accept } });
+  if (res.status === 401) {
+    // Bearer token flow: realm/service/scope from WWW-Authenticate, anonymous unless REGISTRY_AUTH.
+    const p = Object.fromEntries(
+      [...(res.headers.get('www-authenticate') ?? '').matchAll(/(\w+)="([^"]*)"/g)].map((m) => [
+        m[1],
+        m[2],
+      ]),
+    );
+    const tokenUrl = new URL(p.realm);
+    if (tokenUrl.protocol !== 'https:' && !http)
+      throw new Error(`${host}: token realm is not https`);
+    if (p.service) tokenUrl.searchParams.set('service', p.service);
+    tokenUrl.searchParams.set('scope', p.scope ?? `repository:${name}:pull`);
+    const auth =
+      env.REGISTRY_AUTH && !http
+        ? { authorization: `Basic ${Buffer.from(env.REGISTRY_AUTH).toString('base64')}` }
+        : {};
+    const t = await fetch(tokenUrl, { headers: auth });
+    const body = t.ok ? await t.json() : {};
+    const token = body.token ?? body.access_token;
+    if (token) {
+      res = await fetch(url, {
+        method: 'HEAD',
+        headers: { accept, authorization: `Bearer ${token}` },
+      });
+    }
+  }
+  const digest = res.headers.get('docker-content-digest');
+  if (!res.ok || !/^sha256:[0-9a-f]{64}$/.test(digest ?? '')) {
+    throw new Error(
+      `${repo}:${tag} not found in the registry (HTTP ${res.status}). Released yet? Private? Set REGISTRY_AUTH=user:token`,
+    );
+  }
+  return `${repo}@${digest}`;
+}
+
+async function digest(name) {
   const pinned = process.env[`IMAGE_${name.toUpperCase()}`];
   if (pinned) {
     if (!/(^|@)sha256:[0-9a-f]{64}$/.test(pinned)) {
@@ -67,18 +126,21 @@ function digest(name) {
     }
     return pinned;
   }
-  const repo = `${cfg('IMAGE_REPO').toLowerCase()}/${name}`;
-  const ref = `${repo}:${version}`;
-  const sh = (...a) => execFileSync('docker', a, { encoding: 'utf8' }).trim();
+  const repo = `${cfg('IMAGE_REPO', UPSTREAM_REPO).toLowerCase()}/${name}`;
   // Remote targets pull from the registry, so its digest is the truth. DEPLOY_HOST=local
   // (rehearsals, air-gapped hosts after `docker load`) pins the image already in the daemon by
   // its image ID (sha256 of its config, as immutable as a digest): `repo@sha256` of a locally
   // built or loaded image does not resolve on every Docker setup, the ID does.
-  if (host === 'local') return sh('image', 'inspect', '--format', '{{.Id}}', ref);
-  const manifest = JSON.parse(
-    sh('buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest}}', ref),
-  );
-  return `${repo}@${manifest.digest}`;
+  if (host === 'local') {
+    return execFileSync(
+      'docker',
+      ['image', 'inspect', '--format', '{{.Id}}', `${repo}:${version}`],
+      {
+        encoding: 'utf8',
+      },
+    ).trim();
+  }
+  return registryDigest(repo, version).catch((err) => die(err.message));
 }
 
 // --- the scripts that run on the target (POSIX sh, reads .env via docker compose) ---
@@ -90,6 +152,7 @@ const FILES = {
   Caddyfile: 'deploy/Caddyfile',
   'temporal-setup.sh': 'infra/temporal/setup-postgres.sh',
   'temporal-dynamicconfig.yaml': 'infra/temporal/dynamicconfig.yaml',
+  'db-init.sh': 'deploy/db-init.sh',
   // Backup overlay and its image's build context, used when the env file sets
   // COMPOSE_FILE=compose.yaml:compose.backup.yaml (docs/backups.md, docs/deploy.md section 6).
   'compose.backup.yaml': 'compose.backup.yaml',
@@ -121,8 +184,12 @@ docker compose ps --format 'table {{.Service}}\\t{{.Image}}\\t{{.Status}}'
 const log = (action) =>
   `printf '%s %s %s\\n' "$(date -u +%FT%TZ)" ${q(action)} "$(tr '\\n' ' ' < release.env)" >> deploy.log\n`;
 
+const sshConfig = process.env.DEPLOY_SSH_CONFIG ? ['-F', process.env.DEPLOY_SSH_CONFIG] : [];
 function run(script, { status = false } = {}) {
-  const sh = host === 'local' ? ['sh', ['-s']] : ['ssh', ['-o', 'BatchMode=yes', host, 'sh -s']];
+  const sh =
+    host === 'local'
+      ? ['sh', ['-s']]
+      : ['ssh', [...sshConfig, '-o', 'BatchMode=yes', host, 'sh -s']];
   const code = spawnSync(...sh, { input: script, stdio: ['pipe', 'inherit', 'inherit'] }).status;
   return status ? code : code === 0;
 }
@@ -142,7 +209,16 @@ ${up}${log('rollback')}`);
   process.exit(ok ? 0 : 1);
 }
 
-const images = { api: digest('api'), worker: digest('worker'), web: digest('web') };
+const profiles = cfg('COMPOSE_PROFILES', '').split(',');
+const images = {
+  api: await digest('api'),
+  worker: await digest('worker'),
+  web: await digest('web'),
+};
+// Profile booking (Cal.diy, compose.prod.yaml): its image comes from the same release.
+if (profiles.includes('booking')) images.caldiy = await digest('caldiy');
+// Caddy sites of the enabled on-box profiles (deploy/sites/<profile>.caddy).
+const sites = profiles.filter((p) => existsSync(`deploy/sites/${p}.caddy`));
 const release = `${Object.entries(images)
   .map(([k, v]) => `IMAGE_${k.toUpperCase()}=${v}`)
   .join('\n')}\nRELEASE_VERSION=${version ?? 'pinned'}\n`;
@@ -155,6 +231,8 @@ mkdir -p infra/backup/bin
 ${Object.entries(FILES)
   .map(([to, from]) => put(`${to}.next`, readFileSync(from)))
   .join('\n')}
+rm -rf sites.next && mkdir -p sites sites.next
+${sites.map((p) => put(`sites.next/${p}.caddy`, readFileSync(`deploy/sites/${p}.caddy`))).join('\n')}
 ${put('release.env.next', release)}
 (umask 077; ${put('secrets.env.next', secrets)})
 (umask 077; cat secrets.env.next release.env.next > .env.next)
@@ -197,6 +275,8 @@ docker compose exec -T backup /backup/bin/backup.sh diff`);
 const code = run(
   `${head}[ ! -f release.good.env ] || cp release.good.env release.prev.env
 for f in ${Object.keys(FILES).join(' ')} release.env; do cat "$f.next" > "$f"; rm "$f.next"; done
+# same directory inode (bind-mounted into caddy), new contents
+rm -f sites/*.caddy; for f in sites.next/*.caddy; do [ ! -e "$f" ] || mv "$f" sites/; done; rmdir sites.next
 umask 077
 cat secrets.env.next > secrets.env; rm secrets.env.next .env.next
 cat secrets.env release.env > .env; chmod 600 secrets.env .env

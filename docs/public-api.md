@@ -2,7 +2,8 @@
 
 Every app built on this template exposes its API to customers with **organization API keys**
 and notifies them with **outbound webhooks**. Design and alternatives:
-[ADR 0018](adr/0018-public-api-webhooks.md).
+[ADR 0018](adr/0018-public-api-webhooks.md). The same keys work for AI agents over MCP at
+`/mcp` ([docs/mcp.md](mcp.md)).
 
 ## Authentication
 
@@ -27,19 +28,22 @@ like a session would (ADR 0002), and `audit_log.actor_id` is `apikey:<key id>`.
 Each scope maps to the role a signed-in user needs for the same routes, so a key never does
 more than an org role could. The UI only offers scopes the creator's role covers.
 
-| Scope             | Same as role | Routes                                                       |
-| ----------------- | ------------ | ------------------------------------------------------------ |
-| `projects:read`   | member       | `GET /api/projects...`, attachment list and download         |
-| `projects:write`  | member       | create/update projects, attachments, AI summary review       |
-| `projects:delete` | admin        | `DELETE /api/projects/{id}`                                  |
-| `ai_calls:read`   | admin        | `GET /api/orgs/{orgId}/ai-calls...`                          |
-| `webhooks:read`   | admin        | `GET /api/webhooks/...` (endpoints, deliveries, event types) |
-| `webhooks:write`  | admin        | manage endpoints, rotate secrets, replay deliveries          |
+| Scope               | Same as role | Routes                                                       |
+| ------------------- | ------------ | ------------------------------------------------------------ |
+| `projects:read`     | member       | `GET /api/projects...`, attachment list and download         |
+| `projects:write`    | member       | create/update projects, attachments, AI summary review       |
+| `projects:delete`   | admin        | `DELETE /api/projects/{id}`                                  |
+| `ai_calls:read`     | admin        | `GET /api/orgs/{orgId}/ai-calls...`                          |
+| `webhooks:read`     | admin        | `GET /api/webhooks/...` (endpoints, deliveries, event types) |
+| `webhooks:write`    | admin        | manage endpoints, rotate secrets, replay deliveries          |
+| `mcp_servers:read`  | admin        | `GET /api/mcp-servers` (docs/mcp.md, flag `mcp-tools`)       |
+| `mcp_servers:write` | admin        | connect, change and remove MCP servers                       |
 
 Only routes declared with `access('<scope>')` (`apps/api/src/tenant.ts`) accept keys. They are
 marked in `/api/openapi.json` with the `apiKey` security scheme and "API key scope: ..." in the
 description. Everything else (key management, auth) is session-only and answers 403 to a key.
-Errors: 401 `invalid API key` (unknown, revoked or expired), 403 `API key lacks scope ...`.
+Errors: 401 `invalid API key` (unknown, revoked or expired), 403 `API key lacks scope ...`,
+403 `organization suspended` (an operator suspended the organization, docs/admin.md).
 
 Adding a route to the public API: use `...access('<resource>:<action>')` instead of
 `requireRole`, add the scope to `SCOPES` in `tenant.ts` with the role it corresponds to, and add

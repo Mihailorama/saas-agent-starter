@@ -1,0 +1,7 @@
+# Screens this change is meant to change, one id per line; `*` matches any characters
+# (`gallery-*`). Ids are the screenshot names in apps/web/.visual/report.md: gallery-<section>,
+# screen-<name>, page-<path> (e2e/visual-pages.ts). `pnpm --filter web visual` fails on any
+# changed screen not listed here. Only lines added on your branch count, so an entry is spent
+# once it is merged; delete old entries whenever you like (docs/ui.md "Visual checks").
+page-sign-in
+gallery-inputs

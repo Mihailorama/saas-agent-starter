@@ -1,16 +1,23 @@
+import { randomUUID } from 'node:crypto';
 import { schema } from '@app/db';
 import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { genericOAuth, organization, twoFactor } from 'better-auth/plugins';
-import { apiKeys, orgAccess } from './access.ts';
+import { APIError, createAuthMiddleware } from 'better-auth/api';
+import { admin, emailOTP, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { z } from 'zod';
+import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
+import { attachReferral, cleanReferral } from './billing/referrals.ts';
+import { triggerRewards } from './billing/rewards.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
 import { mfaGuard } from './mfa.ts';
-import { startSendEmail } from './temporal.ts';
+import { operatorGuard } from './operator-guard.ts';
+import { assertAllowedEmail } from './signup-guard.ts';
+import { type CrmEvent, startCrmSync, startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
 async function sendEmail(
@@ -19,7 +26,7 @@ async function sendEmail(
   url: string,
   key: string,
   request: Request | undefined,
-  vars: { name?: string; org?: string; inviter?: string },
+  vars: { name?: string; org?: string; inviter?: string } = {},
 ) {
   try {
     const locale = pickLocale(request?.headers.get('accept-language'));
@@ -29,6 +36,13 @@ async function sendEmail(
     throw err;
   }
 }
+
+/** Person / company in the CRM (docs/crm.md). A Temporal outage never blocks a sign-up. */
+const crmSync = async (e: CrmEvent) => {
+  await startCrmSync(e).catch((err) => Sentry.captureException(err));
+};
+const personSync = (userId: string) =>
+  crmSync({ kind: 'user.created', eventId: `user:${userId}`, userId });
 
 // Optional SSO: set OIDC_ISSUER/OIDC_CLIENT_ID/OIDC_CLIENT_SECRET to enable "Sign in with SSO".
 // Callback (register it at the IdP): ${BETTER_AUTH_URL}/api/auth/callback/oidc. PKCE is on.
@@ -51,32 +65,128 @@ const oidc =
     : [];
 export const ssoEnabled = oidc.length > 0;
 
+/**
+ * The only keys an organization's `metadata` may hold (onboarding company details,
+ * docs/onboarding.md). Checked on create and update; anything else is a 400.
+ */
+export const ORG_SIZES = ['1-10', '11-50', '51-200', '201-1000', '1000+'] as const;
+export const OrgMetadata = z.strictObject({
+  size: z.enum(ORG_SIZES).optional(),
+  website: z
+    .url({ protocol: /^https?$/ })
+    .max(200)
+    .optional(),
+});
+const checkMetadata = async ({ organization }: { organization: { metadata?: unknown } }) => {
+  if (organization.metadata != null && !OrgMetadata.safeParse(organization.metadata).success) {
+    throw new APIError('BAD_REQUEST', { message: 'invalid organization metadata' });
+  }
+};
+
+// 2FA and passkeys (ADR 0017). TOTP + backup codes + trusted devices; passwordless: no account
+// has a password, so enrolment and changes ask for a recent sign-in instead (mfa.ts).
+const totp = twoFactor({ issuer: env.APP_NAME, allowPasswordless: true });
+
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   basePath: '/api/auth',
   secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: allowedOrigins,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
-  emailAndPassword: {
-    enabled: true,
-    minPasswordLength: 12,
-    requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION,
-    revokeSessionsOnPasswordReset: true,
-    sendResetPassword: ({ user, url, token }, request) =>
-      sendEmail('reset-password', user.email, url, token, request, { name: user.name }),
+  // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
+  // vouches for): an unverified sign-up must not claim a CRM person who has that email.
+  // Referral the sign-up came with (docs/growth.md); only a well-formed code is stored.
+  user: { additionalFields: { referralCode: { type: 'string', required: false, input: true } } },
+  // Disposable addresses (signup-guard.ts) are refused on every user write: email sign-up, SSO,
+  // operator-created users and an email change. Invitations are checked in organizationHooks.
+  databaseHooks: {
+    user: {
+      create: {
+        // A code sign-up sends no name; mails and invitations greet by it, so start with the
+        // address's local part (the user can change it).
+        before: async (user) => {
+          await assertAllowedEmail(user.email);
+          return {
+            data: {
+              ...user,
+              name: user.name || user.email.split('@')[0],
+              referralCode: cleanReferral(user.referralCode),
+            },
+          };
+        },
+        after: async (user) => {
+          if (user.emailVerified) await personSync(user.id);
+        },
+      },
+      update: {
+        // The referral is set at sign-up only: update-user cannot change it (docs/growth.md).
+        before: async (user) => {
+          assertAllowedEmail(user.email);
+          return { data: { ...user, referralCode: undefined } };
+        },
+      },
+    },
   },
-  emailVerification: {
-    sendOnSignUp: true,
-    sendOnSignIn: true, // an unverified sign-in attempt mails a fresh link
-    autoSignInAfterVerification: true,
-    sendVerificationEmail: ({ user, url, token }, request) =>
-      sendEmail('verify-email', user.email, url, token, request, { name: user.name }),
-  },
+  // Passwordless (ADR 0033): one-time e-mail codes, passkeys and SSO. No passwords anywhere.
+  emailAndPassword: { enabled: false },
+  // Code sign-in verifies the address itself; this covers OIDC users the IdP does not vouch for.
+  emailVerification: { afterEmailVerification: (user) => personSync(user.id) },
   plugins: [
+    // Sign-in (and sign-up on first use) by a 6-digit code mailed to the address. Codes are stored
+    // encrypted, expire after 5 minutes and allow 3 tries; the resend cooldown is in app.ts.
+    emailOTP({
+      otpLength: 6,
+      expiresIn: 5 * 60,
+      allowedAttempts: 3,
+      storeOTP: 'encrypted',
+      // Asking again resends the same code (new expiry) until its tries run out: nobody can
+      // replace someone else's pending code, and guesses count against one code.
+      resendStrategy: 'reuse',
+      overrideDefaultEmailVerification: true,
+      // Only these two kinds: the password-reset and change-email codes are never mailed, so
+      // their endpoints have nothing to accept.
+      sendVerificationOTP: async ({ email, otp, type }, ctx) => {
+        const kind = { 'sign-in': 'sign-in-code', 'email-verification': 'verify-email' } as const;
+        if (type !== 'sign-in' && type !== 'email-verification') return;
+        await sendEmail(kind[type], email, otp, randomUUID(), ctx?.request);
+      },
+    }),
     organization({
       // Seats come from the plan (config/plans.json); checked on add-member and invite accept.
       membershipLimit: async (_user, org) => (await entitlements(org.id)).limits.seats,
       ...orgAccess,
+      organizationHooks: {
+        beforeCreateOrganization: checkMetadata,
+        beforeUpdateOrganization: checkMetadata,
+        beforeCreateInvitation: async ({ invitation }) => assertAllowedEmail(invitation.email),
+        afterCreateOrganization: async ({ organization, user }) => {
+          await attachReferral(organization.id, user.id);
+          await crmSync({
+            kind: 'org.created',
+            eventId: `org:${organization.id}`,
+            orgId: organization.id,
+            userId: user.id,
+          });
+        },
+        // Rewards (docs/growth.md): both run after Better Auth committed the change. The worker
+        // re-checks the conditions (verified, still a member after holdDays; profile complete).
+        afterAcceptInvitation: async ({ member, user, organization }) => {
+          await triggerRewards('invitation.accepted', {
+            orgId: organization.id,
+            subject: member.userId,
+            userId: user.id,
+          });
+        },
+        afterUpdateOrganization: async ({ organization, user }) => {
+          if (!organization) return;
+          await triggerRewards('org.profile_completed', {
+            orgId: organization.id,
+            subject: organization.id,
+            userId: user.id,
+            metadata: organization.metadata,
+          });
+        },
+      },
       // Better Auth gives no link for invitations: the web's accept page (apps/web).
       sendInvitationEmail: (data, request) =>
         sendEmail(
@@ -89,9 +199,29 @@ export const auth = betterAuth({
         ),
     }),
     apiKeys,
-    // 2FA and passkeys (ADR 0017). TOTP + backup codes + trusted devices; passwordless = SSO
-    // users may enrol too (a password is still asked whenever the account has one).
-    twoFactor({ issuer: env.APP_NAME, allowPasswordless: true }),
+    totp,
+    {
+      id: 'email-otp-guards',
+      hooks: {
+        // No code (and no mail) for a disposable address: refused before one is created.
+        before: [
+          {
+            matcher: (c) => c.path === '/email-otp/send-verification-otp',
+            handler: createAuthMiddleware(async (ctx) =>
+              assertAllowedEmail((ctx.body as { email?: string } | undefined)?.email),
+            ),
+          },
+        ],
+        // The twoFactor plugin only challenges password sign-ins; run its same step after a code
+        // sign-in, so an account with TOTP gets { twoFactorRedirect } and no session.
+        after: [
+          {
+            matcher: (c) => c.path === '/sign-in/email-otp',
+            handler: totp.hooks.after[0]!.handler,
+          },
+        ],
+      },
+    },
     // A passkey sign-in is multi-factor on its own (device + PIN/biometric): no TOTP step.
     passkey({
       rpID: env.PASSKEY_RP_ID ?? new URL(env.BETTER_AUTH_URL).hostname,
@@ -99,12 +229,23 @@ export const auth = betterAuth({
       origin: env.PASSKEY_ORIGIN.length ? env.PASSKEY_ORIGIN : new URL(env.BETTER_AUTH_URL).origin,
     }),
     mfaGuard(),
+    // Operator console (docs/admin.md): role `operator` from OPERATOR_EMAILS, "view as user"
+    // sessions (read-only via operatorGuard, time-boxed, never of another operator). Its HTTP
+    // endpoints are closed (app.ts); /api/admin calls it server-side with a reason and audit.
+    admin({
+      ...operatorAccess,
+      defaultRole: 'user',
+      adminRoles: ['operator'],
+      impersonationSessionDuration: env.OPERATOR_IMPERSONATION_MINUTES * 60,
+      allowImpersonatingAdmins: false,
+    }),
+    operatorGuard(),
     ...oidc,
   ],
   // Rate limiting is done by @fastify/rate-limit backed by Redis (shared across replicas).
   rateLimit: { enabled: false },
   advanced: {
-    // Mail callbacks run after the response: a reset request answers equally fast whether or
+    // Mail callbacks run after the response: a code request answers equally fast whether or
     // not the account exists (no enumeration by timing).
     backgroundTasks: { handler: (task) => void task.catch((err) => Sentry.captureException(err)) },
     useSecureCookies: env.NODE_ENV === 'production',

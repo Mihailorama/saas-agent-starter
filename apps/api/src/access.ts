@@ -1,5 +1,6 @@
 import { apiKey } from '@better-auth/api-key';
 import { createAccessControl } from 'better-auth/plugins/access';
+import { defaultStatements as adminStatements } from 'better-auth/plugins/admin/access';
 import {
   adminAc,
   defaultStatements,
@@ -36,3 +37,21 @@ export const apiKeys = apiKey({
   rateLimit: { enabled: false },
   permissions: { defaultPermissions: {} },
 });
+
+/**
+ * Better Auth admin plugin roles (docs/admin.md): `user` for everyone, `operator` for the back
+ * office. Separate from organization roles: an operator is no member of customer orgs. The plugin
+ * checks these only for impersonation (its HTTP endpoints are closed; app.ts); everything else
+ * operators do goes through /api/admin (requireOperator, reason, audit_log).
+ */
+const platformAc = createAccessControl({ ...adminStatements });
+export const operatorAccess = {
+  ac: platformAc,
+  roles: {
+    user: platformAc.newRole({ user: [], session: [] }),
+    operator: platformAc.newRole({
+      user: ['list', 'get', 'impersonate'],
+      session: ['list', 'revoke'],
+    }),
+  },
+};

@@ -5,9 +5,26 @@ one-command quality gate, small colocated files and an `AGENTS.md` that tells ag
 exactly how to add things. Secure by default. Licensed **MIT-0**: no attribution, no
 obligations: every code dependency is permissive or MPL-2.0, used unmodified (enforced in CI).
 
-- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
+**From a fresh VPS to a running stack in one command** ([docs/setup.md](docs/setup.md)):
+
+```sh
+pnpm i && pnpm run infra     # server, domain, then install / connect / skip per component
+```
+
+It asks for SSH access to a Debian/Ubuntu server, the domain, and for each component (Postgres,
+S3, SMTP, analytics, LLM provider, secrets vault) whether to install it on the server, connect
+one you already have, or skip it. Then it prepares the server (Docker, a deploy user, firewall,
+key-only SSH), writes the settings encrypted with sops, deploys and checks every component.
+Re-runs show a plan first and keep what was generated. Needs Node, OpenSSH, `sops` and `age` on
+your machine, no Docker. **Back up the age key it creates**: it decrypts every secret.
+
+- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (passwordless sign-in with email
+  one-time codes, orgs, roles, 2FA, passkeys, SSO), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
-- **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode.
+- **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode; a UI kit of shadcn/ui
+  components and page patterns (app shell, data table, forms, empty/loading/error states,
+  command palette), a dev gallery, and automatic checks for accessibility, layout, visual
+  changes and design anti-patterns ([docs/ui.md](docs/ui.md)).
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
   Rust hot paths via PyO3 with a pure-Python fallback.
 - **AI layer**: one logged gateway for every LLM call (Anthropic, any OpenAI-compatible
@@ -20,11 +37,22 @@ obligations: every code dependency is permissive or MPL-2.0, used unmodified (en
 - **Public API**: organization API keys with scopes (Better Auth API key plugin), per-key
   rate limits, OpenAPI; outbound webhooks signed per Standard Webhooks, retried by Temporal,
   with delivery attempts and replay in the UI ([docs/public-api.md](docs/public-api.md)).
+- **MCP server**: customers' AI agents (Claude, ChatGPT, Gemini, Cursor) use the product at
+  `/mcp` with an API key; tools wrap the REST routes, behind a flag ([docs/mcp.md](docs/mcp.md)).
 - **Product analytics**: typed event catalog + `track()`, consent banner, journeys as code
   synced to PostHog (default) or self-hosted Umami, alerts and user feedback as GitHub issues.
 - **Service desk**: Chatwoot CE (`support` profile) behind one Help menu, plus email and
   Telegram; AI triage writes private notes and files or "+1"s GitHub / Plane Intake items, and
   closed items are reported back to the conversation.
+- **CRM and booking**: Twenty (`crm` profile) gets people, companies, subscription deals, product
+  signals and support/booking notes from Temporal workflows; "Book a demo" / "Talk to us" on a
+  self-hosted Cal.diy (`booking` profile) or one you connect ([docs/crm.md](docs/crm.md)).
+- **Secrets vault for agents**: Vaultwarden (`vault` profile) or a Bitwarden you connect; coding
+  agents read and save credentials through `scripts/vault.mjs` and the `bw` CLI instead of chat,
+  `.env` files or git ([docs/secrets.md](docs/secrets.md)).
+- **Idea validation**: `/validate-idea` in Claude Code chains an opt-in, pinned founder-skill plugin
+  (board, competitors, buyer panel, pricing, CFO), adds SaaS unit economics and ends with a waitlist
+  page, price survey and interview plan ([docs/validate-idea.md](docs/validate-idea.md)).
 - **Ops**: Docker Compose locally; production from versioned images (GHCR, by digest) with
   Caddy auto-TLS, SOPS-encrypted env files and one-command deploy/rollback over SSH, Coolify or
   Kubernetes as options ([docs/deploy.md](docs/deploy.md)), OpenTelemetry everywhere,
@@ -98,8 +126,22 @@ pnpm check
 
 Format, lint, typecheck, tests (TS, Python, Rust; integration tests hit the real compose
 services, including a test proving tenant A cannot read tenant B even with a buggy query),
-license gate across npm, PyPI and crates.io, and a Playwright smoke test.
+license gate across npm, PyPI and crates.io, and Playwright end-to-end tests with axe
+accessibility checks.
 `pnpm bench` prints the Rust vs Python speedup of the example hot path.
+
+## UI
+
+`pnpm dev`, then http://localhost:5173/dev/ui: every component and pattern of the kit in light
+and dark, plus reference screens (list, detail, form, settings, empty, loading, error) in the
+app shell. Build new screens from them; [DESIGN.md](DESIGN.md) has the tokens and rules,
+[docs/ui.md](docs/ui.md) the screen checklist. Every page is checked with axe (WCAG 2.2 AA, light
+and dark) and layout guards (overflow, clipped text, overlapping controls, console errors, broken
+images); before a push, screenshots are compared with `main` rendered on the same machine, and a
+changed screen passes only if the change declares it in `apps/web/.visual-intent`: no human
+review, no screenshots in git. CI runs Lighthouse on the public pages and the
+[impeccable](https://github.com/pbakaus/impeccable) design detector.
+Agents with the impeccable skill installed read [PRODUCT.md](PRODUCT.md) and DESIGN.md.
 
 ## Deploy
 
@@ -120,10 +162,14 @@ See `.env.example`; put local overrides in `.env` (gitignored). In production se
 
 ## AI
 
-Off until you pick a model: set `AI_PROJECT_SUMMARY_PROVIDER=anthropic`,
-`AI_PROJECT_SUMMARY_MODEL=claude-haiku-5-5` and `ANTHROPIC_API_KEY` (or `openai_compatible` with
-`OPENAI_BASE_URL` / `OPENAI_API_KEY` and a model registered for your `AI_CONTOUR` in
-`config/ai-models.json`), then restart the worker. New projects with a description get an
+Off until you pick a model. The default mode is a vendor CLI subscription: put a Claude Code
+login token in `.secrets/llm-cli/claude-1.token` (`claude setup-token`), start the `llm-cli`
+container and set `AI_PROJECT_SUMMARY_PROVIDER=claude_cli`,
+`AI_PROJECT_SUMMARY_MODEL=claude-haiku-5-5`. Any other provider works the same way: API keys
+(Anthropic, OpenAI, Gemini, xAI, Moonshot), OpenRouter, a custom OpenAI-compatible endpoint, or
+self-hosted vLLM/Ollama (`--profile local-llm`); organizations can bring their own key. Pick a
+provider/model registered for your `AI_CONTOUR` in `config/ai-models.json`, then restart the
+worker ([docs/llm-providers.md](docs/llm-providers.md)). New projects with a description get an
 AI-generated summary that members can confirm or correct; admins see every call under
 "AI calls". Design: [ADR 0008](docs/adr/0008-ai-layer.md).
 
@@ -144,6 +190,17 @@ image) on the stack's Postgres (own database) and S3 (own bucket), so backups co
 website inbox token and HMAC token for the Help menu, the webhook secret for triage, and a model
 for `support.triage`; tickets stay in Chatwoot, backlog items go to GitHub Issues or Plane Intake. No ticket table of our own.
 Details: [docs/support.md](docs/support.md).
+
+## CRM and booking
+
+Off until you set env. `docker compose --profile crm up -d` runs Twenty (AGPL, unmodified) on the
+stack's Postgres and Redis, or connect a Twenty you already run or Twenty Cloud; with
+`TWENTY_API_URL`/`TWENTY_API_KEY` and `pnpm crm:sync`, verified sign-ups,
+organizations, billing changes, PostHog product signals, Chatwoot conversations and bookings land
+there, one idempotent workflow per source event. No CRM tables of our own. Booking runs on Cal.diy
+(MIT, the open-source successor of Cal.com): `docker compose --profile booking up -d` with the image
+CI builds from a pinned commit, or connect an existing Cal.diy or Cal.com Cloud by env. Details:
+[docs/crm.md](docs/crm.md).
 
 ## LLM-ops
 
@@ -181,10 +238,12 @@ Details: [docs/feature-flags.md](docs/feature-flags.md), [docs/releases.md](docs
   authorization code + PKCE S256; on the client: `authClient.signIn.social({ provider: 'oidc' })`).
   Register this redirect URI at the IdP: `${BETTER_AUTH_URL}/api/auth/callback/oidc`.
   First SSO login creates the user; they then create or are invited to an organization like any
-  other user. Accounts are not auto-linked to an existing email/password user unless the IdP
+  other user. Accounts are not auto-linked to an existing email-code user unless the IdP
   sends `email_verified: true`.
 - **SAML** or per-organization IdPs: add Better Auth's `@better-auth/sso` plugin to
   `apps/api/src/auth.ts`, regenerate the auth schema and run `pnpm db:generate`.
+- Sign-up protection: disposable email domains are refused at sign-up, SSO and invitations
+  (`SIGNUP_BLOCK_DISPOSABLE`, allow/deny lists): [docs/security.md](docs/security.md).
 - Need a standalone IdP instead (user federation, admin console)? Run Keycloak and connect it
   over OIDC as above. See `docs/adr/0003-auth.md`.
 

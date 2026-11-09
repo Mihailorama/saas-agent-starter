@@ -69,7 +69,7 @@ settings, `CONSENT_*` on the `site` container, plus a footer link to reopen the 
 cookieless. Page views use the path as the route. Links with `data-cta="<id>"` send
 `site_cta_clicked` (catalogued in `config/events.json`, checked by `pnpm check:events`, which now
 also scans `apps/site/src`). The journey `site-to-signup` in `config/journeys.json` (CTA click,
-sign-up started, sign-up completed) works when the site and the app report to one PostHog project
+sign-in code requested, sign-up completed) works when the site and the app report to one PostHog project
 on one parent domain (`example.com` + `app.example.com`: PostHog's cookie is shared across
 subdomains). The container's CSP takes the sink origins from `ANALYTICS_ORIGINS`, like the web.
 

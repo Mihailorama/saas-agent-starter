@@ -71,7 +71,7 @@ def build_message(email: SendEmail, sender: str) -> EmailMessage:
     return msg
 
 
-def _deliver(smtp: Smtp, msg: EmailMessage) -> None:
+def deliver(smtp: Smtp, msg: EmailMessage) -> None:
     context = ssl.create_default_context()
     if smtp.tls == "implicit":
         client: smtplib.SMTP = smtplib.SMTP_SSL(smtp.host, smtp.port, timeout=20, context=context)
@@ -93,7 +93,7 @@ async def send_email(email: SendEmail) -> str:
         raise ApplicationError("SMTP_URL and MAIL_FROM must be set", non_retryable=True)
     msg = build_message(email, settings.MAIL_FROM)
     try:
-        await asyncio.to_thread(_deliver, parse_smtp_url(settings.SMTP_URL), msg)
+        await asyncio.to_thread(deliver, parse_smtp_url(settings.SMTP_URL), msg)
     except smtplib.SMTPRecipientsRefused:
         # Permanent for this address (unknown mailbox, policy): retrying will not help.
         log.warning("email rejected: kind=%s workflow=%s", email.kind, info.workflow_id)

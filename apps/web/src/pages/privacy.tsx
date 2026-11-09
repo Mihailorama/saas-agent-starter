@@ -16,23 +16,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { gaClientId, track } from '@/lib/analytics';
-import { api, formatDate } from '@/lib/api';
+import { client, formatDate, type Ok, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
 
 // Data-subject rights (docs/privacy.md): download or delete your data, or (owners) the
 // organization's. The worker does the work; this page shows the requests and their outcome.
 type Subject = 'user' | 'org';
-type PrivacyRequest = {
-  id: string;
-  kind: 'export' | 'deletion';
-  status: 'scheduled' | 'running' | 'completed' | 'failed' | 'cancelled';
-  executeAfter: string;
-  expiresAt: string | null;
-  createdAt: string;
-  completedAt: string | null;
-  downloadable: boolean;
-  report: Record<string, { status: string; detail?: string }> | null;
-};
+type PrivacyRequest = Ok<'/api/privacy/user/requests', 'get'>[number];
 const NOT_FRESH = 'sign in again to confirm this request';
 
 const STATUS: Record<PrivacyRequest['status'], string> = {
@@ -49,16 +39,18 @@ function SubjectCard({ subject }: { subject: Subject }) {
   const [confirming, setConfirming] = useState(false);
   const [stale, setStale] = useState(false);
   const key = ['privacy', subject];
-  const base = `/api/privacy/${subject}`;
+  // The same routes for both subjects: `/api/privacy/user/...` and `/api/privacy/org/...`.
+  const base = `/api/privacy/${subject}` as const;
+  const id = (requestId: string) => ({ params: { path: { id: requestId } } });
   const requests = useQuery({
     queryKey: key,
-    queryFn: () => api<PrivacyRequest[]>(`${base}/requests`),
+    queryFn: () => ok(client.GET(`${base}/requests`)),
     // Poll while something is in flight.
     refetchInterval: (q) => (q.state.data?.some((r) => r.status === 'running') ? 5_000 : false),
   });
   const done = () => queryClient.invalidateQueries({ queryKey: key });
   const exportData = useMutation({
-    mutationFn: () => api<PrivacyRequest>(`${base}/export`, { method: 'POST' }),
+    mutationFn: () => ok(client.POST(`${base}/export`)),
     onSuccess: () => {
       track('privacy_export_requested', { subject });
       toast.success('Export started. We will email you when it is ready.');
@@ -68,10 +60,11 @@ function SubjectCard({ subject }: { subject: Subject }) {
   });
   const deletion = useMutation({
     mutationFn: async () =>
-      api<PrivacyRequest>(`${base}/deletion`, {
-        method: 'POST',
-        json: subject === 'user' ? { gaClientId: await gaClientId() } : {},
-      }),
+      ok(
+        client.POST(`${base}/deletion`, {
+          body: subject === 'user' ? { gaClientId: await gaClientId() } : {},
+        }),
+      ),
     onSuccess: () => {
       track('privacy_deletion_requested', { subject });
       setConfirming(false);
@@ -84,8 +77,8 @@ function SubjectCard({ subject }: { subject: Subject }) {
     },
   });
   const cancel = useMutation({
-    mutationFn: (id: string) =>
-      api<PrivacyRequest>(`${base}/requests/${id}/cancel`, { method: 'POST' }),
+    mutationFn: (requestId: string) =>
+      ok(client.POST(`${base}/requests/{id}/cancel`, id(requestId))),
     onSuccess: () => {
       track('privacy_deletion_cancelled', { subject });
       toast.success('Deletion cancelled');
@@ -93,8 +86,8 @@ function SubjectCard({ subject }: { subject: Subject }) {
     },
     onError: (e) => toast.error(e.message),
   });
-  const download = async (id: string) => {
-    const { url } = await api<{ url: string }>(`${base}/requests/${id}/download`);
+  const download = async (requestId: string) => {
+    const { url } = await ok(client.GET(`${base}/requests/{id}/download`, id(requestId)));
     window.location.assign(url);
   };
 

@@ -39,13 +39,13 @@ restore check within a minute, then the schedule below. Watch it with
 
 ## What is backed up
 
-| Data                                                                                                | How                                               | Point in time            |
-| --------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
-| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                            | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
-| `glitchtip` (`glitchtip`), `umami` (`analytics`), `langfuse` (`llmops`), `postiz` (`marketing`)     | same: they live on the same Postgres server       | same                     |
-| `chatwoot` (`support`): conversations, contacts, messages                                           | same                                              | same                     |
-| Any database a future profile creates on this server                                                | same, automatically                               | same                     |
-| Buckets `attachments`, `ai-calls`, `langfuse`, `chatwoot` (`BACKUP_APP_BUCKETS`; missing = skipped) | rclone, hourly encrypted copy + dated versions    | hourly                   |
+| Data                                                                                                                                                             | How                                               | Point in time            |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------ |
+| Postgres server, all databases: `app`, `temporal`, `temporal_visibility`                                                                                         | pgBackRest: WAL archive + weekly full, daily diff | any second in the window |
+| `glitchtip` (`glitchtip`), `umami` (`analytics`), `langfuse` (`llmops`), `postiz` (`marketing`), `twenty` (`crm`), `caldiy` (`booking`), `vaultwarden` (`vault`) | same: they live on the same Postgres server       | same                     |
+| `chatwoot` (`support`): conversations, contacts, messages                                                                                                        | same                                              | same                     |
+| Any database a future profile creates on this server                                                                                                             | same, automatically                               | same                     |
+| Buckets `attachments`, `ai-calls`, `langfuse`, `chatwoot` (`BACKUP_APP_BUCKETS`; missing = skipped)                                                              | rclone, hourly encrypted copy + dated versions    | hourly                   |
 
 **Not backed up:**
 
@@ -64,7 +64,19 @@ restore check within a minute, then the schedule below. Watch it with
   and SerpBear's SQLite data (`serpbear-data` volume). Postiz's database is covered (above).
   Copy those two volumes yourself if they matter, or point Postiz storage at a bucket listed in
   `BACKUP_APP_BUCKETS`.
-- Container images, `.env` and secrets: rebuild from git; secrets belong in your password manager.
+- **CRM attachments** (`crm` profile): files uploaded in Twenty (`twenty-data` volume,
+  `STORAGE_TYPE=local`). Twenty's records (people, companies, deals, notes) are in the `twenty`
+  database and covered (above). Set Twenty's `STORAGE_TYPE=s3` with a bucket in
+  `BACKUP_APP_BUCKETS` if attachments matter. Bookings: Cal.diy from the `booking` profile keeps
+  them in its `caldiy` database on this Postgres server (covered, above); a connected Cal.diy only
+  if its database is here too, Cal.com Cloud under its own backups (docs/crm.md).
+- **Vaultwarden's `/data` volume** (`vault` profile): its JWT signing key (`rsa_key.pem`; a new
+  one only logs every client out once) and the icon cache. Every vault item, organization and
+  user is in its `vaultwarden` database on this Postgres server (covered, above); attachments and
+  Sends are switched off so nothing else lands on the volume (docs/secrets.md). A connected
+  Bitwarden Cloud or Vaultwarden is under its own backups.
+- Container images, `.env` and secrets: rebuild from git; secrets live in the vault
+  (docs/secrets.md), which this backup covers when it runs here.
 - The backup bucket itself: protect it with the provider's versioning / object lock and keep it
   in another account or region if you need to survive a compromised server.
 

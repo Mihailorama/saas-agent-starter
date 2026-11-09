@@ -3,6 +3,7 @@
 # With logs/traces/metrics:  docker compose --profile observability up -d   (Grafana :3001)
 # Permissive-only twin:      add -f docker-compose.yml -f compose.permissive.yaml (ADR 0010)
 # With LLM-ops Full (Langfuse, ADR 0009): docker compose --profile llmops up -d
+# Self-hosted models (vLLM on GPU + Ollama): --profile local-llm; no GPU: --profile local-llm-cpu
 # Licenses of every image: docs/LICENSES.md. Example credentials below are for local dev only.
 
 # Every service: the json-file log driver stamps compose project + service into each line,
@@ -155,6 +156,25 @@ services:
     profiles: [billing]
     ports: ["127.0.0.1:${STRIPE_MOCK_PORT:-12111}:12111"]
 
+  # The MCP project's reference server (MIT / Apache-2.0), unmodified, as an external tool server
+  # for local dev and tests (`--profile mcp`, docs/mcp.md "Calling external tools"). Fetched from
+  # npm at start, pinned. Connect it as http://mcp-server:3001/mcp from the worker in compose, or
+  # http://localhost:${MCP_SERVER_PORT:-3600}/mcp from a worker on the host (MCP_ALLOWED_CIDRS).
+  mcp-server:
+    logging: *logging
+    mem_limit: 256m
+    image: node:24-alpine
+    profiles: [mcp]
+    command: ["npx", "-y", "@modelcontextprotocol/server-everything@2.0.1", "streamableHttp"]
+    environment:
+      PORT: "3001"
+    ports: ["127.0.0.1:${MCP_SERVER_PORT:-3600}:3001"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "3001"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
   migrate:
     logging: *logging
     mem_limit: 256m
@@ -175,8 +195,7 @@ services:
       POSTHOG_WEBHOOK_SECRET: ${POSTHOG_WEBHOOK_SECRET:-local-dev-posthog-webhook-secret}
       POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      GITHUB_REPO: ${GITHUB_REPO:-}
+      # The tracker credentials live in the worker only (worker/tracker.py, docs/support.md).
       # With --profile pii: http://pii:8000 (survey answers redacted by Presidio, fail closed).
       PII_REDACT_URL: ${PII_REDACT_URL:-}
       # Billing (docs/billing.md); empty keys = checkout answers 503.
@@ -184,12 +203,23 @@ services:
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # Rewards (docs/growth.md): the worker calls /internal/rewards with it.
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-local-dev-internal-api-token-change-me}
+      # Referrals through Dub Partners instead of the native ones (docs/growth.md); empty = native.
+      DUB_API_KEY: ${DUB_API_KEY:-}
       # Service desk webhooks + widget identity (docs/support.md); empty = endpoint off.
       CHATWOOT_WEBHOOK_SECRET: ${CHATWOOT_WEBHOOK_SECRET:-}
       CHATWOOT_HMAC_TOKEN: ${CHATWOOT_HMAC_TOKEN:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       PLANE_WEBHOOK_SECRET: ${PLANE_WEBHOOK_SECRET:-}
       PLANE_PROJECT_ID: ${PLANE_PROJECT_ID:-}
+      # Lite Telegram support (docs/support.md, flag telegram-support); empty = endpoint off.
+      TELEGRAM_SUPPORT_BOT_TOKEN: ${TELEGRAM_SUPPORT_BOT_TOKEN:-}
+      TELEGRAM_SUPPORT_CHAT_ID: ${TELEGRAM_SUPPORT_CHAT_ID:-}
+      # Booking webhook -> CRM (docs/crm.md); empty = endpoint off.
+      BOOKING_WEBHOOK_SECRET: ${BOOKING_WEBHOOK_SECRET:-}
+      # Operator console (docs/admin.md); empty = no operators.
+      OPERATOR_EMAILS: ${OPERATOR_EMAILS:-}
       # With --profile observability: http://otel-collector:4318
       OTEL_EXPORTER_OTLP_ENDPOINT: ${API_OTEL_ENDPOINT:-}
       # Error tracking, e.g. with --profile glitchtip: http://<key>@glitchtip:8000/1
@@ -215,6 +245,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${WORKER_OTEL_ENDPOINT:-}
       SENTRY_DSN: ${WORKER_SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-development}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-} # usage reporting to Stripe Meters
       # LLM observability (ADR 0009): each call as a PostHog $ai_generation when set.
       POSTHOG_PRIVACY_MODE: ${POSTHOG_PRIVACY_MODE:-true}
       # With --profile llmops: spans to Langfuse (see .env.example, "LLM-ops Full").
@@ -225,14 +256,39 @@ services:
       AI_CONTOUR: ${AI_CONTOUR:-eu}
       AI_PROJECT_SUMMARY_PROVIDER: ${AI_PROJECT_SUMMARY_PROVIDER:-}
       AI_PROJECT_SUMMARY_MODEL: ${AI_PROJECT_SUMMARY_MODEL:-}
+      # Rewards (docs/growth.md): money rewards are applied by the API's billing provider.
+      API_INTERNAL_URL: http://api:3000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-local-dev-internal-api-token-change-me}
+      # Providers (docs/llm-providers.md, `providers` in config/ai-models.json). CLI subscriptions
+      # via the llm-cli container; API keys, aggregators, custom and local endpoints via LiteLLM.
+      LLM_CLI_URL: ${LLM_CLI_URL:-http://llm-cli:8080}
+      LLM_CLI_TOKEN: ${LLM_CLI_TOKEN:-local-dev-llm-cli-token-change-me-0123456789}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-120}
+      AI_CLI_TIMEOUT_SECONDS: ${AI_CLI_TIMEOUT_SECONDS:-330}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      MOONSHOT_API_KEY: ${MOONSHOT_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
+      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
+      # With --profile local-llm: http://vllm:8000/v1 and http://ollama:11434
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-}
+      VLLM_API_KEY: ${VLLM_API_KEY:-local-dev-vllm-key}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      # Organization-owned providers: private CIDRs a custom base URL may use (on-prem servers).
+      AI_BYO_ALLOWED_CIDRS: ${AI_BYO_ALLOWED_CIDRS:-}
+      # External MCP tools (docs/mcp.md): private CIDRs a server URL may use (with --profile mcp:
+      # this compose network's range), and the tool loop's bounds.
+      MCP_ALLOWED_CIDRS: ${MCP_ALLOWED_CIDRS:-}
+      MCP_TOOL_MAX_ITERATIONS: ${MCP_TOOL_MAX_ITERATIONS:-5}
+      MCP_TOOL_TIMEOUT_SECONDS: ${MCP_TOOL_TIMEOUT_SECONDS:-30}
       # Service desk triage (docs/support.md). Tokens empty = dry run (logs only).
       CHATWOOT_URL: ${CHATWOOT_URL:-} # with --profile support: http://chatwoot:3000
       CHATWOOT_PUBLIC_URL: ${CHATWOOT_PUBLIC_URL:-}
       CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN:-}
-      SUPPORT_TRACKER: ${SUPPORT_TRACKER:-github}
+      TRACKER: ${TRACKER:-plane}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_REPO: ${GITHUB_REPO:-}
       PLANE_API_URL: ${PLANE_API_URL:-}
@@ -244,6 +300,13 @@ services:
       AI_SUPPORT_TRIAGE_MODEL: ${AI_SUPPORT_TRIAGE_MODEL:-}
       SUPPORT_AI_ORG_ID: ${SUPPORT_AI_ORG_ID:-}
       SUPPORT_NOTIFY_ON_CLOSE: ${SUPPORT_NOTIFY_ON_CLOSE:-false}
+      TELEGRAM_SUPPORT_BOT_TOKEN: ${TELEGRAM_SUPPORT_BOT_TOKEN:-}
+      TELEGRAM_SUPPORT_CHAT_ID: ${TELEGRAM_SUPPORT_CHAT_ID:-}
+      TELEGRAM_SUPPORT_WEBHOOK_URL: ${TELEGRAM_SUPPORT_WEBHOOK_URL:-}
+      # CRM sync (docs/crm.md). Empty = dry run. With --profile crm: http://twenty:3000
+      TWENTY_API_URL: ${TWENTY_API_URL:-}
+      TWENTY_API_KEY: ${TWENTY_API_KEY:-}
+      BOOKING_PUBLIC_URL: ${BOOKING_PUBLIC_URL:-}
       # Data-subject rights (docs/privacy.md): per-person export/deletion in the tools; empty = skip.
       POSTHOG_APP_HOST: ${POSTHOG_APP_HOST:-}
       POSTHOG_PROJECT_ID: ${POSTHOG_PROJECT_ID:-}
@@ -258,6 +321,90 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       temporal-namespace: { condition: service_completed_successfully }
+
+  # Vendor CLI subscriptions (Claude Code, Codex, Gemini CLI) behind an internal OpenAI-compatible
+  # endpoint for the worker (docs/llm-providers.md). Logins: files in ./.secrets/llm-cli (gitignored),
+  # see infra/llm-cli/config.json; a subscription without its file is skipped. Not published.
+  llm-cli:
+    logging: *logging
+    mem_limit: 2g
+    build:
+      context: .
+      dockerfile: services/llm-cli/Dockerfile
+    environment:
+      LLM_CLI_TOKEN: ${LLM_CLI_TOKEN:-local-dev-llm-cli-token-change-me-0123456789}
+    volumes:
+      - ./infra/llm-cli/config.json:/etc/llm-cli/config.json:ro
+      - ./.secrets/llm-cli:/run/secrets/llm-cli:ro
+    read_only: true
+    tmpfs: [/tmp]
+
+  # Self-hosted models (`--profile local-llm`, docs/llm-providers.md "On-prem"). vLLM is the
+  # multi-user server (continuous batching, needs an NVIDIA GPU and the NVIDIA container runtime);
+  # `vllm-embed` serves an embeddings model the same way. Bound to localhost only; set VLLM_API_KEY.
+  vllm:
+    profiles: [local-llm]
+    logging: *logging
+    image: vllm/vllm-openai:v0.33.0
+    command:
+      - ${VLLM_MODEL:-Qwen/Qwen3-0.6B}
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    ipc: host
+    ports: ["127.0.0.1:${VLLM_PORT:-8000}:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  vllm-embed:
+    profiles: [local-llm]
+    logging: *logging
+    image: vllm/vllm-openai:v0.33.0
+    command:
+      - ${VLLM_EMBED_MODEL:-BAAI/bge-small-en-v1.5}
+      - --runner=pooling
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --gpu-memory-utilization=${VLLM_EMBED_GPU_MEMORY_UTILIZATION:-0.1}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    ipc: host
+    ports: ["127.0.0.1:${VLLM_EMBED_PORT:-8001}:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+
+  # No GPU (CI, laptops): the same OpenAI-compatible server on CPU, for tiny models and smoke
+  # tests only (`--profile local-llm-cpu`; x86 with AVX-512 recommended, AVX2 limited).
+  vllm-cpu:
+    profiles: [local-llm-cpu]
+    logging: *logging
+    image: vllm/vllm-openai-cpu:v0.33.0-x86_64
+    command:
+      - ${VLLM_CPU_MODEL:-Qwen/Qwen3-0.6B}
+      - --api-key=${VLLM_API_KEY:-local-dev-vllm-key}
+      - --max-model-len=${VLLM_MAX_MODEL_LEN:-4096}
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      VLLM_CPU_KVCACHE_SPACE: ${VLLM_CPU_KVCACHE_SPACE:-2}
+    volumes: ["hfcache:/root/.cache/huggingface"]
+    shm_size: 1g # vLLM's workers share tensors through /dev/shm (Docker's default is 64 MiB)
+    ports: ["127.0.0.1:${VLLM_PORT:-8000}:8000"]
+
+  # Ollama: dev and single user (one request per model at a time by default, OLLAMA_NUM_PARALLEL).
+  # Pull models into it: docker compose exec ollama ollama pull qwen3:0.6b (and an embedding model).
+  ollama:
+    profiles: [local-llm]
+    logging: *logging
+    image: ollama/ollama:0.40.15
+    volumes: ["ollama:/root/.ollama"]
+    ports: ["127.0.0.1:${OLLAMA_PORT:-11434}:11434"]
 
   # PII redaction for the API's feedback hook (Presidio, docs/support.md "Personal data"): the
   # worker image, another command. Set PII_REDACT_URL on the API to use it.
@@ -307,9 +454,16 @@ services:
         VITE_YM_WEBVISOR: ${VITE_YM_WEBVISOR:-}
         VITE_LANGFUSE_PUBLIC_KEY: ${VITE_LANGFUSE_PUBLIC_KEY:-}
         VITE_LANGFUSE_HOST: ${VITE_LANGFUSE_HOST:-}
+        VITE_FORMBRICKS_WORKSPACE_ID: ${VITE_FORMBRICKS_WORKSPACE_ID:-}
+        VITE_FORMBRICKS_API_HOST: ${VITE_FORMBRICKS_API_HOST:-}
         # in-app help widget (Chatwoot); empty = no Help entry (docs/support.md)
         VITE_CHATWOOT_BASE_URL: ${VITE_CHATWOOT_BASE_URL:-}
         VITE_CHATWOOT_WEBSITE_TOKEN: ${VITE_CHATWOOT_WEBSITE_TOKEN:-}
+        # Telegram support bot's username (flag `telegram-support`); empty = no Telegram entry
+        VITE_TELEGRAM_SUPPORT_BOT: ${VITE_TELEGRAM_SUPPORT_BOT:-}
+        # "Talk to us" booking (Cal.diy / Cal.com, flag `booking`); empty = no entry (docs/crm.md)
+        VITE_BOOKING_ORIGIN: ${VITE_BOOKING_ORIGIN:-}
+        VITE_BOOKING_LINK: ${VITE_BOOKING_LINK:-}
     environment:
       S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}"
       SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
@@ -321,6 +475,8 @@ services:
       CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
       # Chatwoot widget origin for the CSP, e.g. "http://localhost:3300"
       SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
+      # Booking embed origin for the CSP, e.g. "http://localhost:3500" (Cal.diy, profile booking)
+      BOOKING_ORIGINS: ${BOOKING_ORIGINS:-}
     depends_on: [api]
     ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
 
@@ -483,11 +639,16 @@ services:
         VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}
         VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
         VITE_GA4_ID: ${VITE_GA4_ID:-}
+        VITE_BOOKING_ORIGIN: ${VITE_BOOKING_ORIGIN:-}
+        VITE_BOOKING_LINK: ${VITE_BOOKING_LINK:-}
+        VITE_FLAGS_ON: ${VITE_FLAGS_ON:-} # the site decides flags at build time
+        VITE_FLAGS_OFF: ${VITE_FLAGS_OFF:-}
     environment:
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
       CONSENT_MODE: ${CONSENT_MODE:-opt-in}
       CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
       CONSENT_OPT_OUT_COUNTRIES: ${CONSENT_OPT_OUT_COUNTRIES:-}
+      BOOKING_ORIGINS: ${BOOKING_ORIGINS:-}
     ports: ["127.0.0.1:${SITE_PORT:-8090}:8080"]
 
   # One-shots: role + database `postiz` on our Postgres server, namespace `postiz` in our
@@ -664,6 +825,178 @@ services:
     mem_limit: 1g
     depends_on: { chatwoot-prepare: { condition: service_completed_successfully } }
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+  # --- crm profile: Twenty CRM (AGPL-3.0, unmodified container) for customer records, synced
+  # by the worker (docs/crm.md, ADR 0026). docker compose --profile crm up -d
+  # Reuses our Postgres (role + database `twenty`) and Redis (db 4; noeviction, as BullMQ needs).
+  # Booking: the `booking` profile below (Cal.diy), or connect an existing one (docs/crm.md).
+  twenty-db:
+    logging: *logging
+    profiles: [crm]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'twenty'" | grep -q 1 ||
+         psql -c "create role twenty login password 'twenty'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'twenty'" | grep -q 1 ||
+         psql -c "create database twenty owner twenty")
+
+  twenty:
+    profiles: [crm]
+    <<: &twenty
+      image: twentycrm/twenty:v2.56.1
+      logging: *logging
+      environment: &twenty-env
+        PG_DATABASE_URL: postgres://twenty:twenty@postgres:5432/twenty
+        SERVER_URL: ${TWENTY_PUBLIC_URL:-http://localhost:${TWENTY_PORT:-3400}}
+        REDIS_URL: redis://redis:6379/4 # db 1 GlitchTip/Langfuse, 2 Chatwoot, 3 Postiz
+        ENCRYPTION_KEY: ${TWENTY_ENCRYPTION_KEY:-local-dev-twenty-encryption-key-change-me}
+        APP_SECRET: ${TWENTY_ENCRYPTION_KEY:-local-dev-twenty-encryption-key-change-me}
+        STORAGE_TYPE: local # attachments in the twenty-data volume (docs/backups.md)
+        TELEMETRY_ENABLED: "false" # no usage pings to twenty.com
+        # The worker calls Twenty on the compose network (http://twenty:3000), not the internet.
+      volumes: [twenty-data:/app/packages/twenty-server/.local-storage]
+      depends_on:
+        twenty-db: { condition: service_completed_successfully }
+        redis: { condition: service_healthy }
+    mem_limit: 1536m # measured in docs/STACK.md
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz >/dev/null"]
+      interval: 5s
+      start_period: 10m # first start runs ~580 migration steps (11 min on a loaded 8-core host)
+    ports: ["127.0.0.1:${TWENTY_PORT:-3400}:3000"]
+
+  twenty-worker:
+    profiles: [crm]
+    <<: *twenty
+    mem_limit: 1g
+    command: ["yarn", "worker:prod"]
+    environment:
+      <<: *twenty-env
+      NODE_OPTIONS: --max-old-space-size=768 # Node's default heap for a 1 GiB cgroup OOMs here
+      DISABLE_DB_MIGRATIONS: "true" # the server runs them
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+    depends_on: { twenty: { condition: service_healthy } }
+
+  # --- booking profile: Cal.diy (MIT, the open-source successor of Cal.com) for "Book a demo" /
+  # "Talk to us" (docs/crm.md, ADR 0026). Upstream publishes no image: build it from the pinned
+  # commit first (infra/caldiy/build.sh caldiy:local, ~6 GB RAM) or set CALDIY_IMAGE to a release
+  # image (ghcr.io/<owner>/<repo>/caldiy@sha256:...). docker compose --profile booking up -d
+  # Reuses our Postgres (role + database `caldiy`, so pgBackRest covers it) and sends mail through
+  # Mailpit. An existing Cal.diy or Cal.com Cloud needs no container: only the booking env.
+  caldiy-db:
+    logging: *logging
+    profiles: [booking]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'caldiy'" | grep -q 1 ||
+         psql -c "create role caldiy login password 'caldiy'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'caldiy'" | grep -q 1 ||
+         psql -c "create database caldiy owner caldiy")
+
+  caldiy:
+    logging: *logging
+    profiles: [booking]
+    image: ${CALDIY_IMAGE:-caldiy:local}
+    mem_limit: 1g
+    environment:
+      # Runtime variables of upstream's README ("Important Run-time variables") and .env.example.
+      DATABASE_URL: postgresql://caldiy:caldiy@postgres:5432/caldiy
+      DATABASE_DIRECT_URL: postgresql://caldiy:caldiy@postgres:5432/caldiy
+      DATABASE_HOST: postgres:5432 # scripts/start.sh waits for it, then runs the migrations
+      NEXT_PUBLIC_WEBAPP_URL: ${CALDIY_PUBLIC_URL:-http://localhost:${CALDIY_PORT:-3500}}
+      NEXT_PUBLIC_WEBSITE_URL: ${CALDIY_PUBLIC_URL:-http://localhost:${CALDIY_PORT:-3500}}
+      NEXTAUTH_URL: ${CALDIY_PUBLIC_URL:-http://localhost:${CALDIY_PORT:-3500}}/api/auth
+      NEXTAUTH_SECRET: ${CALDIY_NEXTAUTH_SECRET:-local-dev-caldiy-nextauth-secret}
+      # 32 bytes for AES-256 (openssl rand -base64 24)
+      CALENDSO_ENCRYPTION_KEY: ${CALDIY_ENCRYPTION_KEY:-local-dev-caldiy-aes256-key-0000}
+      CRON_API_KEY: ${CALDIY_CRON_API_KEY:-local-dev-caldiy-cron-key}
+      CALCOM_TELEMETRY_DISABLED: "1"
+      EMAIL_FROM: ${CALDIY_EMAIL_FROM:-booking@example.com}
+      EMAIL_FROM_NAME: ${CALDIY_EMAIL_FROM_NAME:-Booking}
+      EMAIL_SERVER_HOST: ${CALDIY_SMTP_HOST:-mailpit}
+      EMAIL_SERVER_PORT: ${CALDIY_SMTP_PORT:-1025}
+      EMAIL_SERVER_USER: ${CALDIY_SMTP_USER:-}
+      EMAIL_SERVER_PASSWORD: ${CALDIY_SMTP_PASSWORD:-}
+    depends_on:
+      caldiy-db: { condition: service_completed_successfully }
+      mailpit: { condition: service_healthy }
+    healthcheck: # the image's own check, with time for the first start's migrations
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 10s
+      start_period: 5m
+    ports: ["127.0.0.1:${CALDIY_PORT:-3500}:3000"]
+
+  # --- vault profile: Vaultwarden (AGPL-3.0, unmodified, Bitwarden-compatible) as the secrets
+  # vault humans and coding agents read from and save to with the `bw` CLI (docs/secrets.md,
+  # scripts/vault.mjs). docker compose --profile vault up -d ; its data lives in database
+  # `vaultwarden` on our Postgres server, so pgBackRest covers it (docs/backups.md). No public
+  # signups: the first and every further account is invited from /admin, which is on only while
+  # VAULT_ADMIN_TOKEN is set. An existing Bitwarden/Vaultwarden needs no container (docs/secrets.md).
+  vault-db:
+    logging: *logging
+    profiles: [vault]
+    image: postgres:17-alpine
+    depends_on: { postgres: { condition: service_healthy } }
+    environment: { PGHOST: postgres, PGUSER: postgres, PGPASSWORD: postgres }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        (psql -tAc "select 1 from pg_roles where rolname = 'vaultwarden'" | grep -q 1 ||
+         psql -c "create role vaultwarden login password 'vaultwarden'") &&
+        (psql -tAc "select 1 from pg_database where datname = 'vaultwarden'" | grep -q 1 ||
+         psql -c "create database vaultwarden owner vaultwarden")
+
+  vault:
+    logging: *logging
+    profiles: [vault]
+    image: vaultwarden/server:1.37.5-alpine@sha256:bbe684a02d6b0db54256ff88eac9754f4519284a7b26314afc241fd7d0918191
+    mem_limit: 128m
+    depends_on:
+      vault-db: { condition: service_completed_successfully }
+      mailpit: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://vaultwarden:vaultwarden@postgres:5432/vaultwarden
+      DOMAIN: ${VAULT_DOMAIN:-https://localhost:${VAULT_PORT:-8222}}
+      SIGNUPS_ALLOWED: "false"
+      INVITATIONS_ALLOWED: "true"
+      ADMIN_TOKEN: ${VAULT_ADMIN_TOKEN:-} # empty = /admin disabled; argon2 hash recommended
+      # Secrets stay in the database (backed up): no file attachments or file Sends on the volume.
+      USER_ATTACHMENT_LIMIT: "0"
+      ORG_ATTACHMENT_LIMIT: "0"
+      SENDS_ALLOWED: "false"
+      SMTP_HOST: mailpit # invitation mails land in Mailpit (:8025)
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: "off"
+      SMTP_FROM: vault@example.com
+    volumes: [vault-data:/data] # RSA signing key + icon cache only (docs/backups.md)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:80/alive"]
+      interval: 5s
+      start_period: 30s
+      retries: 12
+
+  # The bw CLI refuses plain HTTP, even to localhost: Caddy's local CA terminates TLS. Trust it
+  # once: docker compose cp vault-tls:/data/caddy/pki/authorities/local/root.crt \
+  #   ~/.config/agent-vault/ca.crt   (scripts/vault.mjs passes it to bw, docs/secrets.md)
+  vault-tls:
+    logging: *logging
+    profiles: [vault]
+    image: caddy:2.11-alpine
+    mem_limit: 64m
+    command:
+      ["caddy", "reverse-proxy", "--from", "localhost", "--to", "vault:80", "--internal-certs"]
+    depends_on: { vault: { condition: service_healthy } }
+    volumes: [vault-tls:/data] # the local CA: keep it, or trust the new root again
+    ports: ["127.0.0.1:${VAULT_PORT:-8222}:443"]
+
   # Full LLM-ops profile: Langfuse v4 (MIT core) on our Postgres server (own database), our
   # Redis (own db index) and our S3 (own bucket), plus ClickHouse. Langfuse's optional AI
   # gateway container is left out. Memory limits are the measured working set plus headroom
@@ -777,10 +1110,15 @@ services:
       PROMPTFOO_DISABLE_UPDATE: "1"
 
 volumes:
+  hfcache:
+  ollama:
   pgdata:
   s3data:
   lokidata:
   postiz-config:
   postiz-uploads:
   serpbear-data:
+  twenty-data:
   clickhousedata:
+  vault-data:
+  vault-tls:

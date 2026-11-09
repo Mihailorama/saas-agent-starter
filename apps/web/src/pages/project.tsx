@@ -1,23 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
-import {
-  ArrowLeft,
-  Check,
-  Download,
-  FileText,
-  Pencil,
-  ThumbsDown,
-  ThumbsUp,
-  Upload,
-} from 'lucide-react';
+import { useParams } from '@tanstack/react-router';
+import { Check, Download, FileText, Pencil, ThumbsDown, ThumbsUp, Upload } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { AiBadge } from '@/components/ai-badge';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { PageContainer, PageHeader } from '@/components/patterns/page-header';
+import { ErrorState, QueryView } from '@/components/patterns/states';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardFooter,
@@ -26,18 +19,21 @@ import {
 } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { aiFeedback, track } from '@/lib/analytics';
-import { type Attachment, api, formatBytes, formatDate, type Project } from '@/lib/api';
+import { type Attachment, client, formatBytes, formatDate, ok, type Project } from '@/lib/api';
 
 async function upload(projectId: string, file: File) {
-  const { uploadUrl } = await api<{ uploadUrl: string }>(`/api/projects/${projectId}/attachments`, {
-    method: 'POST',
-    json: {
-      filename: file.name,
-      contentType: file.type || 'application/octet-stream',
-      size: file.size,
-    },
-  });
+  const { uploadUrl } = await ok(
+    client.POST('/api/projects/{id}/attachments', {
+      params: { path: { id: projectId } },
+      body: {
+        filename: file.name,
+        contentType: file.type || 'application/octet-stream',
+        size: file.size,
+      },
+    }),
+  );
   // Straight to object storage with a short-lived presigned URL; the API never proxies bytes.
   const res = await fetch(uploadUrl, {
     method: 'PUT',
@@ -73,9 +69,15 @@ function AiSummaryCard({ project }: { project: Project }) {
   }
   const review = useMutation({
     mutationFn: (summary?: string) =>
-      api<Project>(
-        `/api/projects/${project.id}/ai-summary/${summary === undefined ? 'confirm' : 'correct'}`,
-        { method: 'POST', json: summary === undefined ? {} : { summary } },
+      ok(
+        summary === undefined
+          ? client.POST('/api/projects/{id}/ai-summary/confirm', {
+              params: { path: { id: project.id } },
+            })
+          : client.POST('/api/projects/{id}/ai-summary/correct', {
+              params: { path: { id: project.id } },
+              body: { summary },
+            }),
       ),
     onSuccess: (updated) => {
       track('ai_summary_reviewed', { purpose: PURPOSE, action: updated.aiStatus ?? '' });
@@ -100,29 +102,28 @@ function AiSummaryCard({ project }: { project: Project }) {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
-        <div className="space-y-1.5">
-          <CardTitle>Summary</CardTitle>
-          <CardDescription>
-            {project.aiStatus === 'generated'
-              ? 'Written by an AI model. Check it before relying on it.'
-              : `Reviewed ${project.reviewedAt ? formatDate(project.reviewedAt) : ''}`}
-          </CardDescription>
-        </div>
-        <AiBadge status={project.aiStatus} />
+      <CardHeader>
+        <CardTitle>Summary</CardTitle>
+        <CardDescription>
+          {project.aiStatus === 'generated'
+            ? 'Written by an AI model. Check it before relying on it.'
+            : `Reviewed ${project.reviewedAt ? formatDate(project.reviewedAt) : ''}`}
+        </CardDescription>
+        <CardAction>
+          <AiBadge status={project.aiStatus} />
+        </CardAction>
       </CardHeader>
       {editing ? (
-        <form onSubmit={onSubmit}>
+        <form onSubmit={onSubmit} className="flex flex-col gap-6">
           <CardContent className="space-y-2">
             <Label htmlFor="ai-summary">Corrected summary</Label>
-            <textarea
+            <Textarea
               id="ai-summary"
               name="summary"
               defaultValue={project.aiSummary}
               maxLength={1000}
               required
               rows={3}
-              className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
             />
           </CardContent>
           <CardFooter className="justify-end gap-2">
@@ -183,7 +184,7 @@ export function ProjectPage() {
   const input = useRef<HTMLInputElement>(null);
   const project = useQuery({
     queryKey: ['projects', projectId],
-    queryFn: () => api<Project>(`/api/projects/${projectId}`),
+    queryFn: () => ok(client.GET('/api/projects/{id}', { params: { path: { id: projectId } } })),
     // The AI summary arrives asynchronously from the worker; poll briefly for it.
     refetchInterval: (q) => {
       const p = q.state.data;
@@ -193,7 +194,8 @@ export function ProjectPage() {
   });
   const files = useQuery({
     queryKey: ['projects', projectId, 'attachments'],
-    queryFn: () => api<Attachment[]>(`/api/projects/${projectId}/attachments`),
+    queryFn: () =>
+      ok(client.GET('/api/projects/{id}/attachments', { params: { path: { id: projectId } } })),
   });
   const add = useMutation({
     mutationFn: (file: File) => upload(projectId, file),
@@ -206,8 +208,10 @@ export function ProjectPage() {
 
   async function download(a: Attachment) {
     try {
-      const { url } = await api<{ url: string }>(
-        `/api/projects/${projectId}/attachments/${a.id}/download`,
+      const { url } = await ok(
+        client.GET('/api/projects/{id}/attachments/{attachmentId}/download', {
+          params: { path: { id: projectId, attachmentId: a.id } },
+        }),
       );
       window.location.assign(url);
     } catch (err) {
@@ -217,36 +221,37 @@ export function ProjectPage() {
 
   if (project.isError) {
     return (
-      <Alert variant="destructive" className="mx-auto max-w-3xl">
-        <AlertTitle>Project not available</AlertTitle>
-        <AlertDescription>{project.error.message}</AlertDescription>
-      </Alert>
+      <PageContainer width="narrow">
+        <ErrorState
+          title="Project not available"
+          error={project.error}
+          onRetry={() => project.refetch()}
+        />
+      </PageContainer>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <Link
-        to="/"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-4" /> Projects
-      </Link>
+    <PageContainer width="narrow">
       {project.isPending ? (
         <Skeleton className="h-9 w-64" />
       ) : (
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{project.data.name}</h1>
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            Created {formatDate(project.data.createdAt)}
-            {project.data.fingerprint && (
-              <Badge variant="secondary" className="font-normal tabular-nums">
-                {project.data.fingerprint}
-              </Badge>
-            )}
-          </p>
+        <div className="space-y-2">
+          <PageHeader
+            title={project.data.name}
+            description={
+              <span className="flex items-center gap-2">
+                Created {formatDate(project.data.createdAt)}
+                {project.data.fingerprint && (
+                  <Badge variant="secondary" className="font-normal tabular-nums">
+                    {project.data.fingerprint}
+                  </Badge>
+                )}
+              </span>
+            }
+          />
           {project.data.description && (
-            <p className="pt-2 text-sm whitespace-pre-line">{project.data.description}</p>
+            <p className="text-sm whitespace-pre-line">{project.data.description}</p>
           )}
         </div>
       )}
@@ -254,55 +259,64 @@ export function ProjectPage() {
       {project.data && <AiSummaryCard project={project.data} />}
 
       <Card>
-        <CardHeader className="flex-row items-start justify-between space-y-0">
-          <div className="space-y-1.5">
-            <CardTitle>Files</CardTitle>
-            <CardDescription>
-              Stored in S3-compatible object storage, up to 10 MB each.
-            </CardDescription>
-          </div>
-          <Button size="sm" onClick={() => input.current?.click()} disabled={add.isPending}>
-            <Upload className="size-4" /> {add.isPending ? 'Uploading…' : 'Upload'}
-          </Button>
-          <input
-            ref={input}
-            type="file"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) add.mutate(file);
-              e.target.value = '';
-            }}
-          />
+        <CardHeader>
+          <CardTitle>Files</CardTitle>
+          <CardDescription>
+            Stored in S3-compatible object storage, up to 10 MB each.
+          </CardDescription>
+          <CardAction>
+            <Button size="sm" onClick={() => input.current?.click()} disabled={add.isPending}>
+              <Upload /> {add.isPending ? 'Uploading…' : 'Upload'}
+            </Button>
+            <input
+              ref={input}
+              type="file"
+              className="hidden"
+              aria-label="File to upload"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) add.mutate(file);
+                e.target.value = '';
+              }}
+            />
+          </CardAction>
         </CardHeader>
         <CardContent>
-          {files.isPending ? (
-            <Skeleton className="h-12 w-full" />
-          ) : files.data?.length ? (
-            <ul className="divide-y rounded-md border">
-              {files.data.map((a) => (
-                <li key={a.id} className="flex items-center gap-3 px-3 py-2.5">
-                  <FileText className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{a.filename}</span>
-                  <span className="text-xs text-muted-foreground">{formatBytes(a.size)}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Download ${a.filename}`}
-                    onClick={() => download(a)}
-                  >
-                    <Download className="size-4" />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
-              No files yet.
-            </p>
-          )}
+          <QueryView
+            query={files}
+            errorTitle="Could not load files"
+            loading={<Skeleton className="h-12 w-full" />}
+            isEmpty={(list) => list.length === 0}
+            empty={
+              <p className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
+                No files yet.
+              </p>
+            }
+          >
+            {(list) => (
+              <ul className="divide-y rounded-md border">
+                {list.map((a) => (
+                  <li key={a.id} className="flex items-center gap-3 px-3 py-2.5">
+                    <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                      {a.filename}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{formatBytes(a.size)}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Download ${a.filename}`}
+                      onClick={() => download(a)}
+                    >
+                      <Download />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </QueryView>
         </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   );
 }

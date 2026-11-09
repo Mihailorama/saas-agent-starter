@@ -13,11 +13,12 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
-import { providerFor } from '../billing/registry.ts';
+import { providerOf } from '../billing/registry.ts';
 import { db } from '../db.ts';
 import { pickLocale, renderEmail } from '../email.ts';
 import { env } from '../env.ts';
 import { audit, REAUTH_MAX_AGE_SECONDS } from '../mfa.ts';
+import { READ_ONLY } from '../operator-guard.ts';
 import { presignDownload } from '../s3.ts';
 import { type PrivacyRequest, signalPrivacyCancel, startPrivacyRequest } from '../temporal.ts';
 import { bearerToken, httpError, requireRole, withTenant } from '../tenant.ts';
@@ -73,6 +74,9 @@ async function requireUser(req: FastifyRequest, reply: FastifyReply) {
   if (bearerToken(req)) return reply.code(403).send({ error: 'API keys are not accepted here' });
   const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
   if (!session) return reply.code(401).send({ error: 'unauthorized' });
+  if (session.session.impersonatedBy && req.method !== 'GET') {
+    return reply.code(403).send({ error: READ_ONLY });
+  }
   req.tenant = {
     userId: session.user.id,
     orgId: session.session.activeOrganizationId ?? '',
@@ -81,9 +85,11 @@ async function requireUser(req: FastifyRequest, reply: FastifyReply) {
   };
 }
 
-/** Deletion needs a recent sign-in (password + 2FA, or passkey), like other sensitive changes. */
+/** Deletion needs a recent sign-in (email code + 2FA, or passkey), like other sensitive changes. */
 async function requireFresh(req: FastifyRequest) {
   const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+  // A "view as user" session is brand new but not the user's sign-in (also refused in app.ts).
+  if (session?.session.impersonatedBy) throw httpError(403, READ_ONLY);
   const age = session ? Date.now() - new Date(session.session.createdAt).getTime() : Infinity;
   if (age > REAUTH_MAX_AGE_SECONDS * 1000) throw httpError(403, NOT_FRESH);
 }
@@ -105,7 +111,9 @@ async function stopRenewal(req: FastifyRequest) {
   const [sub] = await withOrg(db, req.tenant.orgId, (tx) => tx.select().from(subscriptions));
   if (!sub || sub.cancelAtPeriodEnd || !['active', 'past_due'].includes(sub.status)) return;
   try {
-    await providerFor(sub.contour).cancel(sub);
+    // A manual contract has nothing to stop with a provider: the flag below ends it.
+    const provider = providerOf(sub);
+    await provider.cancel?.(sub);
   } catch (err) {
     req.log.error({ err }, 'payment provider cancel failed');
     throw httpError(502, 'could not cancel the subscription, try again later');
@@ -126,7 +134,9 @@ export const privacyRoutes: FastifyPluginAsyncZod = async (app) => {
   });
   for (const subject of ['user', 'org'] as const satisfies Subject[]) {
     const tags = ['privacy'];
-    const preHandler = subject === 'user' ? requireUser : requireRole('owner');
+    // Suspension does not end data-subject rights: a suspended org's owner can still export/delete.
+    const preHandler =
+      subject === 'user' ? requireUser : requireRole('owner', { allowSuspended: true });
     const subjectId = (req: FastifyRequest) =>
       subject === 'user' ? req.tenant.userId : req.tenant.orgId;
     const mine = (req: FastifyRequest) =>

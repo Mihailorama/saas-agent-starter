@@ -1,0 +1,386 @@
+{
+  "$comment": "Infrastructure components for `pnpm run infra` (scripts/infra.mjs, docs/setup.md, ADR 0032). One entry per component: tier (core | optional), modes (install = run it on the server, connect = use one you already have, skip), install.profile (compose.prod.yaml profile), install.env (KEY: template; {hex:N} = N random bytes as hex, generated once and kept unless --rotate KEY; {KEY} = another value; {domain}, {project}, {user}, {host}, {repo}, {tls} from the answers), install.site (the env key holding the component's public URL: Caddy site in deploy/sites/<profile>.caddy, DNS checked), install.ramMiB (mem_limit budget, docs/STACK.md), install.rotate (generated keys that `--rotate` may change because the server re-applies them), connect fields (key, prompt, secret: value only in the encrypted env, never in the answers; validate: regex; default: template; answerOnly: kept in the answers, not the env), keys (other env keys the component owns), requires (component:mode), verify (shell run in DEPLOY_PATH on the server; exit 3 = skipped), available: false = listed for `infra add`, not wired yet. `pnpm check:components` fails when a compose.prod.yaml profile or a deploy/env/example.env key has no entry.",
+  "components": [
+    {
+      "id": "core",
+      "tier": "core",
+      "description": "API, worker, web, Caddy (TLS), Redis, Temporal",
+      "modes": ["install"],
+      "install": {
+        "ramMiB": 1664,
+        "env": {
+          "DEPLOY_HOST": "{user}@{host}",
+          "DEPLOY_PATH": "/opt/{project}",
+          "IMAGE_REPO": "{repo}",
+          "COMPOSE_PROJECT_NAME": "{project}",
+          "APP_DOMAIN": "{domain}",
+          "CADDY_TLS": "{tls}",
+          "BETTER_AUTH_SECRET": "{hex:32}",
+          "WEBHOOK_ENCRYPTION_KEYS": "k1:{hex:32}"
+        },
+        "rotate": ["BETTER_AUTH_SECRET"]
+      },
+      "keys": ["COMPOSE_PROFILES"],
+      "verify": "docker compose exec -T api wget -qO- http://127.0.0.1:3000/readyz"
+    },
+    {
+      "id": "postgres",
+      "tier": "core",
+      "description": "Postgres for the app and Temporal",
+      "modes": ["install", "connect"],
+      "install": {
+        "profile": "db",
+        "ramMiB": 512,
+        "env": {
+          "POSTGRES_PASSWORD": "{hex:24}",
+          "MIGRATION_DATABASE_URL": "postgres://postgres:{POSTGRES_PASSWORD}@postgres:5432/app",
+          "DATABASE_URL": "postgres://app_user:{hex:24}@postgres:5432/app",
+          "TEMPORAL_DB_PASSWORD": "{POSTGRES_PASSWORD}"
+        },
+        "rotate": ["DATABASE_URL"]
+      },
+      "connect": [
+        {
+          "key": "MIGRATION_DATABASE_URL",
+          "prompt": "Owner URL (runs migrations): postgres://owner:password@host:5432/app",
+          "secret": true,
+          "validate": "^postgres(ql)?://"
+        },
+        {
+          "key": "DATABASE_URL",
+          "prompt": "App URL, another role (migrate creates it): postgres://app_user:password@host:5432/app",
+          "secret": true,
+          "validate": "^postgres(ql)?://"
+        },
+        {
+          "key": "TEMPORAL_DB_HOST",
+          "prompt": "Host for Temporal's databases",
+          "secret": false
+        },
+        {
+          "key": "TEMPORAL_DB_USER",
+          "prompt": "Role for Temporal (creates its databases)",
+          "secret": false
+        },
+        {
+          "key": "TEMPORAL_DB_PASSWORD",
+          "prompt": "Password of that role",
+          "secret": true,
+          "validate": "^[^$\\s]+$"
+        }
+      ],
+      "keys": ["POSTGRES_PASSWORD"],
+      "verify": {
+        "install": "docker compose exec -T postgres pg_isready -q -U postgres -d app"
+      }
+    },
+    {
+      "id": "s3",
+      "tier": "core",
+      "description": "S3 object storage (uploads, AI audit content)",
+      "modes": ["install", "connect"],
+      "install": {
+        "profile": "s3",
+        "ramMiB": 256,
+        "site": "S3_PUBLIC_ENDPOINT",
+        "env": {
+          "S3_ENDPOINT": "http://s3:8333",
+          "S3_PUBLIC_ENDPOINT": "https://s3.{domain}",
+          "S3_PUBLIC_ORIGIN": "https://s3.{domain}",
+          "S3_REGION": "us-east-1",
+          "S3_BUCKET": "attachments",
+          "S3_ACCESS_KEY_ID": "{hex:16}",
+          "S3_SECRET_ACCESS_KEY": "{hex:32}"
+        }
+      },
+      "connect": [
+        {
+          "key": "S3_ENDPOINT",
+          "prompt": "S3 endpoint (empty for AWS)",
+          "secret": false,
+          "validate": "^(https?://.+)?$"
+        },
+        {
+          "key": "S3_PUBLIC_ENDPOINT",
+          "prompt": "Endpoint browsers use for uploads",
+          "secret": false,
+          "default": "{S3_ENDPOINT}",
+          "validate": "^(https://.+)?$"
+        },
+        {
+          "key": "S3_PUBLIC_ORIGIN",
+          "prompt": "Origin of that endpoint (CSP)",
+          "secret": false,
+          "default": "{S3_PUBLIC_ENDPOINT}"
+        },
+        {
+          "key": "S3_REGION",
+          "prompt": "Region",
+          "secret": false,
+          "default": "us-east-1"
+        },
+        {
+          "key": "S3_BUCKET",
+          "prompt": "Bucket",
+          "secret": false,
+          "default": "attachments"
+        },
+        {
+          "key": "S3_ACCESS_KEY_ID",
+          "prompt": "Access key id",
+          "secret": true
+        },
+        {
+          "key": "S3_SECRET_ACCESS_KEY",
+          "prompt": "Secret access key",
+          "secret": true
+        }
+      ],
+      "verify": "docker compose exec -T worker python -m worker.selfcheck s3"
+    },
+    {
+      "id": "smtp",
+      "tier": "core",
+      "description": "Transactional mail (sign-in links, invitations)",
+      "modes": ["connect", "skip"],
+      "connect": [
+        {
+          "key": "SMTP_URL",
+          "prompt": "SMTP URL: smtp://user:password@host:587 (STARTTLS) or smtps://...:465",
+          "secret": true,
+          "validate": "^smtps?://"
+        },
+        {
+          "key": "MAIL_FROM",
+          "prompt": "Sender, e.g. Workspace <no-reply@example.com> (a verified address)",
+          "secret": false,
+          "validate": "@"
+        }
+      ],
+      "verify": "docker compose exec -T worker python -m worker.selfcheck smtp"
+    },
+    {
+      "id": "analytics",
+      "tier": "optional",
+      "description": "Product analytics: connect PostHog, or install Umami",
+      "modes": ["connect", "install", "skip"],
+      "install": {
+        "profile": "analytics",
+        "ramMiB": 1024,
+        "site": "UMAMI_PUBLIC_URL",
+        "after": "deploy/setup/umami-admin.sh",
+        "env": {
+          "UMAMI_PUBLIC_URL": "https://umami.{domain}",
+          "UMAMI_DB_PASSWORD": "{hex:24}",
+          "UMAMI_APP_SECRET": "{hex:32}",
+          "UMAMI_ADMIN_PASSWORD": "{hex:16}",
+          "ANALYTICS_ORIGINS": "{UMAMI_PUBLIC_URL}"
+        },
+        "rotate": ["UMAMI_APP_SECRET", "UMAMI_DB_PASSWORD"]
+      },
+      "connect": [
+        {
+          "key": "POSTHOG_HOST",
+          "prompt": "PostHog host",
+          "secret": false,
+          "default": "https://eu.i.posthog.com",
+          "validate": "^https://"
+        },
+        {
+          "key": "POSTHOG_KEY",
+          "prompt": "PostHog project API key (phc_...)",
+          "secret": false,
+          "validate": "^phc_"
+        }
+      ],
+      "verify": {
+        "install": "docker compose exec -T umami wget -qO- http://127.0.0.1:3000/api/heartbeat"
+      },
+      "requires": {
+        "install": ["postgres:install"]
+      }
+    },
+    {
+      "id": "llm",
+      "tier": "optional",
+      "description": "AI provider for the AI features (project summary)",
+      "modes": ["connect", "skip"],
+      "connect": [
+        {
+          "key": "AI_CONTOUR",
+          "prompt": "Contour (config/ai-models.json)",
+          "secret": false
+        },
+        {
+          "key": "AI_PROJECT_SUMMARY_PROVIDER",
+          "prompt": "Provider",
+          "secret": false
+        },
+        {
+          "key": "AI_PROJECT_SUMMARY_MODEL",
+          "prompt": "Model",
+          "secret": false
+        },
+        {
+          "key": "@apiKey",
+          "prompt": "API key of that provider",
+          "secret": true
+        }
+      ],
+      "verify": "docker compose exec -T worker python -m worker.selfcheck llm"
+    },
+    {
+      "id": "vault",
+      "tier": "optional",
+      "description": "Secrets vault for humans and agents (Vaultwarden; docs/secrets.md)",
+      "modes": ["install", "connect", "skip"],
+      "requires": {
+        "install": ["postgres:install"]
+      },
+      "install": {
+        "profile": "vault",
+        "ramMiB": 128,
+        "site": "VAULT_PUBLIC_URL",
+        "env": {
+          "VAULT_PUBLIC_URL": "https://vault.{domain}",
+          "VAULT_DB_PASSWORD": "{hex:24}",
+          "VAULT_DATABASE_URL": "postgresql://vaultwarden:{VAULT_DB_PASSWORD}@postgres:5432/vaultwarden"
+        },
+        "rotate": ["VAULT_DB_PASSWORD"]
+      },
+      "connect": [
+        {
+          "key": "VAULT_URL",
+          "prompt": "Vault URL (Bitwarden Cloud or your Vaultwarden)",
+          "secret": false,
+          "answerOnly": true,
+          "default": "https://vault.bitwarden.eu",
+          "validate": "^https://"
+        }
+      ],
+      "keys": [
+        "VAULT_ADMIN_IPS",
+        "VAULT_ADMIN_TOKEN",
+        "VAULT_SMTP_HOST",
+        "VAULT_SMTP_FROM",
+        "VAULT_SMTP_USERNAME",
+        "VAULT_SMTP_PASSWORD"
+      ],
+      "verify": {
+        "install": "docker compose exec -T vault curl -fsS -o /dev/null http://127.0.0.1:80/alive"
+      }
+    },
+    {
+      "id": "backups",
+      "tier": "optional",
+      "description": "pgBackRest backups to an off-site S3 (docs/backups.md)",
+      "modes": ["connect", "skip"],
+      "available": false,
+      "keys": [
+        "COMPOSE_FILE",
+        "BACKUP_S3_ENDPOINT",
+        "BACKUP_S3_REGION",
+        "BACKUP_S3_BUCKET",
+        "BACKUP_S3_URI_STYLE",
+        "BACKUP_S3_HTTPS_PORT",
+        "BACKUP_S3_CA_FILE",
+        "BACKUP_S3_ACCESS_KEY_ID",
+        "BACKUP_S3_SECRET_ACCESS_KEY",
+        "BACKUP_ENCRYPTION_PASSPHRASE",
+        "BACKUP_S3_LOCAL",
+        "BACKUP_APP_S3_ENDPOINT",
+        "BACKUP_APP_S3_ACCESS_KEY_ID",
+        "BACKUP_APP_S3_SECRET_ACCESS_KEY"
+      ]
+    },
+    {
+      "id": "ops",
+      "tier": "optional",
+      "description": "Temporal Web UI on the server's loopback",
+      "modes": ["install", "skip"],
+      "available": false,
+      "install": {
+        "profile": "ops",
+        "ramMiB": 128
+      }
+    },
+    {
+      "id": "pii",
+      "tier": "optional",
+      "description": "Presidio PII redaction sidecar (docs/support.md)",
+      "modes": ["install", "skip"],
+      "available": false,
+      "install": {
+        "profile": "pii",
+        "ramMiB": 384
+      }
+    },
+    {
+      "id": "llm-cli",
+      "tier": "optional",
+      "description": "Vendor CLI subscriptions as an LLM endpoint (docs/llm-providers.md)",
+      "modes": ["install", "skip"],
+      "available": false,
+      "install": {
+        "profile": "llm-cli",
+        "ramMiB": 2048
+      },
+      "keys": ["IMAGE_LLM_CLI", "LLM_CLI_TOKEN", "LLM_CLI_SECRETS_DIR"]
+    },
+    {
+      "id": "booking",
+      "tier": "optional",
+      "description": "Cal.diy booking (docs/crm.md)",
+      "modes": ["install", "connect", "skip"],
+      "available": false,
+      "install": {
+        "profile": "booking",
+        "ramMiB": 1024
+      }
+    },
+    {
+      "id": "observability",
+      "tier": "optional",
+      "description": "Errors (Sentry/GlitchTip DSN) and OTLP traces/metrics",
+      "modes": ["connect", "skip"],
+      "available": false
+    },
+    {
+      "id": "support",
+      "tier": "optional",
+      "description": "Chatwoot service desk and tracker (docs/support.md)",
+      "modes": ["install", "connect", "skip"],
+      "available": false,
+      "install": {
+        "ramMiB": 2048
+      }
+    },
+    {
+      "id": "crm",
+      "tier": "optional",
+      "description": "Twenty CRM (docs/crm.md)",
+      "modes": ["install", "connect", "skip"],
+      "available": false,
+      "install": {
+        "ramMiB": 2560
+      }
+    },
+    {
+      "id": "billing",
+      "tier": "optional",
+      "description": "Stripe billing (docs/billing.md)",
+      "modes": ["connect", "skip"],
+      "available": false
+    },
+    {
+      "id": "langfuse",
+      "tier": "optional",
+      "description": "Langfuse LLM-ops, self-hosted (ADR 0009)",
+      "modes": ["install", "connect", "skip"],
+      "available": false,
+      "install": {
+        "ramMiB": 4096
+      }
+    }
+  ]
+}

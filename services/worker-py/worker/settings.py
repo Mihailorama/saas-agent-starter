@@ -49,9 +49,27 @@ AI_CONTENT_RETENTION_DAYS = int(os.environ.get("AI_CONTENT_RETENTION_DAYS", "180
 # Model for the project summary. No default on purpose: unset = feature off.
 AI_PROJECT_SUMMARY_PROVIDER = os.environ.get("AI_PROJECT_SUMMARY_PROVIDER", "")
 AI_PROJECT_SUMMARY_MODEL = os.environ.get("AI_PROJECT_SUMMARY_MODEL", "")
-# Provider credentials: ANTHROPIC_API_KEY and OPENAI_API_KEY are read by the SDKs.
-# OpenAI-compatible endpoint (vLLM, in-country providers...); empty = api.openai.com.
-OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "")
+# Providers (docs/llm-providers.md): `providers` in AI_MODELS_FILE names the env variables with
+# each provider's key and base URL (ANTHROPIC_API_KEY, VLLM_BASE_URL, ...); read at startup.
+# CLI subscriptions: the llm-cli container (services/llm-cli) and its bearer token.
+LLM_CLI_URL = os.environ.get("LLM_CLI_URL", "")
+LLM_CLI_TOKEN = os.environ.get("LLM_CLI_TOKEN", "")
+AI_REQUEST_TIMEOUT_SECONDS = float(os.environ.get("AI_REQUEST_TIMEOUT_SECONDS", "120"))
+# A CLI run includes the CLI's start-up and the llm-cli queue; keep it above LLM_CLI_TIMEOUT_MS.
+AI_CLI_TIMEOUT_SECONDS = float(os.environ.get("AI_CLI_TIMEOUT_SECONDS", "330"))
+# Organization-owned providers (ai_providers): custom base URLs in non-global ranges are refused
+# like webhook targets; list CIDRs to allow some anyway (an on-prem model server).
+AI_BYO_ALLOWED_CIDRS = [
+    c.strip() for c in os.environ.get("AI_BYO_ALLOWED_CIDRS", "").split(",") if c.strip()
+]
+# External MCP tools (worker/mcp.py, docs/mcp.md): server URLs in non-global ranges are refused
+# like BYO base URLs; list CIDRs to allow some anyway (the `mcp` compose profile, on-prem servers).
+MCP_ALLOWED_CIDRS = [
+    c.strip() for c in os.environ.get("MCP_ALLOWED_CIDRS", "").split(",") if c.strip()
+]
+# Model turns that may ask for tools in one call, and the timeout per session start / tool call.
+MCP_TOOL_MAX_ITERATIONS = int(os.environ.get("MCP_TOOL_MAX_ITERATIONS", "5"))
+MCP_TOOL_TIMEOUT_SECONDS = float(os.environ.get("MCP_TOOL_TIMEOUT_SECONDS", "30"))
 
 # Outbound webhooks (worker/webhooks.py). Non-global addresses (private, loopback, link-local...)
 # are refused; list CIDRs here to allow some anyway (e.g. an on-prem receiver). Dev/tests only
@@ -60,7 +78,8 @@ WEBHOOK_ALLOWED_CIDRS = [
     c.strip() for c in os.environ.get("WEBHOOK_ALLOWED_CIDRS", "").split(",") if c.strip()
 ]
 WEBHOOK_MAX_PAYLOAD_BYTES = int(os.environ.get("WEBHOOK_MAX_PAYLOAD_BYTES", "65536"))
-# Same value as the API's: `id:secret,...`, first one active (worker.webhooks.parse_keys).
+# Same value as the API's: `id:secret,...`, first one active (worker.webhooks.parse_keys). Also
+# encrypts the API keys of organization-owned AI providers.
 WEBHOOK_ENCRYPTION_KEYS = os.environ.get("WEBHOOK_ENCRYPTION_KEYS", "")
 # Disable an endpoint after this many failed deliveries in a row (0 = never); 410 disables at once.
 WEBHOOK_DISABLE_AFTER_FAILURES = int(os.environ.get("WEBHOOK_DISABLE_AFTER_FAILURES", "5"))
@@ -72,14 +91,18 @@ WEBHOOK_RETENTION_DAYS = int(os.environ.get("WEBHOOK_RETENTION_DAYS", "30"))
 CHATWOOT_URL = os.environ.get("CHATWOOT_URL", "")  # how the worker reaches Chatwoot
 CHATWOOT_PUBLIC_URL = os.environ.get("CHATWOOT_PUBLIC_URL", "") or CHATWOOT_URL  # links for humans
 CHATWOOT_API_TOKEN = os.environ.get("CHATWOOT_API_TOKEN", "")  # agent bot or agent access token
-SUPPORT_TRACKER = os.environ.get("SUPPORT_TRACKER", "github")  # github | plane
+# Tracker (worker/tracker.py, the only tracker client): plane (default) | github.
+TRACKER = os.environ.get("TRACKER", "plane")
+TRACKER_FILE = Path(os.environ.get("TRACKER_FILE", _ROOT / "config" / "tracker.json"))
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "")
+# GitHub Enterprise Server API base (GitHub Actions sets it); empty = https://api.github.com.
+GITHUB_API_URL = os.environ.get("GITHUB_API_URL", "")
 PLANE_API_URL = os.environ.get("PLANE_API_URL", "")  # e.g. https://api.plane.so
 PLANE_APP_URL = os.environ.get("PLANE_APP_URL", "") or PLANE_API_URL  # links for humans
 PLANE_WORKSPACE = os.environ.get("PLANE_WORKSPACE", "")
 PLANE_PROJECT_ID = os.environ.get("PLANE_PROJECT_ID", "")
-PLANE_API_TOKEN = os.environ.get("PLANE_API_TOKEN", "")
+PLANE_API_TOKEN = os.environ.get("PLANE_API_TOKEN", "")  # also the author of release comments
 # Model for triage. No default on purpose: unset = triage off. Its AI calls are audited under
 # SUPPORT_AI_ORG_ID, the operator's own organization (support data is not a tenant's data).
 AI_SUPPORT_TRIAGE_PROVIDER = os.environ.get("AI_SUPPORT_TRIAGE_PROVIDER", "")
@@ -89,6 +112,21 @@ SUPPORT_AI_ORG_ID = os.environ.get("SUPPORT_AI_ORG_ID", "")
 # "Released in vX.Y.Z" comment (docs/releases.md); anything else = private notes only.
 _notify = os.environ.get("SUPPORT_NOTIFY_ON_CLOSE", "false").lower()
 SUPPORT_NOTIFY = {"true": "close", "release": "release"}.get(_notify, "")
+# Lite Telegram support (docs/support.md "Lite: Telegram only", flag `telegram-support`): the bot
+# token and the forum supergroup the team answers in. Either empty = off.
+TELEGRAM_SUPPORT_BOT_TOKEN = os.environ.get("TELEGRAM_SUPPORT_BOT_TOKEN", "")
+TELEGRAM_SUPPORT_CHAT_ID = int(os.environ.get("TELEGRAM_SUPPORT_CHAT_ID") or 0)
+# Public URL of POST /api/hooks/telegram; set = the worker registers the webhook at start.
+TELEGRAM_SUPPORT_WEBHOOK_URL = os.environ.get("TELEGRAM_SUPPORT_WEBHOOK_URL", "")
+TELEGRAM_API_URL = os.environ.get("TELEGRAM_API_URL", "https://api.telegram.org")  # tests: a fake
+# CRM sync (docs/crm.md): Twenty's REST API; URL or key empty = dry run (logs only).
+TWENTY_API_URL = os.environ.get("TWENTY_API_URL", "")  # with --profile crm: http://twenty:3000
+TWENTY_API_KEY = os.environ.get("TWENTY_API_KEY", "")
+CRM_FILE = Path(os.environ.get("CRM_FILE", _ROOT / "config" / "crm.json"))
+# Links to bookings in CRM notes: your self-hosted Cal.diy (or https://app.cal.com); empty = none.
+BOOKING_PUBLIC_URL = os.environ.get("BOOKING_PUBLIC_URL", "")
+# Booking payloads left in S3 (a sync that failed for good) are deleted after this many days.
+BOOKING_PAYLOAD_DAYS = int(os.environ.get("BOOKING_PAYLOAD_DAYS", "7"))
 # Traces only (e.g. Langfuse's OTLP endpoint, which takes no metrics); overrides the base URL.
 OTEL_TRACES_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
 # LLM observability in PostHog (docs/adr/0009-llm-ops.md): each call as an $ai_generation event.
@@ -136,3 +174,12 @@ GA4_SERVICE_ACCOUNT_JSON = os.environ.get("GA4_SERVICE_ACCOUNT_JSON", "")
 
 # Billing (docs/billing.md): plans and limits, shared with the API.
 PLANS_FILE = Path(os.environ.get("PLANS_FILE", _ROOT / "config" / "plans.json"))
+# Usage reporting to Stripe Meters (worker/usage.py); the same key as the API's. Empty: off.
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_API_URL = os.environ.get("STRIPE_API_URL") or None
+# Rewards (docs/growth.md): the rules, and the API that applies money rewards through the billing
+# provider (POST /internal/rewards/apply, same INTERNAL_API_TOKEN as the API). Either empty =
+# money and coupon rewards are recorded as pending_manual for operators.
+REWARDS_FILE = Path(os.environ.get("REWARDS_FILE", _ROOT / "config" / "rewards.json"))
+API_INTERNAL_URL = os.environ.get("API_INTERNAL_URL", "")
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "")

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import signal
 from datetime import timedelta
 from ipaddress import ip_network
@@ -21,61 +22,49 @@ from temporalio.worker import Worker
 
 from worker import flags, pii, settings
 from worker.activities import Activities, ModelChoice
-from worker.ai import PROVIDERS, Gateway, load_registry
+from worker.ai import Byo, Gateway, load_registry
 from worker.billing import BillingActivities, load_plans
+from worker.credits import CreditActivities, Credits, StripeCredits
+from worker.crm import CrmActivities, Twenty, load_config
 from worker.errors import ErrorInterceptor, setup_errors
 from worker.log import configure_logging
 from worker.mail import send_email
+from worker.mcp import McpConfig
 from worker.posthog import PostHogAi
 from worker.privacy import PrivacyActivities, configured_tools
+from worker.providers import load_providers, providers_from_config
+from worker.rewards import RewardActivities, load_rules, same_domain_blocked
 from worker.s3 import S3
-from worker.support import (
-    Chatwoot,
-    DryRunTracker,
-    GitHubIssues,
-    PlaneIntake,
-    SupportActivities,
-    Tracker,
-)
+from worker.support import Chatwoot, SupportActivities
+from worker.telegram import Bot, TelegramActivities
 from worker.text import backend
+from worker.tracker import TrackerActivities
+from worker.tracker import connect as tracker_connect
+from worker.usage import StripeMeters, UsageActivities
 from worker.webhooks import WebhookActivities, parse_keys
 from worker.workflows import (
     BillingEventWorkflow,
+    ContractPeriodWorkflow,
+    CrmSyncWorkflow,
     DataDeletionWorkflow,
     DataExportWorkflow,
     PrivacyRetentionWorkflow,
     ProjectCreatedWorkflow,
+    RewardWorkflow,
     SendEmailWorkflow,
     SupportIssueClosedWorkflow,
     SupportTriageWorkflow,
+    TelegramChatWorkflow,
+    TrackerItemWorkflow,
+    UsageReportWorkflow,
     WebhookEventWorkflow,
     WebhookMaintenanceWorkflow,
     ensure_maintenance_schedule,
     ensure_retention_schedule,
+    ensure_usage_schedule,
 )
 
 log = logging.getLogger("worker")
-
-
-def support_tracker(http: httpx2.AsyncClient) -> Tracker:
-    """SUPPORT_TRACKER selects the adapter; missing credentials = dry run (docs/support.md)."""
-    s = settings
-    if s.SUPPORT_TRACKER == "plane":
-        if s.PLANE_API_URL and s.PLANE_WORKSPACE and s.PLANE_PROJECT_ID and s.PLANE_API_TOKEN:
-            return PlaneIntake(
-                api_url=s.PLANE_API_URL,
-                app_url=s.PLANE_APP_URL,
-                workspace=s.PLANE_WORKSPACE,
-                project_id=s.PLANE_PROJECT_ID,
-                token=s.PLANE_API_TOKEN,
-                http=http,
-            )
-    elif s.SUPPORT_TRACKER == "github":
-        if s.GITHUB_TOKEN and s.GITHUB_REPO:
-            return GitHubIssues(s.GITHUB_REPO, s.GITHUB_TOKEN, http)
-    else:
-        raise ValueError(f"SUPPORT_TRACKER must be github or plane, not {s.SUPPORT_TRACKER!r}")
-    return DryRunTracker()
 
 
 def setup_tracing() -> Runtime | None:
@@ -99,6 +88,10 @@ def setup_tracing() -> Runtime | None:
 
 async def main() -> None:
     configure_logging()
+    if os.environ.get("OPENAI_BASE_URL") and not os.environ.get("OPENAI_COMPATIBLE_BASE_URL"):
+        # Renamed (docs/deploy.md "Upgrade notes"); unset, the endpoint would silently be off.
+        log.error("OPENAI_BASE_URL is no longer read: rename it to OPENAI_COMPATIBLE_BASE_URL")
+        raise SystemExit(1)
     setup_errors()
     runtime = setup_tracing()
     client = await Client.connect(
@@ -126,17 +119,38 @@ async def main() -> None:
     )
     plans = load_plans(settings.PLANS_FILE)
     ai: Gateway | None = None
+    secret_keys = parse_keys(settings.WEBHOOK_ENCRYPTION_KEYS)
     if settings.AI_CONTOUR:
         await s3.ensure_bucket()
+        configs = load_providers(
+            settings.AI_MODELS_FILE,
+            os.environ,
+            cli_url=settings.LLM_CLI_URL,
+            cli_token=settings.LLM_CLI_TOKEN,
+            timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
+            cli_timeout=settings.AI_CLI_TIMEOUT_SECONDS,
+        )
         ai = Gateway(
             pool=pool,
             s3=s3,
             contour=settings.AI_CONTOUR,
             registry=load_registry(settings.AI_MODELS_FILE, settings.AI_CONTOUR),
-            providers=PROVIDERS,
+            providers=providers_from_config(configs),
+            provider_configs=configs,
             retention_days=settings.AI_CONTENT_RETENTION_DAYS,
             posthog=posthog,
             plans=plans,
+            byo=Byo(secret_keys, [ip_network(c) for c in settings.AI_BYO_ALLOWED_CIDRS])
+            if secret_keys
+            else None,
+            mcp=McpConfig(
+                secret_keys,
+                [ip_network(c) for c in settings.MCP_ALLOWED_CIDRS],
+                settings.MCP_TOOL_MAX_ITERATIONS,
+                settings.MCP_TOOL_TIMEOUT_SECONDS,
+            )
+            if secret_keys
+            else None,
         )
     summary_model = (
         ModelChoice(settings.AI_PROJECT_SUMMARY_PROVIDER, settings.AI_PROJECT_SUMMARY_MODEL)
@@ -148,14 +162,27 @@ async def main() -> None:
     webhooks = WebhookActivities(
         pool,
         allowed_networks=[ip_network(c) for c in settings.WEBHOOK_ALLOWED_CIDRS],
-        encryption_keys=parse_keys(settings.WEBHOOK_ENCRYPTION_KEYS),
+        encryption_keys=secret_keys,
         max_payload_bytes=settings.WEBHOOK_MAX_PAYLOAD_BYTES,
         disable_after_failures=settings.WEBHOOK_DISABLE_AFTER_FAILURES,
         retention_days=settings.WEBHOOK_RETENTION_DAYS,
     )
     await ensure_maintenance_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     await ensure_retention_schedule(client, settings.TEMPORAL_TASK_QUEUE)
+    await ensure_usage_schedule(client, settings.TEMPORAL_TASK_QUEUE)
     http = httpx2.AsyncClient(timeout=30)
+    stripe = (settings.STRIPE_SECRET_KEY, settings.STRIPE_API_URL)
+    credits: dict[str, Credits] = (
+        {"stripe": StripeCredits(http, *stripe)} if settings.STRIPE_SECRET_KEY else {}
+    )
+    credit_grants = CreditActivities(pool, plans, credits)
+    if ai:
+        ai.credits = credits  # built before the HTTP client
+    usage = UsageActivities(
+        pool,
+        plans,
+        {"stripe": StripeMeters(http, *stripe)} if settings.STRIPE_SECRET_KEY else {},
+    )
     files = S3(
         endpoint=settings.S3_ENDPOINT,
         region=settings.S3_REGION,
@@ -171,6 +198,7 @@ async def main() -> None:
         tools=privacy_tools,
         export_ttl_days=settings.PRIVACY_EXPORT_TTL_DAYS,
         org_records_days=settings.PRIVACY_ORG_RECORDS_DAYS,
+        booking_days=settings.BOOKING_PAYLOAD_DAYS,
     )
     chatwoot = (
         Chatwoot(
@@ -184,14 +212,54 @@ async def main() -> None:
         if settings.AI_SUPPORT_TRIAGE_PROVIDER and settings.AI_SUPPORT_TRIAGE_MODEL
         else None
     )
-    tracker = support_tracker(http)
+    tracker = await tracker_connect(http)  # refuses a completed/cancelled target state
+    tracker_items = TrackerActivities(tracker, files)
+    s = settings
+    telegram = (
+        TelegramActivities(
+            bot=Bot(s.TELEGRAM_SUPPORT_BOT_TOKEN, http, s.TELEGRAM_API_URL),
+            token=s.TELEGRAM_SUPPORT_BOT_TOKEN,
+            chat_id=s.TELEGRAM_SUPPORT_CHAT_ID,
+            pool=pool,
+            tracker=tracker,
+            files=files,
+        )
+        if s.TELEGRAM_SUPPORT_BOT_TOKEN and s.TELEGRAM_SUPPORT_CHAT_ID
+        else None
+    )
+    if (
+        telegram
+        and s.TELEGRAM_SUPPORT_WEBHOOK_URL
+        and await flags.is_enabled("telegram-support", user_id="telegram")
+    ):
+        await telegram.register_webhook(s.TELEGRAM_SUPPORT_WEBHOOK_URL)
     support = SupportActivities(
+        telegram=telegram,
         chatwoot=chatwoot,
         tracker=tracker,
         ai=ai,
         model=triage_model,
         ai_org_id=settings.SUPPORT_AI_ORG_ID,
         notify=settings.SUPPORT_NOTIFY,
+    )
+    crm = CrmActivities(
+        pool=pool,
+        crm=Twenty(settings.TWENTY_API_URL, settings.TWENTY_API_KEY, http)
+        if settings.TWENTY_API_URL and settings.TWENTY_API_KEY
+        else None,
+        config=load_config(settings.CRM_FILE),
+        plans=plans,
+        chatwoot=chatwoot,
+        files=files,
+        booking_url=settings.BOOKING_PUBLIC_URL,
+    )
+    rewards = RewardActivities(
+        pool,
+        load_rules(settings.REWARDS_FILE),
+        http,
+        settings.API_INTERNAL_URL,
+        settings.INTERNAL_API_TOKEN,
+        same_domain_blocked(settings.REWARDS_FILE),
     )
     if chatwoot and triage_model and ai:
         await asyncio.to_thread(pii.warm_up)  # triage output is redacted with Presidio
@@ -205,20 +273,37 @@ async def main() -> None:
         workflows=[
             ProjectCreatedWorkflow,
             BillingEventWorkflow,
+            ContractPeriodWorkflow,
+            CrmSyncWorkflow,
             SupportTriageWorkflow,
             SupportIssueClosedWorkflow,
+            TelegramChatWorkflow,
+            TrackerItemWorkflow,
             WebhookEventWorkflow,
             WebhookMaintenanceWorkflow,
             DataExportWorkflow,
             DataDeletionWorkflow,
             PrivacyRetentionWorkflow,
+            UsageReportWorkflow,
+            RewardWorkflow,
         ],
         activities=[
             activities.fingerprint_project,
             activities.summarize_project,
             billing.apply_billing_event,
+            billing.end_contract_period,
+            usage.usage_orgs,
+            usage.report_org_usage,
+            credit_grants.grant_credits,
+            credit_grants.record_grant_failure,
+            rewards.reserve,
+            rewards.apply,
+            rewards.record,
+            crm.sync,
             support.triage,
             support.issue_closed,
+            *([telegram.handle] if telegram else []),
+            tracker_items.file_item,
             webhooks.deliver_webhook,
             webhooks.prune_webhooks,
             webhooks.reencrypt_webhook_secrets,
@@ -230,6 +315,8 @@ async def main() -> None:
             privacy.purge_ai_content,
             privacy.purge_exports,
             privacy.purge_deleted_orgs,
+            privacy.purge_tracker_inbox,
+            privacy.purge_booking_payloads,
         ],
         graceful_shutdown_timeout=timedelta(seconds=10),
         interceptors=[ErrorInterceptor()],
@@ -247,14 +334,17 @@ async def main() -> None:
     async with worker, mail_worker:
         log.info(
             "worker started (simhash backend: %s, ai contour: %s, summary model: %s,"
-            " support: chatwoot %s, tracker %s, triage model %s, privacy tools: %s)",
+            " support: chatwoot %s, telegram %s, tracker %s, triage model %s, privacy tools: %s,"
+            " crm %s)",
             backend,
             settings.AI_CONTOUR or "off",
             summary_model or "off",
             "on" if chatwoot else "dry run",
+            "on" if telegram else "off",
             tracker.name,
             triage_model or "off",
             ",".join(t.name for t in privacy_tools.all) or "none",
+            crm.crm.name if crm.crm else "dry run",
         )
         await stop.wait()
         log.info("shutting down")

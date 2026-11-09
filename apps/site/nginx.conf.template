@@ -19,7 +19,7 @@ server {
   error_page 404 /404.html;
 
   # Images may come from your CDN/object storage (no media in git): img-src allows https:.
-  add_header Content-Security-Policy "default-src 'self'; script-src 'self' ${ANALYTICS_ORIGINS}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ${ANALYTICS_ORIGINS}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' ${ANALYTICS_ORIGINS} ${BOOKING_ORIGINS}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ${ANALYTICS_ORIGINS} ${BOOKING_ORIGINS}; frame-src 'self' ${BOOKING_ORIGINS}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
   add_header X-Content-Type-Options nosniff always;
   add_header Referrer-Policy strict-origin-when-cross-origin always;

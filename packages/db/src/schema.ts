@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -8,13 +9,14 @@ import {
   numeric,
   pgPolicy,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { organization } from './auth-schema.ts';
+import { organization, user } from './auth-schema.ts';
 
 export * from './auth-schema.ts';
 
@@ -102,6 +104,61 @@ export const aiCalls = pgTable(
   ],
 );
 
+/**
+ * AI providers an organization brings itself (BYO, docs/llm-providers.md): a provider of
+ * config/ai-models.json (`provider`, kind api/aggregator/custom), its API key and, for the custom
+ * kind, a base URL; `models` maps a purpose to the model id the org wants for it. The key is
+ * stored encrypted like webhook secrets (`v1:<key id>:<iv>:<data>`, AES-256-GCM,
+ * WEBHOOK_ENCRYPTION_KEYS, bound to `<org id>/<id>`); only the worker's gateway decrypts it, and
+ * only for this organization's calls.
+ */
+export const aiProviders = pgTable(
+  'ai_providers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    name: text('name').notNull(),
+    provider: text('provider').notNull(),
+    baseUrl: text('base_url'),
+    apiKey: text('api_key'),
+    /** Last 4 characters of the key, to recognise it in settings. */
+    apiKeyHint: text('api_key_hint'),
+    models: jsonb('models').$type<Record<string, string>>().notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.orgId), tenantIsolation()],
+);
+
+/**
+ * Remote MCP servers an organization connects (docs/mcp.md "Calling external tools"): AI calls
+ * of the listed `purposes` that opt in may use its `allowed_tools`, nothing else. The auth
+ * header value is stored encrypted like BYO keys (`v1:<key id>:<iv>:<data>`, AES-256-GCM,
+ * WEBHOOK_ENCRYPTION_KEYS, bound to `<org id>/<id>`); only the worker's gateway decrypts it.
+ */
+export const mcpServers = pgTable(
+  'mcp_servers',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    name: text('name').notNull(),
+    url: text('url').notNull(),
+    /** AI purposes that may use this server (config/ai-models.json); others never see it. */
+    purposes: text('purposes').array().notNull(),
+    allowedTools: text('allowed_tools').array().notNull(),
+    /** Header name sent with the secret, e.g. Authorization. */
+    authHeader: text('auth_header'),
+    authSecret: text('auth_secret'),
+    /** Last 4 characters of the secret, to recognise it in settings. */
+    authSecretHint: text('auth_secret_hint'),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index().on(t.orgId), tenantIsolation()],
+);
+
 /** Files in S3. The object key is derived from ids; access is checked via this row (RLS). */
 export const attachments = pgTable(
   'attachments',
@@ -121,18 +178,36 @@ export const attachments = pgTable(
   (t) => [index().on(t.projectId), tenantIsolation()],
 );
 
+/**
+ * Who did what, per organization. `org_id` is null only for operator actions on a user who belongs
+ * to no organization (docs/admin.md): no tenant sees those rows, and the `platform_audit` policy
+ * lets only the `app_operator_audit` role (withPlatformAudit, index.ts) insert them, and only
+ * `operator.*` ones.
+ */
 export const auditLog = pgTable(
   'audit_log',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    orgId: orgId(),
+    orgId: text('org_id').references(() => organization.id, { onDelete: 'cascade' }),
     actorId: text('actor_id'),
     action: text('action').notNull(),
     target: text('target'),
     ip: text('ip'),
+    /** Why an operator did it (`operator.*` actions, required there; docs/admin.md). */
+    reason: text('reason'),
+    /** Time-boxed actions (`operator.impersonation.started`): when the effect ends by itself. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index().on(t.orgId, t.createdAt), tenantIsolation()],
+  (t) => [
+    index().on(t.orgId, t.createdAt),
+    tenantIsolation(),
+    pgPolicy('platform_audit', {
+      for: 'insert',
+      to: 'app_operator_audit', // PLATFORM_AUDIT_ROLE (index.ts), created by migrate.ts
+      withCheck: sql`org_id is null and action like 'operator.%'`,
+    }),
+  ],
 );
 
 /**
@@ -157,6 +232,12 @@ export const subscriptions = pgTable(
     currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
     currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
     cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+    /** Purchased seats of a per_seat price: the seat limit (docs/billing.md "Per seat"). */
+    seats: integer('seats'),
+    /** Contract reference (order form, PO) of an invoiced contract, set by an operator. */
+    contractRef: text('contract_ref'),
+    /** Usage is reported to the provider's meters up to this hour (worker/usage.py). */
+    usageReportedUntil: timestamp('usage_reported_until', { withTimezone: true }),
     /** Admin-raised LLM spend limits per currency, capped by the plan's llmSpendMax. */
     llmSpendLimits: jsonb('llm_spend_limits').$type<Record<string, number>>(),
     /** Time of the newest provider event applied; older (replayed) events are ignored. */
@@ -170,6 +251,22 @@ export const subscriptions = pgTable(
     ),
     tenantIsolation(),
   ],
+);
+
+/**
+ * API-key requests per org and hour, the source of the `api_calls` meter (docs/billing.md
+ * "Usage-based"). The worker reports each closed hour once to the provider; not a usage ledger
+ * (the provider rates and invoices). Written only while the `billing-usage` flag is on.
+ */
+export const usageCounters = pgTable(
+  'usage_counters',
+  {
+    orgId: orgId(),
+    meter: text('meter').notNull(),
+    hour: timestamp('hour', { withTimezone: true }).notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.meter, t.hour] }), tenantIsolation()],
 );
 
 /**
@@ -316,3 +413,76 @@ export const privacyRequests = pgTable(
     ),
   ],
 );
+
+/**
+ * One reward of an organization (docs/growth.md, rules in config/rewards.json), written by the
+ * worker's RewardWorkflow. The unique key makes a rule count a subject once, ever. The row is
+ * reserved first (under an advisory lock, so the per-org cap holds), then settled: the app role may
+ * update only `status`, `via`, `reward`, `provider_ref` and `expires_at`, never delete
+ * (packages/db/src/migrate.ts). `pending_manual` rows wait for an operator, who resolves them with
+ * an `operator.reward.applied` audit row (docs/admin.md); an operator may `release` a stuck
+ * reservation (it then no longer counts against the cap).
+ */
+export const rewardGrants = pgTable(
+  'reward_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orgId: orgId(),
+    ruleId: text('rule_id').notNull(),
+    /** What the rule counts once: the invited user's id, the org's own id, the referred org's id. */
+    subject: text('subject').notNull(),
+    status: text('status', {
+      enum: ['reserved', 'applied', 'pending_manual', 'released'],
+    }).notNull(),
+    /** How it was given, once settled. */
+    via: text('via', { enum: ['entitlement', 'balance_credit', 'coupon', 'manual'] }),
+    reward: jsonb('reward').$type<Record<string, unknown>>().notNull(),
+    /** The workflow id, also the provider's idempotency key: find the provider object by it. */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /** The provider's object (balance transaction, subscription) when it applied it. */
+    providerRef: text('provider_ref'),
+    /** Entitlement rewards count in entitlements() until then. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.orgId, t.ruleId, t.subject),
+    check(
+      'reward_grants_via',
+      sql`${t.via} in ('entitlement', 'balance_credit', 'coupon', 'manual')`,
+    ),
+    check(
+      'reward_grants_status',
+      sql`${t.status} in ('reserved', 'applied', 'pending_manual', 'released')`,
+    ),
+    tenantIsolation(),
+  ],
+);
+
+/**
+ * Lite Telegram support (docs/support.md "Lite: Telegram only"): which forum topic of the support
+ * group belongs to which Telegram user, and the app user they linked with the Help menu's deep
+ * link. Not tenant-scoped: a Telegram user is not an organization's data. Messages are not stored
+ * here; they stay in Telegram. Deleting the app user deletes the row (docs/privacy.md).
+ */
+export const telegramSupportUsers = pgTable(
+  'telegram_support_users',
+  {
+    telegramUserId: bigint('telegram_user_id', { mode: 'number' }).primaryKey(),
+    /** Support group (TELEGRAM_SUPPORT_CHAT_ID) the topic is in; another group = a new topic. */
+    chatId: bigint('chat_id', { mode: 'number' }).notNull(),
+    topicId: integer('topic_id').notNull(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex().on(t.chatId, t.topicId), index().on(t.userId)],
+);
+
+/**
+ * Deep-link signatures already used (docs/support.md "Account link"): a payload links one
+ * Telegram account once. Written by the API; rows past the payload's 10 minutes are pruned there.
+ */
+export const telegramSupportLinks = pgTable('telegram_support_links', {
+  signature: text('signature').primaryKey(),
+  usedAt: timestamp('used_at', { withTimezone: true }).notNull().defaultNow(),
+});

@@ -1,7 +1,7 @@
 // Data-subject rights API (docs/privacy.md): requests, rate limit, re-auth, owner rules, cancel,
 // download and audit rows. The workflows themselves run in services/worker-py/tests/test_privacy.py.
 import { randomUUID } from 'node:crypto';
-import { auditLog, privacyRequests, session, subscriptions, user as users, withOrg } from '@app/db';
+import { auditLog, privacyRequests, session, subscriptions, withOrg } from '@app/db';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -11,10 +11,10 @@ import { allowedOrigins, env } from '../src/env.ts';
 import { gaClientId, NOT_FRESH } from '../src/routes/privacy.ts';
 import { ensureBucket } from '../src/s3.ts';
 import { closeTemporal, privacyWorkflowId, temporal } from '../src/temporal.ts';
+import { signUp as codeSignUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
-const password = 'correct-horse-battery';
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 type User = { id: string; cookie: string };
 const started: string[] = [];
@@ -44,19 +44,8 @@ const req = (u: User | null, method: 'GET' | 'POST', url: string, payload?: obje
     headers: { origin, ...(u && { cookie: u.cookie }) },
     ...(payload && { payload }),
   });
-const cookieOf = (res: { cookies: { name: string; value: string }[] }) =>
-  res.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
 
-async function signUp(): Promise<User> {
-  const email = `${randomUUID()}@example.com`;
-  const res = await req(null, 'POST', '/api/auth/sign-up/email', { email, password, name: 'T' });
-  expect(res.statusCode).toBe(200);
-  const id: string = res.json().user.id;
-  await db.update(users).set({ emailVerified: true }).where(eq(users.id, id));
-  const signedIn = await req(null, 'POST', '/api/auth/sign-in/email', { email, password });
-  expect(signedIn.statusCode).toBe(200);
-  return { id, cookie: cookieOf(signedIn) };
-}
+const signUp = () => codeSignUp(app);
 
 async function createOrg(u: User): Promise<string> {
   const res = await req(u, 'POST', '/api/auth/organization/create', {

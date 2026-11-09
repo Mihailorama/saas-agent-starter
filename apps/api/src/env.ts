@@ -25,8 +25,11 @@ const schema = z
     TEMPORAL_TASK_QUEUE: z.string().default('projects'),
     /** Task queue of the worker's SendEmailWorkflow (docs/email.md). */
     EMAIL_TASK_QUEUE: z.string().default('email'),
-    /** Sign-in needs a confirmed email address. Off only for setups that verify elsewhere. */
-    REQUIRE_EMAIL_VERIFICATION: z.stringbool().default(true),
+    /** Refuse disposable addresses at sign-up, email change and invitation (docs/security.md). */
+    SIGNUP_BLOCK_DISPOSABLE: z.stringbool().default(true),
+    /** Domains (and their subdomains) always accepted / always refused, comma-separated. */
+    SIGNUP_EMAIL_ALLOW_DOMAINS: list.transform((l) => l.map((d) => d.toLowerCase())),
+    SIGNUP_EMAIL_DENY_DOMAINS: list.transform((l) => l.map((d) => d.toLowerCase())),
     S3_ENDPOINT: z.url().optional(),
     /** Endpoint browsers use for presigned URLs; defaults to S3_ENDPOINT. */
     S3_PUBLIC_ENDPOINT: z.url().optional(),
@@ -36,8 +39,13 @@ const schema = z
     AI_CONTENT_BUCKET: z.string().default('ai-calls'),
     S3_ACCESS_KEY_ID: z.string().min(1),
     S3_SECRET_ACCESS_KEY: z.string().min(1),
-    /** Set to true behind a reverse proxy so req.ip comes from X-Forwarded-For. */
-    TRUST_PROXY: z.stringbool().default(false),
+    /** Behind reverse proxies req.ip comes from X-Forwarded-For: the number of proxy hops in
+     * front of the API (production: 2, Caddy then the web container's nginx), or `true` to trust
+     * every hop. Off by default: clients could make up their IP. */
+    TRUST_PROXY: z
+      .string()
+      .default('false')
+      .transform((v) => (/^\d+$/.test(v) ? Number(v) : v === 'true')),
     BETTER_AUTH_SECRET: z.string().min(32),
     /** Public origin users reach the app on (web origin; /api is proxied there). */
     BETTER_AUTH_URL: z.url(),
@@ -78,7 +86,7 @@ const schema = z
     OIDC_CLIENT_ID: z.string().optional(),
     OIDC_CLIENT_SECRET: z.string().optional(),
     // Alert-to-issue loop (docs/product-analytics.md). Empty secret = webhook disabled (401);
-    // no GitHub token/repo = dry run.
+    // the worker files the item (worker/tracker.py), a dry run without tracker credentials.
     POSTHOG_WEBHOOK_SECRET: z.string().optional(),
     /** PostHog app host for links in issues, e.g. https://eu.posthog.com */
     POSTHOG_APP_HOST: z.union([z.url(), z.literal('')]).optional(),
@@ -97,9 +105,6 @@ const schema = z
      * redacted there and the hook fails closed (503) when it is down. Empty: emails masked only.
      */
     PII_REDACT_URL: z.union([z.url(), z.literal('')]).optional(),
-    GITHUB_TOKEN: z.string().optional(),
-    /** owner/name of the repository that receives the issues. */
-    GITHUB_REPO: z.string().optional(),
     // Billing (docs/billing.md). Contour of new subscriptions; config/plans.json `contours`.
     BILLING_CONTOUR: z.string().default('en'),
     /** Contour of config/ai-models.json: which cost currencies the billing page shows. */
@@ -108,6 +113,13 @@ const schema = z
     STRIPE_WEBHOOK_SECRET: z.string().optional(),
     /** Only for stripe-mock in tests/dev, e.g. http://localhost:12111; empty = api.stripe.com. */
     STRIPE_API_URL: z.union([z.url(), z.literal('')]).optional(),
+    /** Shared with the worker: it asks /internal/rewards to apply money rewards through the
+     * billing provider (docs/growth.md). Empty = route off; such rewards wait for operators. */
+    INTERNAL_API_TOKEN: z.string().optional(),
+    /** Connect Dub Partners instead of Stripe-native referrals (docs/growth.md); empty = native. */
+    DUB_API_KEY: z.string().optional(),
+    /** Only for tests; empty = https://api.dub.co. */
+    DUB_API_URL: z.union([z.url(), z.literal('')]).optional(),
     // Service desk (docs/support.md). Every secret empty = that endpoint is off (401/404).
     /** Secret of the Chatwoot account webhook (Settings -> Integrations -> Webhooks). */
     CHATWOOT_WEBHOOK_SECRET: z.string().optional(),
@@ -118,6 +130,22 @@ const schema = z
     /** Secret of the Plane webhook (`plane_wh_...`) and the project whose work items count. */
     PLANE_WEBHOOK_SECRET: z.string().optional(),
     PLANE_PROJECT_ID: z.string().optional(),
+    /**
+     * Lite Telegram support (docs/support.md "Lite: Telegram only", flag `telegram-support`). The
+     * bot token also derives the webhook secret and the deep-link signing key (worker: the same).
+     */
+    TELEGRAM_SUPPORT_BOT_TOKEN: z.string().optional(),
+    /** The forum supergroup the team answers in, e.g. -1001234567890. */
+    TELEGRAM_SUPPORT_CHAT_ID: z.string().optional(),
+    /** Secret of the Cal.com webhook (booking -> CRM activity, docs/crm.md); empty = off (401). */
+    BOOKING_WEBHOOK_SECRET: z.string().optional(),
+    // Operator console (docs/admin.md). Empty list = no operators, /api/admin answers 403.
+    /** Emails of operators (support staff), comma-separated; `pnpm operators:sync` applies it. */
+    OPERATOR_EMAILS: list.transform((l) => l.map((e) => e.toLowerCase())),
+    /** Operator routes need a session younger than this (minutes); then sign in again. */
+    OPERATOR_SESSION_MAX_AGE_MINUTES: z.coerce.number().int().positive().default(60),
+    /** Length of a "view as user" session (minutes). */
+    OPERATOR_IMPERSONATION_MINUTES: z.coerce.number().int().positive().max(240).default(30),
   })
   .refine((e) => e.NODE_ENV !== 'production' || !e.BETTER_AUTH_SECRET.startsWith('change-me'), {
     message: 'BETTER_AUTH_SECRET still has the example value',
@@ -141,9 +169,13 @@ const schema = z
   .refine(
     (e) =>
       e.NODE_ENV !== 'production' ||
-      ![e.CHATWOOT_WEBHOOK_SECRET, e.CHATWOOT_HMAC_TOKEN, e.GITHUB_WEBHOOK_SECRET].some((v) =>
-        v?.startsWith('local-dev'),
-      ),
+      ![
+        e.CHATWOOT_WEBHOOK_SECRET,
+        e.CHATWOOT_HMAC_TOKEN,
+        e.GITHUB_WEBHOOK_SECRET,
+        e.BOOKING_WEBHOOK_SECRET,
+        e.INTERNAL_API_TOKEN,
+      ].some((v) => v?.startsWith('local-dev')),
     { message: 'a support secret still has an example value', path: ['CHATWOOT_WEBHOOK_SECRET'] },
   )
   .refine(

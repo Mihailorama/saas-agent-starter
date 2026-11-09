@@ -1,8 +1,8 @@
-import { aiCalls, subscriptions, type Tx, withOrg } from '@app/db';
-import { and, eq, gte, lt, sum } from 'drizzle-orm';
+import { aiCalls, organization, rewardGrants, subscriptions, type Tx, withOrg } from '@app/db';
+import { and, eq, gt, gte, lt, sum } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db.ts';
-import { type Limit, type Plan, planById, plans } from './plans.ts';
+import { type Limit, type Plan, type PriceModel, planById, plans } from './plans.ts';
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type Entitlements = {
@@ -12,9 +12,15 @@ export type Entitlements = {
   /** Billing period the LLM spend is counted in: the paid period, else the calendar month. */
   period: { start: Date; end: Date };
   limits: Record<Limit, number>;
+  /** Price models of the plan in force, in the subscription's currency (empty: free plan). */
+  models: PriceModel[];
   features: Record<string, boolean>;
   /** Effective monthly LLM spend limit per cost currency (plan default or admin-raised). */
   llmSpendLimit: (currency: string) => number | undefined;
+  /** Pay as you go: the plan has a metered LLM price (docs/billing.md "Usage-based"). */
+  payg: boolean;
+  /** The org's own raised cap (admin or operator), if set: the hard stop on pay as you go. */
+  llmSpendCap: (currency: string) => number | undefined;
 };
 
 /** Statuses in which the paid plan applies; `past_due` is the grace period while retrying. */
@@ -40,28 +46,86 @@ export function billingPeriod(sub: Subscription | null, now = new Date()) {
   };
 }
 
-export function entitlementsOf(sub: Subscription | null, now = new Date()): Entitlements {
+/** Operator overrides of seats/projects (organization.limit_overrides, docs/admin.md). */
+export type LimitOverrides = Partial<Record<Limit, number>> | null;
+
+/** The plan's limit, or an operator override capped by the plan's `limitsMax`. */
+export const limitOf = (plan: Plan, name: Limit, overrides: LimitOverrides) => {
+  const o = overrides?.[name];
+  return o === undefined
+    ? plan.limits[name]
+    : Math.min(o, plan.limitsMax?.[name] ?? plan.limits[name]);
+};
+
+/** Unexpired entitlement rewards (reward_grants, docs/growth.md), summed per key. */
+/** `llmSpendMonthly:<currency>` for spend rewards (one cost currency each). */
+export type RewardBonus = Partial<Record<Limit | `llmSpendMonthly:${string}`, number>>;
+
+export function entitlementsOf(
+  sub: Subscription | null,
+  now = new Date(),
+  overrides: LimitOverrides = null,
+  bonus: RewardBonus = {},
+): Entitlements {
   const [planId, plan] = planById(paid(sub, now) ? sub.planId : null);
+  const extra = (k: keyof RewardBonus) => bonus[k] ?? 0;
+  const prices = sub && paid(sub, now) ? (plan.prices[sub.currency] ?? []) : [];
+  const models = prices.map((c) => c.model);
+  const raisedOf = (currency: string) => {
+    const raised = plan.features.llmLimitRaise ? sub?.llmSpendLimits?.[currency] : undefined;
+    const max = plan.llmSpendMax[currency] ?? plan.limits.llmSpendMonthly[currency];
+    return raised === undefined || max === undefined ? undefined : Math.min(raised, max);
+  };
+  // Per seat: the purchased quantity is the limit (more seats are bought in the portal).
+  const seats = models.includes('per_seat') && sub?.seats ? sub.seats : undefined;
   return {
     planId,
     plan,
     subscription: sub,
     period: billingPeriod(sub, now),
-    limits: { seats: plan.limits.seats, projects: plan.limits.projects },
-    features: plan.features,
-    llmSpendLimit: (currency) => {
-      const base = plan.limits.llmSpendMonthly[currency];
-      const raised = plan.features.llmLimitRaise ? sub?.llmSpendLimits?.[currency] : undefined;
-      const max = plan.llmSpendMax[currency] ?? base;
-      return raised === undefined || max === undefined ? base : Math.min(raised, max);
+    limits: {
+      seats:
+        (overrides?.seats === undefined && seats ? seats : limitOf(plan, 'seats', overrides)) +
+        extra('seats'),
+      projects: limitOf(plan, 'projects', overrides) + extra('projects'),
     },
+    models,
+    features: plan.features,
+    // Rewards add only in their currency (worker/billing.py does the same).
+    llmSpendLimit: (currency) => {
+      const limit = raisedOf(currency) ?? plan.limits.llmSpendMonthly[currency];
+      return limit === undefined ? undefined : limit + extra(`llmSpendMonthly:${currency}`);
+    },
+    payg: prices.some(
+      (c) => c.model === 'metered' && (c.meter === 'llm_cost_micros' || c.meter === 'llm_tokens'),
+    ),
+    llmSpendCap: raisedOf,
   };
 }
 
 /** The organization's plan, limits and features. The one place that answers "may they?". */
 export async function entitlements(orgId: string, tx?: Tx): Promise<Entitlements> {
-  const read = async (t: Tx) => (await t.select().from(subscriptions))[0] ?? null;
-  return entitlementsOf(await (tx ? read(tx) : withOrg(db, orgId, read)));
+  const read = async (t: Tx) => {
+    const [sub] = await t.select().from(subscriptions).where(eq(subscriptions.orgId, orgId));
+    const [org] = await t
+      .select({ overrides: organization.limitOverrides })
+      .from(organization)
+      .where(eq(organization.id, orgId));
+    const now = new Date();
+    const grants = await t
+      .select({ reward: rewardGrants.reward })
+      .from(rewardGrants)
+      .where(and(eq(rewardGrants.via, 'entitlement'), gt(rewardGrants.expiresAt, now)));
+    const bonus: RewardBonus = {};
+    for (const { reward } of grants) {
+      const key = (
+        reward.key === 'llmSpendMonthly' ? `llmSpendMonthly:${reward.currency}` : reward.key
+      ) as keyof RewardBonus;
+      bonus[key] = (bonus[key] ?? 0) + Number(reward.delta);
+    }
+    return entitlementsOf(sub ?? null, now, org?.overrides ?? null, bonus);
+  };
+  return tx ? read(tx) : withOrg(db, orgId, read);
 }
 
 /** LLM spend per cost currency in [start, end). Served by the (org_id, created_at) index. */

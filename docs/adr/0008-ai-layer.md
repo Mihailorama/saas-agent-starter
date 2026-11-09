@@ -19,10 +19,10 @@ fact is impossible if calls are scattered across the code base.
   which provider/model pairs may serve which purpose, with a price per 1k tokens. The gateway
   refuses anything else with a non-retryable `ModelNotAllowed`. The same file feeds the public
   `/ai-transparency` page, so the page cannot drift from what the code allows.
-- **Providers.** `anthropic` (official `anthropic` SDK) and `openai_compatible` (official
-  `openai` SDK with `OPENAI_BASE_URL`, for self-hosted or in-country endpoints). Keys come from
-  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. A provider is a plain async function, so tests inject
-  a fake one; `tests/test_providers.py` checks both SDK adapters against canned HTTP responses.
+- **Providers.** Superseded by [ADR 0024](0024-llm-providers.md): every provider goes through
+  LiteLLM (`worker/providers.py`), CLI subscriptions through the llm-cli container. A provider is
+  still a plain async function, so tests inject a fake one; `tests/test_providers.py` checks
+  each kind against a local HTTP mock.
 - **Append-only log.** One `ai_calls` row per call (also for provider errors): org, actor,
   purpose, provider, requested and reported model, template id/version, token counts, cost,
   latency, status, error class, trace/span id, contour. It is a tenant table with RLS; the app
@@ -31,8 +31,8 @@ fact is impossible if calls are scattered across the code base.
 - **Content outside the database and telemetry.** Request and response JSON go to the
   `AI_CONTENT_BUCKET` S3 bucket (`<org>/<yyyy>/<mm>/<dd>/<call id>/{request,response}.json`);
   the row holds the keys and `content_expires_at` (`AI_CONTENT_RETENTION_DAYS`). Logs and
-  spans carry ids and counts only. The worker talks to S3 with an ~80-line SigV4 client (`worker/s3.py`) because
-  boto3's dependency tree fails the license gate (ADR 0005).
+  spans carry ids and counts only. The worker talks to S3 with the official MinIO Python SDK
+  (`minio`, Apache-2.0, `worker/s3.py`); boto3's dependency tree fails the license gate (ADR 0005).
 - **OpenTelemetry.** One `CLIENT` span per call named `chat {model}` with the GenAI semantic
   conventions for client inference spans: `gen_ai.operation.name`, `gen_ai.provider.name` (and
   the deprecated `gen_ai.system` for older backends), `gen_ai.request.model`,

@@ -20,6 +20,7 @@ from temporalio.worker import Worker
 
 from tests.conftest import new_org
 from worker import settings
+from worker.crm import BOOKING_PREFIX
 from worker.mail import SendEmail
 from worker.privacy import (
     ChatwootContacts,
@@ -28,8 +29,9 @@ from worker.privacy import (
     PrivacyActivities,
     PrivacyRequest,
     Tools,
+    TwentyCrm,
 )
-from worker.s3 import S3
+from worker.s3 import S3, NotFound
 from worker.workflows import DataDeletionWorkflow, DataExportWorkflow, PrivacyRetentionWorkflow
 
 TASK_QUEUE = f"test-privacy-{uuid.uuid4()}"
@@ -42,8 +44,20 @@ async def fake_send_email(email: SendEmail) -> str:
     return "<test@example.com>"
 
 
+TWENTY_ROWS = {
+    "people": [{"id": "tp-1"}],
+    "companies": [{"id": "tc-1"}],
+    "opportunities": [{"id": "to-1"}],
+    "noteTargets": [{"noteId": "tn-1"}, {"noteId": "tn-2"}],
+}
+TWENTY_NOTES = {
+    "tn-1": {"id": "tn-1", "title": "Booked: Demo", "appEventId": "cal:x"},  # by the sync
+    "tn-2": {"id": "tn-2", "title": "Call notes", "appEventId": None},  # by a salesperson
+}
+
+
 class FakeTools:
-    """PostHog, Langfuse and Chatwoot over one mock transport; records every request."""
+    """PostHog, Langfuse, Chatwoot and Twenty over one mock transport; records every request."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -51,6 +65,8 @@ class FakeTools:
     def handle(self, req: httpx2.Request) -> httpx2.Response:
         path = req.url.path
         self.calls.append((req.method, path))
+        if path.startswith("/rest/"):
+            return self.twenty(req, path.removeprefix("/rest/"))
         if path.endswith("/persons/") and req.method == "GET":
             return httpx2.Response(200, json={"results": [{"id": "p-1", "properties": {}}]})
         if path.endswith("/query/"):
@@ -67,6 +83,18 @@ class FakeTools:
         if path.endswith("/conversations/70/messages"):
             return httpx2.Response(200, json={"payload": [{"content": "hello"}]})
         return httpx2.Response(200, json={})
+
+    def twenty(self, req: httpx2.Request, path: str) -> httpx2.Response:
+        """Twenty REST v2.56.1 shapes. Every list answers one row (the filter is checked)."""
+        plural, _, id = path.partition("/")
+        if req.method == "DELETE":
+            assert req.url.params["soft_delete"] == "false"  # destroy, not the soft delete
+            return httpx2.Response(200, json={"data": {"destroy": {"id": id}}})
+        if id:
+            return httpx2.Response(200, json={"data": {"note": TWENTY_NOTES[id]}})
+        field = {"people": "appUserId", "noteTargets": "target"}.get(plural, "appOrgId")
+        assert req.url.params["filter"].startswith(field), req.url
+        return httpx2.Response(200, json={"data": {plural: TWENTY_ROWS[plural]}})
 
 
 def s3(bucket: str) -> S3:
@@ -88,6 +116,7 @@ async def env(pool: asyncpg.Pool) -> AsyncIterator[tuple[Client, PrivacyActiviti
             PostHogPersons("http://posthog.test", "1", "phx_test", http),
             Langfuse("http://langfuse.test", "pk-lf", "sk-lf", http),
             ChatwootContacts("http://chatwoot.test", "1", "token", http),
+            TwentyCrm("http://twenty.test", "key", http),
         ]
     )
     files, content = s3(settings.S3_BUCKET), s3(settings.AI_CONTENT_BUCKET)
@@ -108,6 +137,8 @@ async def env(pool: asyncpg.Pool) -> AsyncIterator[tuple[Client, PrivacyActiviti
             acts.purge_ai_content,
             acts.purge_exports,
             acts.purge_deleted_orgs,
+            acts.purge_tracker_inbox,
+            acts.purge_booking_payloads,
             fake_send_email,
         ],
     ):
@@ -153,8 +184,7 @@ async def exists(store: S3, key: str) -> bool:
     try:
         await store.get(key)
         return True
-    except httpx2.HTTPStatusError as err:
-        assert err.response.status_code == 404
+    except NotFound:
         return False
 
 
@@ -264,6 +294,8 @@ async def test_user_export_zip(
     assert f"files/attachments/{p['attachment']}-_cv.txt" in names
     assert f"files/ai-content/{p['ai']}/request.json" in names
     assert {"tools/posthog.json", "tools/langfuse.json", "tools/chatwoot.json"} <= names
+    twenty = json.loads(z.read("tools/twenty.json"))
+    assert twenty == {"people": [{"id": "tp-1"}], "notes": [TWENTY_NOTES["tn-1"]]}
     user = json.loads(z.read("db/user.json"))
     assert user[0]["email"] == f"{p['uid']}@example.com"
     # Secrets never leave the database, not even towards their owner.
@@ -314,6 +346,10 @@ async def test_user_deletion_everywhere(
     assert ("POST", "/api/projects/1/persons/bulk_delete/") in fake.calls
     assert ("DELETE", "/api/public/traces") in fake.calls
     assert ("DELETE", "/api/v1/accounts/1/contacts/7") in fake.calls
+    # Twenty: the person and the sync's note; a note a salesperson wrote stays.
+    assert report["twenty"]["status"] == "done"
+    assert {("DELETE", "/rest/notes/tn-1"), ("DELETE", "/rest/people/tp-1")} <= set(fake.calls)
+    assert ("DELETE", "/rest/notes/tn-2") not in fake.calls
     row = await pool.fetchrow("select * from privacy_requests where id = $1", req.requestId)
     assert row is not None and row["status"] == "completed"
     stored = json.loads(row["report"])
@@ -345,7 +381,7 @@ async def test_cancel_in_grace_period(
 async def test_org_deletion_then_record_purge(
     env: tuple[Client, PrivacyActivities, FakeTools], pool: asyncpg.Pool
 ) -> None:
-    client, acts, _ = env
+    client, acts, fake = env
     p = await person(pool, acts)
     org = p["org"]
     await pool.execute(
@@ -363,6 +399,25 @@ async def test_org_deletion_then_record_purge(
         endpoint,
         org,
     )
+    await in_org(
+        pool,
+        org,
+        "insert into mcp_servers (org_id, name, url, purposes, allowed_tools, auth_header,"
+        " auth_secret) values ($1, 'tools', 'https://mcp.example.com/mcp', '{project.summary}',"
+        " '{search}', 'Authorization', 'x')"
+        " returning id",
+        org,
+    )
+    exp = await new_request(pool, "export", "org", org, datetime.now(UTC))
+    await client.execute_workflow(
+        DataExportWorkflow.run, exp, id=f"privacy-export-{exp.requestId}", task_queue=TASK_QUEUE
+    )
+    key = await pool.fetchval(
+        "select result_key from privacy_requests where id = $1", exp.requestId
+    )
+    z = zipfile.ZipFile(io.BytesIO(await acts.files.get(key)))
+    [server] = json.loads(z.read("db/mcp_servers.json"))
+    assert server["allowed_tools"] == ["search"] and "auth_secret" not in server
     # Renewal was stopped by the API when the deletion was requested (cancel_at_period_end).
     await in_org(
         pool,
@@ -379,11 +434,15 @@ async def test_org_deletion_then_record_purge(
     for step in ("access", "webhooks", "storage", "database"):
         assert report[step]["status"] == "done", (step, report[step])
     assert report["billing"]["status"] == "done"
+    assert report["twenty"]["status"] == "done"
+    deleted = {("DELETE", f"/rest/{p}") for p in ("companies/tc-1", "opportunities/to-1")}
+    assert deleted <= set(fake.calls)
     assert await in_org(pool, org, "select 1 from subscriptions") == []
     assert await pool.fetchval("select count(*) from apikey where reference_id = $1", org) == 0
     assert await pool.fetchval("select count(*) from member where organization_id = $1", org) == 0
     assert await in_org(pool, org, "select 1 from projects") == []
     assert await in_org(pool, org, "select 1 from webhook_endpoints") == []
+    assert await in_org(pool, org, "select 1 from mcp_servers") == []
     assert not await exists(acts.files, p["file"])
     assert not await exists(acts.ai_content, f"{p['ai']}/request.json")
     name = await pool.fetchval("select name from organization where id = $1", org)
@@ -424,12 +483,34 @@ async def test_retention_deletes_expired_content_keeps_metadata(
         " now() - interval '1 second') returning id",
         export_key,
     )
+    # Booking payloads whose CRM sync never consumed them (written on the day in their key).
+    old_day, today = (now - timedelta(days=8)).date(), now.date()
+    old_booking, new_booking = (
+        f"{BOOKING_PREFIX}{old_day}/a.json",
+        f"{BOOKING_PREFIX}{today}/b.json",
+    )
+    for key in (old_booking, new_booking):
+        await acts.files.put(key, b"{}")
+
+    inbox_key = f"tracker-inbox/{uuid.uuid4()}.json"  # an unfiled tracker item, minutes old
+    await acts.files.put(inbox_key, b'{"title": "t", "body": "b"}')
 
     result = await client.execute_workflow(
         PrivacyRetentionWorkflow.run, id=f"privacy-retention-{uuid.uuid4()}", task_queue=TASK_QUEUE
     )
+    # Tracker items go after a day; the cut-off is S3's LastModified.
+    assert "tracker_inbox" in result and await exists(acts.files, inbox_key)
+    later = now + timedelta(minutes=5)
+    assert inbox_key in await acts.files.list_keys("tracker-inbox/", before=later)
+    earlier = now - timedelta(minutes=5)
+    assert inbox_key not in await acts.files.list_keys("tracker-inbox/", before=earlier)
+    await acts.files.delete(inbox_key)
 
     assert result["calls"] >= 1 and result["exports"] >= 1 and result["until"]
+    assert result["bookings"] >= 1
+    assert not await exists(acts.files, old_booking)
+    assert await exists(acts.files, new_booking)
+    await acts.files.delete(new_booking)
     assert not await exists(acts.ai_content, f"{expired}/request.json")
     assert not await exists(acts.ai_content, f"{expired}/response.json")
     assert await exists(acts.ai_content, f"{current}/request.json")

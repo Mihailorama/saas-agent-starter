@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from 'node:crypto';
-import { aiCalls, auditLog, projects, withOrg } from '@app/db';
+import { aiCalls, auditLog, projects, verification, withOrg } from '@app/db';
 import {
   CreateBucketCommand,
   HeadBucketCommand,
@@ -13,7 +13,8 @@ import { auth } from '../src/auth.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { exportCalls } from '../src/eval-pull.ts';
-import { ensureBucket } from '../src/s3.ts';
+import { ensureBucket, getJson } from '../src/s3.ts';
+import { DISPOSABLE_EMAIL } from '../src/signup-guard.ts';
 import {
   closeTemporal,
   projectWorkflowId,
@@ -22,6 +23,8 @@ import {
   supportTriageWorkflowId,
   temporal,
 } from '../src/temporal.ts';
+import { historyText } from './history.ts';
+import { codeSignIn, signUp as codeSignUp, cookieOf } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
@@ -29,9 +32,6 @@ const origin = allowedOrigins[0]!;
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 
 type User = { id: string; email: string; cookie: string };
-const password = 'correct-horse-battery';
-const cookieOf = (res: { cookies: { name: string; value: string }[] }) =>
-  res.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
 
 // Mails go out through the worker's SendEmailWorkflow into the compose Mailpit.
 const mailpit = process.env.MAILPIT_URL ?? 'http://localhost:8025';
@@ -46,7 +46,7 @@ async function mailTo(to: string, subject?: RegExp): Promise<Mail> {
     if (hit) {
       const mail = await (await fetch(`${mailpit}/api/v1/message/${hit.ID}`)).json();
       const link = mail.Text.match(/https?:\/\/[^\s\]]+/)?.[0];
-      expect(mail.HTML).toContain(link.replaceAll('&', '&amp;'));
+      if (link) expect(mail.HTML).toContain(link.replaceAll('&', '&amp;'));
       return { ...mail, link };
     }
     await new Promise((r) => setTimeout(r, 100));
@@ -54,34 +54,7 @@ async function mailTo(to: string, subject?: RegExp): Promise<Mail> {
   throw new Error(`no mail to ${to} in Mailpit: are Mailpit and the worker (pnpm worker) up?`);
 }
 
-/** Follows a mailed link through the API: path + query, same as the browser would. */
-const follow = (link: string, cookie?: string) => {
-  const url = new URL(link);
-  return app.inject({
-    method: 'GET',
-    url: url.pathname + url.search,
-    remoteAddress: ip(),
-    headers: cookie ? { cookie } : {},
-  });
-};
-
-/** Signs up, confirms the address from the mailed link and returns the signed-in user. */
-async function signUp(email = `${randomUUID()}@example.com`): Promise<User> {
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password, name: 'T' },
-  });
-  expect(res.statusCode).toBe(200);
-  expect(res.json().token).toBeNull(); // no session before the address is confirmed
-  const verified = await follow((await mailTo(email, /Confirm/)).link);
-  expect(verified.statusCode).toBe(302);
-  const cookie = cookieOf(verified);
-  expect(cookie).toContain('session_token');
-  return { id: res.json().user.id, email, cookie };
-}
+const signUp = (email?: string): Promise<User> => codeSignUp(app, email);
 
 async function createOrg(user: User): Promise<string> {
   const slug = randomUUID();
@@ -142,10 +115,10 @@ describe('platform', () => {
     for (let i = 0; i < 11; i++) {
       const res = await app.inject({
         method: 'POST',
-        url: '/api/auth/sign-in/email',
+        url: '/api/auth/sign-in/email-otp',
         remoteAddress,
         headers: { origin },
-        payload: { email: 'nobody@example.com', password: 'wrong-password-123' },
+        payload: { email: 'nobody@example.com', otp: '000000' },
       });
       statuses.push(res.statusCode);
     }
@@ -153,74 +126,138 @@ describe('platform', () => {
   });
 });
 
-describe('transactional email', () => {
-  const signIn = (email: string, pass: string) =>
+describe('sign-in with an e-mail code', () => {
+  const sendCode = (email: string, headers: Record<string, string> = {}) =>
     app.inject({
       method: 'POST',
-      url: '/api/auth/sign-in/email',
+      url: '/api/auth/email-otp/send-verification-otp',
       remoteAddress: ip(),
-      headers: { origin },
-      payload: { email, password: pass },
+      headers: { origin, ...headers },
+      payload: { email, type: 'sign-in' },
     });
+  const enter = (email: string, otp: string) =>
+    call(null, 'POST', '/api/auth/sign-in/email-otp', { email, otp });
+  const newCode = (email: string) =>
+    auth.api.createVerificationOTP({ body: { email, type: 'sign-in' } });
+  const wrong = (otp: string) => (otp === '000000' ? '111111' : '000000');
 
-  it('verifies the address from the mailed link, in the requested language', async () => {
+  it('mails a code in the requested language; the first sign-in creates the account', async () => {
     const email = `${randomUUID()}@example.com`;
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/auth/sign-up/email',
-      remoteAddress: ip(),
-      headers: { origin, 'accept-language': 'ru-RU,ru;q=0.9,en;q=0.8' },
-      payload: { email, password, name: 'Ада' },
+    expect(
+      (await sendCode(email, { 'accept-language': 'ru-RU,ru;q=0.9,en;q=0.8' })).json(),
+    ).toEqual({
+      success: true,
     });
-    expect(res.statusCode).toBe(200);
-    expect((await signIn(email, password)).statusCode).toBe(403); // not verified yet
-
-    const mail = await mailTo(email, /Подтвердите/);
-    expect(mail.Text).toContain('Ада, подтвердите адрес почты');
+    const mail = await mailTo(email, /Код для входа/);
     expect(mail.HTML).toContain('lang="ru"');
-    const verified = await follow(mail.link);
-    expect(verified.statusCode).toBe(302);
+    const code = mail.Text.match(/\b\d{6}\b/)?.[0];
+    expect(code).toBeDefined();
+    const res = await call(null, 'POST', '/api/auth/sign-in/email-otp', {
+      email,
+      otp: code,
+      name: 'Ада',
+    });
+    expect(res.statusCode, res.body).toBe(200);
     const session = await call(
-      { id: '', email, cookie: cookieOf(verified) },
+      { id: '', email, cookie: cookieOf(res) },
       'GET',
       '/api/auth/get-session',
     );
-    expect(session.json().user).toMatchObject({ email, emailVerified: true });
-    expect((await signIn(email, password)).statusCode).toBe(200);
+    expect(session.json().user).toMatchObject({ email, name: 'Ада', emailVerified: true });
+    // A code works once.
+    expect((await enter(email, code!)).statusCode).toBe(400);
+    // No name given: the address's local part, so mails never greet an empty name.
+    const local = randomUUID();
+    const unnamed = await enter(`${local}@example.com`, await newCode(`${local}@example.com`));
+    expect(unnamed.json().user.name).toBe(local);
   });
 
-  it('resets a forgotten password through the mailed link', async () => {
-    const user = await signUp();
-    const requested = await call(null, 'POST', '/api/auth/request-password-reset', {
-      email: user.email,
-      redirectTo: '/reset-password',
-    });
-    expect(requested.statusCode).toBe(200);
-    // Unknown addresses get the same answer and no mail.
-    const unknown = await call(null, 'POST', '/api/auth/request-password-reset', {
-      email: `${randomUUID()}@example.com`,
-      redirectTo: '/reset-password',
-    });
-    expect(unknown.json()).toEqual(requested.json());
+  it('refuses a wrong code, an expired one and a code after 3 wrong tries', async () => {
+    const email = (await signUp()).email;
+    let otp = await newCode(email);
+    expect((await enter(email, wrong(otp))).json()).toMatchObject({ code: 'INVALID_OTP' });
+    expect((await enter(email, otp)).statusCode).toBe(200); // a wrong try does not burn the code
 
-    const mail = await mailTo(user.email, /Reset/);
-    expect(mail.Text).toContain('Reset your password');
-    // The link checks the token and lands on the web's reset page with it.
-    const landing = await follow(mail.link);
-    expect(landing.statusCode).toBe(302);
-    const token = new URL(landing.headers.location!, origin).searchParams.get('token');
-    expect(token).toBeTruthy();
-    const reset = await call(null, 'POST', '/api/auth/reset-password', {
-      newPassword: 'a-brand-new-passphrase',
-      token,
-    });
-    expect(reset.statusCode).toBe(200);
-    expect((await signIn(user.email, password)).statusCode).toBe(401);
-    expect((await signIn(user.email, 'a-brand-new-passphrase')).statusCode).toBe(200);
-    // Sessions from before the reset are revoked.
-    expect((await call(user, 'GET', '/api/auth/get-session')).json()).toBeNull();
+    otp = await newCode(email);
+    for (let i = 0; i < 3; i++) expect((await enter(email, wrong(otp))).statusCode).toBe(400);
+    const locked = await enter(email, otp);
+    expect(locked.statusCode).toBe(403);
+    expect(locked.json()).toMatchObject({ code: 'TOO_MANY_ATTEMPTS' });
+
+    // Expired. Better Auth sweeps expired verification rows on every lookup, from any test file
+    // running in parallel, so the answer is OTP_EXPIRED or, once swept, INVALID_OTP: both refuse.
+    // (A faked clock here would sweep the other files' fresh codes from the shared database.)
+    otp = await newCode(email);
+    await db
+      .update(verification)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(verification.identifier, `sign-in-otp-${email}`));
+    const expired = await enter(email, otp);
+    expect(expired.statusCode).toBe(400);
+    expect(['OTP_EXPIRED', 'INVALID_OTP']).toContain(expired.json().code);
   });
 
+  it('resends the same code while it is valid (nobody can replace a pending code)', async () => {
+    const email = `${randomUUID()}@example.com`;
+    expect((await sendCode(email)).statusCode).toBe(200);
+    // A second request (server-side: the 30 s cooldown is the HTTP route's) mails the same code.
+    await auth.api.sendVerificationOTP({ body: { email, type: 'sign-in' } });
+    let texts: string[] = [];
+    for (let i = 0; i < 100 && texts.length < 2; i++) {
+      const query = new URLSearchParams({ query: `to:${email}` });
+      const { messages } = await (await fetch(`${mailpit}/api/v1/search?${query}`)).json();
+      if (messages.length >= 2) {
+        texts = await Promise.all(
+          messages.map(
+            async (m: { ID: string }) =>
+              (await (await fetch(`${mailpit}/api/v1/message/${m.ID}`)).json()).Text,
+          ),
+        );
+      } else await new Promise((r) => setTimeout(r, 100));
+    }
+    const codes = texts.map((t) => t.match(/\b\d{6}\b/)?.[0]);
+    expect(codes).toHaveLength(2);
+    expect(codes[0]).toBe(codes[1]);
+    expect((await enter(email, codes[0]!)).statusCode).toBe(200);
+  });
+
+  it('stops mailing codes to an address after 10 wrong codes in an hour', async () => {
+    const email = `${randomUUID()}@example.com`;
+    const rows = () =>
+      db
+        .select()
+        .from(verification)
+        .where(eq(verification.identifier, `sign-in-otp-${email}`));
+    for (let i = 0; i < 10; i++) expect((await enter(email, '000000')).statusCode).toBe(400);
+    await db.delete(verification).where(eq(verification.identifier, `sign-in-otp-${email}`));
+    // The same neutral answer as always, but no code is created and nothing is mailed.
+    const capped = await sendCode(email);
+    expect(capped.statusCode).toBe(200);
+    expect(capped.json()).toEqual({ success: true });
+    expect(await rows()).toHaveLength(0);
+    // Other addresses are not affected.
+    const other = `${randomUUID()}@example.com`;
+    expect((await sendCode(other)).statusCode).toBe(200);
+    expect(
+      await db
+        .select()
+        .from(verification)
+        .where(eq(verification.identifier, `sign-in-otp-${other}`)),
+    ).toHaveLength(1);
+  });
+
+  it('mails one code per address per 30 s (resend cooldown)', async () => {
+    const email = `${randomUUID()}@example.com`;
+    expect((await sendCode(email)).statusCode).toBe(200);
+    expect((await sendCode(email.toUpperCase())).statusCode).toBe(429); // same address, any IP
+    expect((await sendCode(`${randomUUID()}@example.com`)).statusCode).toBe(200);
+    // Signing in with a code ends it: sign out and in again right away.
+    expect((await enter(email, await newCode(email))).statusCode).toBe(200);
+    expect((await sendCode(email)).statusCode).toBe(200);
+  });
+});
+
+describe('transactional email', () => {
   it('mails an organization invitation that the invitee accepts', async () => {
     const owner = await signUp();
     const org = await createOrg(owner);
@@ -243,6 +280,85 @@ describe('transactional email', () => {
     });
     expect(accepted.statusCode).toBe(200);
     expect(accepted.json().member).toMatchObject({ organizationId: org, role: 'member' });
+  });
+});
+
+describe('sign-up protection (disposable email)', () => {
+  // Asking for a code: refused before a code exists or a mail goes out.
+  const signUpRes = (email: string) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/auth/email-otp/send-verification-otp',
+      remoteAddress: ip(),
+      headers: { origin },
+      payload: { email, type: 'sign-in' },
+    });
+  /** Runs `fn` with extra allow/deny domains, restoring the parsed env afterwards. */
+  async function withDomains(allow: string[], deny: string[], fn: () => Promise<void>) {
+    const saved = [env.SIGNUP_EMAIL_ALLOW_DOMAINS, env.SIGNUP_EMAIL_DENY_DOMAINS];
+    Object.assign(env, { SIGNUP_EMAIL_ALLOW_DOMAINS: allow, SIGNUP_EMAIL_DENY_DOMAINS: deny });
+    try {
+      await fn();
+    } finally {
+      [env.SIGNUP_EMAIL_ALLOW_DOMAINS, env.SIGNUP_EMAIL_DENY_DOMAINS] = saved as [
+        string[],
+        string[],
+      ];
+    }
+  }
+
+  it('refuses a disposable address at sign-up with a neutral 400, accepts a normal one', async () => {
+    for (const email of [`${randomUUID()}@mailinator.com`, `${randomUUID()}@Sub.YOPmail.com`]) {
+      const res = await signUpRes(email);
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'EMAIL_NOT_ALLOWED', message: DISPOSABLE_EMAIL });
+    }
+    expect((await signUpRes(`${randomUUID()}@example.com`)).statusCode).toBe(200);
+    // A code obtained anyway (the list grew in between) still creates no account.
+    const late = await codeSignIn(app, `${randomUUID()}@mailinator.com`);
+    expect(late.json()).toMatchObject({ code: 'EMAIL_NOT_ALLOWED' });
+  });
+
+  it('honours the operator allow-list and deny-list', async () => {
+    await withDomains(['mailinator.com'], ['example.org'], async () => {
+      expect((await signUpRes(`${randomUUID()}@mailinator.com`)).statusCode).toBe(200);
+      expect((await signUpRes(`${randomUUID()}@team.example.org`)).statusCode).toBe(400);
+    });
+  });
+
+  it('refuses users created without the form (SSO, operator) and email changes', async () => {
+    // OIDC and admin sign-ups go through the same internal adapter and its database hook.
+    const { internalAdapter } = await auth.$context;
+    for (const method of ['oauth', 'admin'] as const) {
+      await expect(
+        internalAdapter.createUser(
+          { email: `${randomUUID()}@mailinator.com`, name: 'T' },
+          { method },
+        ),
+      ).rejects.toMatchObject({ statusCode: 400 });
+    }
+    const user = await signUp();
+    await expect(
+      internalAdapter.updateUser(user.id, { email: `${randomUUID()}@mailinator.com` }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    await expect(internalAdapter.updateUser(user.id, { name: 'Renamed' })).resolves.toBeTruthy();
+  });
+
+  it('refuses an invitation to a disposable address', async () => {
+    const owner = await signUp();
+    const org = await createOrg(owner);
+    const invite = (email: string) =>
+      call(owner, 'POST', '/api/auth/organization/invite-member', {
+        email,
+        role: 'member',
+        organizationId: org,
+      });
+    const refused = await invite(`${randomUUID()}@mailinator.com`);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().message).toBe(DISPOSABLE_EMAIL);
+    await withDomains(['mailinator.com'], [], async () => {
+      expect((await invite(`${randomUUID()}@mailinator.com`)).statusCode).toBe(200);
+    });
   });
 });
 
@@ -483,7 +599,19 @@ describe('AI calls log', () => {
   });
 });
 
-describe('PostHog webhook -> GitHub issue', () => {
+/** The argument a workflow was started with (first event of its history). */
+async function startArg(handle: { fetchHistory: () => Promise<unknown> }): Promise<unknown> {
+  const history = (await handle.fetchHistory()) as {
+    events?: {
+      workflowExecutionStartedEventAttributes?: { input?: { payloads?: { data?: Uint8Array }[] } };
+    }[];
+  };
+  const data =
+    history.events?.[0]?.workflowExecutionStartedEventAttributes?.input?.payloads?.[0]?.data;
+  return data ? JSON.parse(Buffer.from(data).toString('utf8')) : undefined;
+}
+
+describe('PostHog webhook -> tracker item', () => {
   const hook = (secret: string | null, event: object) =>
     app.inject({
       method: 'POST',
@@ -499,6 +627,7 @@ describe('PostHog webhook -> GitHub issue', () => {
       insight_name: 'Journey: activation',
       insight_id: 'AbC123',
       state: 'Firing',
+      last_checked_at: randomUUID(), // a new text per test run: workflow ids are never reused
       breaches: 'The insight value (12%) is below the lower threshold (30%)',
     },
   };
@@ -514,7 +643,7 @@ describe('PostHog webhook -> GitHub issue', () => {
         },
       ],
       $pathname: '/projects/$projectId',
-      release: 'abc123',
+      release: randomUUID(),
     },
   };
 
@@ -523,18 +652,32 @@ describe('PostHog webhook -> GitHub issue', () => {
     expect((await hook('wrong', alert)).statusCode).toBe(401);
   });
 
-  it('dry-runs without a GitHub token and ignores unrelated events', async () => {
+  /** The item the worker will file: S3 object + TrackerItemWorkflow with only producer and key. */
+  const stored = async (res: { key: string }) => {
+    const id = `tracker-item-${res.key.slice('tracker-inbox/'.length, -'.json'.length)}`;
+    const handle = (await temporal()).workflow.getHandle(id);
+    const arg = await startArg(handle);
+    const item = (await getJson(env.S3_BUCKET, res.key)) as { title: string; body: string };
+    await handle.terminate('test cleanup').catch(() => {}); // the worker may have finished it
+    return { item, arg };
+  };
+
+  it('hands the redacted item to the worker through S3 and ignores unrelated events', async () => {
     const secret = env.POSTHOG_WEBHOOK_SECRET!;
-    const planned = (await hook(secret, alert)).json();
-    expect(planned).toMatchObject({
-      action: 'dry-run',
-      label: 'cjm-regression',
-      title: '[cjm] activation below 30%',
-    });
-    expect(planned.body).toContain('below the lower threshold');
+    const started = (await hook(secret, alert)).json();
+    expect(started).toMatchObject({ action: 'started', producer: 'cjm-regression' });
+    // A redelivered webhook (same text, same workflow id) files nothing twice.
+    expect((await hook(secret, alert)).json()).toMatchObject({ action: 'duplicate' });
+    const { item, arg } = await stored(started);
+    expect(item.title).toBe('[cjm] activation below 30%');
+    expect(item.body).toContain('below the lower threshold');
+    expect(arg).toEqual({ producer: 'cjm-regression', s3Key: started.key }); // no text in Temporal
+
     const feedback = (await hook(secret, survey)).json();
-    expect(feedback).toMatchObject({ action: 'dry-run', label: 'from-users' });
-    expect(feedback.body).not.toContain('a@example.com');
+    expect(feedback).toMatchObject({ action: 'started', producer: 'from-users' });
+    const filed = await stored(feedback);
+    expect(JSON.stringify(filed.item)).not.toContain('a@example.com');
+    expect(filed.item.title).toBe('[feedback] Upload fails, mail me at [email]');
     expect((await hook(secret, { event: '$pageview', properties: {} })).json()).toEqual({
       action: 'ignored',
     });
@@ -543,47 +686,12 @@ describe('PostHog webhook -> GitHub issue', () => {
     expect((await hook(secret, thumbs)).json()).toEqual({ action: 'ignored' });
   });
 
-  it('opens an issue, then comments on it for the same alert', async () => {
-    Object.assign(env, { GITHUB_TOKEN: 'test-token', GITHUB_REPO: 'example/app' });
-    const issues: { number: number; title: string }[] = [];
-    const calls: string[] = [];
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      calls.push(
-        `${init?.method ?? 'GET'} ${url.replace('https://api.github.com/repos/example/app', '')}`,
-      );
-      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer test-token');
-      if (init?.method === 'POST' && url.endsWith('/issues')) {
-        const body = JSON.parse(String(init.body));
-        expect(body.labels).toEqual(['cjm-regression']);
-        issues.push({ number: 7, title: body.title });
-        return Response.json({ number: 7 }, { status: 201 });
-      }
-      if (init?.method === 'POST') return Response.json({}, { status: 201 });
-      return Response.json(issues);
-    });
-    try {
-      const secret = env.POSTHOG_WEBHOOK_SECRET!;
-      expect((await hook(secret, alert)).json()).toEqual({ action: 'created', issue: 7 });
-      expect((await hook(secret, alert)).json()).toEqual({ action: 'commented', issue: 7 });
-      expect(calls).toEqual([
-        'GET /issues?state=open&per_page=100&labels=cjm-regression',
-        'POST /issues',
-        'GET /issues?state=open&per_page=100&labels=cjm-regression',
-        'POST /issues/7/comments',
-      ]);
-    } finally {
-      fetchMock.mockRestore();
-      Object.assign(env, { GITHUB_TOKEN: undefined, GITHUB_REPO: undefined });
-    }
-  });
-
   it('redacts answers with the PII sidecar and fails closed when it is down', async () => {
     Object.assign(env, { PII_REDACT_URL: 'http://pii.test:8000' });
     const sidecar: string[][] = [];
     let up = true;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      expect(String(input)).toBe('http://pii.test:8000/redact'); // never GitHub in a dry run
+      expect(String(input)).toBe('http://pii.test:8000/redact'); // the only HTTP call it makes
       if (!up) throw new TypeError('fetch failed');
       const { texts } = JSON.parse(String(init?.body)) as { texts: string[] };
       sidecar.push(texts);
@@ -591,16 +699,21 @@ describe('PostHog webhook -> GitHub issue', () => {
     });
     try {
       const secret = env.POSTHOG_WEBHOOK_SECRET!;
-      const filed = (await hook(secret, survey)).json();
-      expect(filed).toMatchObject({ action: 'dry-run', label: 'from-users' });
-      expect(filed.body).toContain('call [name] at [phone]');
+      const res = (await hook(secret, survey)).json();
+      expect(res).toMatchObject({ action: 'started', producer: 'from-users' });
+      const { item } = await stored(res);
+      expect(item.title).toBe('[feedback] Upload fails, call [name] at [phone]');
+      expect(item.body).toContain('call [name] at [phone]');
       expect(sidecar).toEqual([['Upload fails, mail me at a@example.com']]);
       up = false;
       const down = await hook(secret, survey);
       expect(down.statusCode).toBe(503);
       expect(down.body).not.toContain('example.com');
       // Alerts carry no user text and do not need the sidecar.
-      expect((await hook(secret, alert)).statusCode).toBe(200);
+      const again = { ...alert, properties: { ...alert.properties, state: 'Firing again' } };
+      const filed = await hook(secret, again);
+      expect(filed.statusCode).toBe(200);
+      await stored(filed.json());
     } finally {
       fetchMock.mockRestore();
       Object.assign(env, { PII_REDACT_URL: undefined });
@@ -688,7 +801,9 @@ describe('service desk (Chatwoot)', () => {
     const run = await handle.describe();
     expect(run.type).toBe('SupportTriageWorkflow');
     // Ids only in Temporal's history: the worker reads the text from Chatwoot.
-    expect(JSON.stringify(await handle.fetchHistory())).not.toContain('customer text');
+    const history = await historyText(handle);
+    expect(history).toContain(String(c.conversationId)); // decoded: the check can fail
+    expect(history).not.toContain('customer text');
     await handle.terminate('test cleanup');
   });
 
@@ -734,7 +849,7 @@ describe('service desk (Chatwoot)', () => {
       'release-v1.2.0',
     );
     const rel = (await temporal()).workflow.getHandle(rid);
-    expect(JSON.stringify(await rel.fetchHistory())).toContain('v1.2.0');
+    expect(await startArg(rel)).toMatchObject({ release: 'v1.2.0' });
     await rel.terminate('test cleanup');
   });
 
@@ -761,6 +876,67 @@ describe('service desk (Chatwoot)', () => {
       event.event_id,
     );
     await (await temporal()).workflow.getHandle(id).terminate('test cleanup');
+
+    // The release comment (worker/released.py) on a Plane item: live in that version.
+    const comment = (text: string) => ({
+      event: 'workitem.comment.created',
+      event_id: randomUUID(),
+      entity_type: 'issue',
+      data: {
+        id: event.data.id,
+        name: 'x',
+        comment: { comment_stripped: text, actor_id: 'u-bot' },
+      },
+      previous_attributes: {},
+    });
+    expect((await plane(comment('thanks!'))).json()).toEqual({ action: 'ignored' });
+    expect((await plane(comment('Released in v1.2.0 (via #5). Notes'))).json()).toEqual({
+      action: 'started',
+    });
+    const rid = supportClosedWorkflowId(
+      { tracker: 'plane', issueId: event.data.id },
+      'release-v1.2.0',
+    );
+    const rel = (await temporal()).workflow.getHandle(rid);
+    // The author goes along: the worker acts only on its own integration user's comments.
+    expect(await startArg(rel)).toMatchObject({ release: 'v1.2.0', author: 'u-bot' });
+    await rel.terminate('test cleanup');
+
+    // v1 payloads (Plane Community Edition, no `version`): the same two triggers.
+    const v1Id = randomUUID();
+    const v1 = (e: object) => plane({ webhook_id: 'w', workspace_slug: 'ws', ...e });
+    const v1State = {
+      event: 'issue',
+      action: 'updated',
+      data: { id: v1Id, project: 'p1', updated_at: '2026-11-07T10:00:00Z' },
+      activity: { field: 'state_id', old_value: 'a', new_value: 'b' },
+    };
+    expect((await v1({ ...v1State, activity: { field: 'name' } })).json()).toEqual({
+      action: 'ignored',
+    });
+    expect((await v1(v1State)).json()).toEqual({ action: 'started' });
+    await (await temporal()).workflow
+      .getHandle(
+        supportClosedWorkflowId({ tracker: 'plane', issueId: v1Id }, v1State.data.updated_at),
+      )
+      .terminate('test cleanup');
+    const v1Comment = {
+      event: 'issue_comment',
+      action: 'created',
+      data: {
+        id: randomUUID(),
+        issue: v1Id,
+        project: 'p1',
+        comment_stripped: 'Released in v2.0.0 (via #9).',
+      },
+      activity: { field: null, actor: { id: 'u-bot-v1', display_name: 'Release bot' } },
+    };
+    expect((await v1(v1Comment)).json()).toEqual({ action: 'started' });
+    const v1Rel = (await temporal()).workflow.getHandle(
+      supportClosedWorkflowId({ tracker: 'plane', issueId: v1Id }, 'release-v2.0.0'),
+    );
+    expect(await startArg(v1Rel)).toMatchObject({ release: 'v2.0.0', author: 'u-bot-v1' });
+    await v1Rel.terminate('test cleanup');
   });
 
   it('signs the widget identity of the signed-in user only', async () => {

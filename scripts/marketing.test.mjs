@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
+import { isEnabled } from '../apps/site/src/flags.ts';
 import { analyze, claudeArgs, report } from './geo-check.mjs';
 import { body, changedUrls } from './indexnow.mjs';
 import { jwt, range, requests, summarize } from './seo-report.mjs';
@@ -96,4 +97,10 @@ test('geo:check finds mentions, rank, citations and always passes the model', ()
   assert.throws(() => claudeArgs({ ...cfg, model: '' }, 'q?'), /model.*required/);
   const md = report('2026-11-07', cfg, 'claude 2.x', [{ question: 'q?', answer: 'A', ...r }]);
   assert.match(md, /Mentioned in 1\/1 answers; average rank among brands named: 2\.0/);
+});
+
+test('site flags: "Book a demo" stays off until VITE_FLAGS_ON=booking (build time)', () => {
+  assert.equal(isEnabled('booking', {}), false); // catalog default
+  assert.equal(isEnabled('booking', { VITE_FLAGS_ON: 'other, booking' }), true);
+  assert.equal(isEnabled('booking', { VITE_FLAGS_OFF: 'booking' }), false);
 });

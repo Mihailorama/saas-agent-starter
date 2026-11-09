@@ -1,7 +1,7 @@
 // Better Auth tables (core + organization plugin). Regenerate after changing
 // auth plugins: `pnpm dlx @better-auth/cli generate` and reconcile here.
 // Not tenant-scoped by RLS: Better Auth reads them across orgs by user id.
-import { boolean, index, integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, jsonb, pgTable, text, timestamp } from 'drizzle-orm/pg-core';
 
 const createdAt = () => timestamp('created_at').notNull().defaultNow();
 const updatedAt = () =>
@@ -18,6 +18,17 @@ export const user = pgTable('user', {
   image: text('image'),
   /** twoFactor plugin: true once TOTP enrolment is verified. */
   twoFactorEnabled: boolean('two_factor_enabled').default(false),
+  /** admin plugin: `operator` for the back office (OPERATOR_EMAILS, docs/admin.md), else `user`. */
+  role: text('role'),
+  /** admin plugin's user ban; unused by the console (it suspends organizations instead). */
+  banned: boolean('banned').default(false),
+  banReason: text('ban_reason'),
+  banExpires: timestamp('ban_expires'),
+  /** Organization whose invitation reward this account counted for, once ever (docs/growth.md). */
+  inviteRewardOrgId: text('invite_reward_org_id'),
+  /** Referral the user signed up with (docs/growth.md): an org's referral code, or Dub's click id
+   * with DUB_API_KEY. Read once when they create an organization. */
+  referralCode: text('referral_code'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -34,6 +45,8 @@ export const session = pgTable('session', {
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' }),
   activeOrganizationId: text('active_organization_id'),
+  /** admin plugin: the operator viewing as this user (read-only, time-boxed; docs/admin.md). */
+  impersonatedBy: text('impersonated_by'),
 });
 
 export const account = pgTable('account', {
@@ -72,6 +85,18 @@ export const organization = pgTable('organization', {
   metadata: text('metadata'),
   /** Org policy, set by admins (routes/security.ts): members need 2FA to reach tenant data. */
   requireTwoFactor: boolean('require_two_factor').notNull().default(false),
+  /** Set by an operator (docs/admin.md): members and API keys get 403 ORG_SUSPENDED. */
+  suspendedAt: timestamp('suspended_at', { withTimezone: true }),
+  /** Internal note for operators; never shown to the organization. */
+  suspendReason: text('suspend_reason'),
+  /** Operator overrides of plan limits, capped by the plan's `limitsMax` (config/plans.json). */
+  limitOverrides: jsonb('limit_overrides').$type<{ seats?: number; projects?: number }>(),
+  /** This org's own referral code (`?ref=`), created with its first referral link. */
+  referralCode: text('referral_code').unique(),
+  /** Dub Partners' link for this org, created once (DUB_API_KEY, docs/growth.md). */
+  referralLink: text('referral_link'),
+  /** Org that referred this one (docs/growth.md), or `dub` when Dub Partners attributed it. */
+  referredBy: text('referred_by'),
 });
 
 export const member = pgTable('member', {

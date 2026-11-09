@@ -1,9 +1,10 @@
 # Service desk (Chatwoot)
 
 Users ask questions, report problems and suggest improvements in one place: the **Help** menu in
-the app, plus email and Telegram. Tickets live in [Chatwoot](https://github.com/chatwoot/chatwoot)
-(MIT core, self-hosted), backlog items live in the tracker (GitHub Issues by default, Plane
-Intake optionally). This repo keeps no ticket table, event journal or link table. The link
+the app, plus email and Telegram. For Telegram only, without Chatwoot, see
+[Lite: Telegram only](#lite-telegram-only). Tickets live in [Chatwoot](https://github.com/chatwoot/chatwoot)
+(MIT core, self-hosted), backlog items live in the tracker (Plane by default, new items in the
+project's Intake; GitHub Issues as an optional alternative). This repo keeps no ticket table, event journal or link table. The link
 between a conversation and an issue lives in the two tools themselves: the conversation URL is
 written into the issue (body or "+1" comment), and the issue URL into the conversation's
 `tracker_issue_url` custom attribute. Decision record:
@@ -22,7 +23,7 @@ worker: read messages from Chatwoot -> classify (LLM gateway, audited) ->
   question: draft answer;  billing: hand to a human;  spam: flag
   -> one private note in the conversation (+ custom attributes). Never a reply to the customer.
 
-tracker item closed ──webhook──> POST /api/hooks/{github,plane} -> SupportIssueClosedWorkflow
+tracker item closed or released ──webhook──> POST /api/hooks/{plane,github} -> SupportIssueClosedWorkflow
   -> private note in every linked conversation (+ optional customer message)
 ```
 
@@ -30,8 +31,9 @@ tracker item closed ──webhook──> POST /api/hooks/{github,plane} -> Suppo
 | ---------------------- | -------------------------------------------------------------- |
 | Help menu + widget     | `apps/web/src/lib/support.ts`, `HelpMenu` in `pages/shell.tsx` |
 | Widget identity (HMAC) | `GET /api/support/identity` (`apps/api/src/routes/support.ts`) |
-| Webhook receivers      | `POST /api/hooks/chatwoot`, `/github`, `/plane` (same file)    |
+| Webhook receivers      | `POST /api/hooks/chatwoot`, `/plane`, `/github` (same file)    |
 | Triage + return path   | `services/worker-py/worker/support.py`, `workflows.py`         |
+| Tracker (one client)   | `services/worker-py/worker/tracker.py`                         |
 | Prompts (versioned)    | `prompts/support.triage/system.v1.md`, `duplicate.v1.md`       |
 | Containers             | `docker compose --profile support` (`docker-compose.yml`)      |
 
@@ -94,7 +96,8 @@ Chatwoot services), and they are not in the backup until copied to the bucket an
    **website token** to `VITE_CHATWOOT_WEBSITE_TOKEN`. Under Configuration, turn on **Enforce
    user identity validation** and copy the **HMAC token** to `CHATWOOT_HMAC_TOKEN` (API).
 3. **Webhook** (Settings -> Integrations -> Webhooks): URL `http://api:3000/api/hooks/chatwoot`
-   (or the public API URL), event **Message created**. Copy its secret (shown in the webhook's
+   (or the public API URL), event **Message created** (plus **Conversation created** if the CRM
+   sync is on: each new conversation becomes a note on the person, docs/crm.md). Copy its secret (shown in the webhook's
    edit form, or `GET /api/v1/accounts/{id}/webhooks`) to `CHATWOOT_WEBHOOK_SECRET` (API).
 4. **Bot user**: invite an agent such as `triage-bot@example.com`, add it to every inbox, sign
    in as it and copy Profile settings -> Access token to `CHATWOOT_API_TOKEN` (worker). Notes it
@@ -194,54 +197,210 @@ hash in `prompts/lock.json`; a changed prompt is a new version file plus a bumpe
 Dry runs:
 
 - `CHATWOOT_URL` / `CHATWOOT_API_TOKEN` empty: the workflow logs and ends (`dry-run`).
-- Tracker credentials empty: triage and the note happen; the note says which item would have
-  been created; nothing is filed.
+- Tracker credentials empty (`TRACKER`, below): triage and the note happen; the note says which
+  item would have been created; nothing is filed.
 - No triage model or `SUPPORT_AI_ORG_ID`: the workflow logs `off` and ends.
 
 ## Trackers
 
-`SUPPORT_TRACKER` picks the adapter (`github` default, or `plane`).
+Every producer of backlog items files through one tracker client, `worker/tracker.py` (search
+open items, create, comment, read): the PostHog alert/survey hook
+([docs/product-analytics.md](product-analytics.md)), this triage and the release comments
+([docs/releases.md](releases.md), `worker/released.py`). The API never calls a tracker: its
+PostHog hook redacts the text, writes `{title, body}` to the uploads bucket under
+`tracker-inbox/` and starts `TrackerItemWorkflow` (id = hash of the text, duplicates rejected)
+with only the producer and the key; the worker files the item and deletes the object, and the
+daily retention schedule deletes any left over after a day. Configuration (worker only):
 
-**GitHub Issues** (`GITHUB_TOKEN` fine-grained with Issues read/write, `GITHUB_REPO`, the same
-variables the PostHog hook uses). New items get labels `from-users`, `support` and `bug` or
-`feature-request`; a "+1" also adds `support` to the existing issue. Duplicate search uses
-`GET /search/issues` (`repo:<repo> is:issue is:open <keywords>`). Note: GitHub is a US
-processor. Issues contain the model's summary, not the transcript, but still a description of
-a user's problem: use Plane on-prem where that is not allowed.
+- `TRACKER`: `plane` (default) or `github` (optional, off by default). Credentials empty = dry
+  run everywhere.
+- `config/tracker.json`: one entry per producer (`cjm-regression`, `from-users`, `support-bug`,
+  `support-feature-request`) with its `labels` and, for Plane, an optional `state` (a state
+  name). Without `state` a new item goes to the project's **Intake**; with it, straight into that
+  state. The worker resolves the states at start and refuses to start when one is unknown or in
+  the `completed` or `cancelled` group. Labels are created in Plane when missing.
+- Nothing ever closes an item or moves it to a completed state: accepting, declining and closing
+  are for humans.
+- Errors from tracker calls carry only the HTTP status or the error class: request URLs (Plane's
+  search takes the keywords as a query parameter) never reach logs, Temporal history or Sentry.
 
-**Plane Intake** (`PLANE_API_URL` e.g. `https://api.plane.so` or your self-hosted URL,
-`PLANE_WORKSPACE` slug, `PLANE_PROJECT_ID`, `PLANE_API_TOKEN` with `projects.intakes:write` and
-work item read/write, optional `PLANE_APP_URL` for links when the app host differs). New items:
-`POST /api/v1/workspaces/{slug}/projects/{project_id}/intake-issues/` with
-`{"issue": {"name", "description_html"}}`, so they land in the project's Intake for a human to
-accept, decline or snooze. Duplicates: `GET .../work-items/search/` in the project, finished
-items dropped; "+1" is a work item comment. Intake must be enabled for the project.
+**Plane** (default; `PLANE_API_URL` e.g. `https://api.plane.so` or your self-hosted URL,
+`PLANE_WORKSPACE` slug, `PLANE_PROJECT_ID`, `PLANE_API_TOKEN`, optional `PLANE_APP_URL` for links
+when the app host differs). The worker uses Plane's official Python SDK
+([`plane-sdk`](https://pypi.org/project/plane-sdk/), MIT, by Plane Software), REST API v1:
+
+- New item in Intake: `intake.create` (`{"issue": {"name", "description_html"}}`), then the
+  producer's labels on the work item behind it (`work_items.update`, Intake takes no labels on
+  create). Intake must be enabled for the project. With a `state`: `work_items.create` with that
+  state and the labels.
+- Duplicates: Plane's work item search (`work_items.search`, narrowed to the project) skips items
+  still in Intake (they have the triage state), so the project's Intake list (every page) is read
+  as well: items pending or snoozed count as open; accepted ones come from the search, minus
+  those in a completed or cancelled state group. Alerts and feedback match the exact title
+  (Intake included); the triage passes keywords and lets the duplicate prompt decide.
+- "+1" and release notes are work item comments.
+
+**GitHub Issues** (optional: `TRACKER=github`, `GITHUB_TOKEN` fine-grained with Issues
+read/write, `GITHUB_REPO`, `GITHUB_API_URL` for GitHub Enterprise Server). Plain REST over
+httpx2: PyGithub is LGPL (banned by the license gate) and githubkit (MIT) would add a second HTTP
+client stack for six calls. New items get the producer's labels; a "+1" also adds `support` to
+the existing issue. Duplicates come from `GET /search/issues` (`repo:<repo> is:issue is:open
+<words>`). GitHub is a US processor: issues contain the model's summary, not the transcript, but
+still a description of a user's problem; use Plane on-prem where that is not allowed.
+
+### Live smoke run
+
+Against a real Plane test project, once a token is available. It files one alert (`[cjm] smoke test: signup funnel`, a comment on later runs),
+one support item and one release comment on that item, all in Intake, and prints their links;
+nothing is closed or moved. Decline the items in Intake afterwards.
+
+```sh
+cd services/worker-py
+PLANE_API_URL=https://api.plane.so PLANE_APP_URL=https://app.plane.so \
+PLANE_WORKSPACE=<slug> PLANE_PROJECT_ID=<project uuid> PLANE_API_TOKEN=<token> \
+uv run python -m worker.tracker smoke v0.0.0-smoke
+```
+
+The project needs Intake enabled. With the Plane webhook configured (below), the release
+comment also reaches `POST /api/hooks/plane`; it is ignored unless the token's user wrote it.
+A release-comment run over real PRs: `GITHUB_TOKEN=$(gh auth token) PLANE_...=...
+uv run --directory services/worker-py python -m worker.released <tag> --dry-run`.
 
 ## Return path
 
-- GitHub: repository Settings -> Webhooks: payload URL `<api>/api/hooks/github`, content type
-  `application/json`, secret `GITHUB_WEBHOOK_SECRET`, events **Issues** and **Issue comments**.
-  The API checks `X-Hub-Signature-256` and reacts only to issues labelled `support`: `closed`, or
-  a new `Released in v...` comment (below).
-- Plane: Workspace settings -> Webhooks: URL `<api>/api/hooks/plane`, event **Work items ->
-  Updated** (v2 webhook); optional filter `project_id = "<PLANE_PROJECT_ID>" and state_group in
-  ["completed", "cancelled"]`. Secret (`plane_wh_...`, downloaded as CSV) -> `PLANE_WEBHOOK_SECRET`,
-  plus `PLANE_PROJECT_ID` on the API. The API checks `X-Plane-Signature` (hex HMAC-SHA256 of the
-  raw body) and reacts to state changes in that project. Plane only calls public URLs.
+- Plane: Workspace settings -> Webhooks: URL `<api>/api/hooks/plane`, events **Work items ->
+  Updated** and **Work item comments -> Created** (v2 webhook); optional filter
+  `project_id = "<PLANE_PROJECT_ID>"`. The open-source Community Edition only sends v1 webhooks
+  (events `issue` / `issue_comment` with `action` and `activity.field`, no event id): subscribe
+  to work items and work item comments there; the receiver understands both formats. Secret (`plane_wh_...`, downloaded as CSV) ->
+  `PLANE_WEBHOOK_SECRET`, plus `PLANE_PROJECT_ID` on the API. The API checks
+  `X-Plane-Signature` (hex HMAC-SHA256 of the raw body) and reacts to state changes in that
+  project and to a new `Released in v...` comment (below). Plane only calls public URLs.
+- GitHub (optional tracker): repository Settings -> Webhooks: payload URL
+  `<api>/api/hooks/github`, content type `application/json`, secret `GITHUB_WEBHOOK_SECRET`,
+  events **Issues** and **Issue comments**. The API checks `X-Hub-Signature-256` and reacts only
+  to issues labelled `support`: `closed`, or a new `Released in v...` comment.
 
 Both start `SupportIssueClosedWorkflow` (one id per close event, so redeliveries do nothing). The
 worker re-reads the item, finds every conversation URL in its body and comments, and writes a
 private note in each: "Linked issue ... was resolved" or "closed without a fix (not planned)".
 With `SUPPORT_NOTIFY_ON_CLOSE=true` it also sends the customer a short "has been resolved"
-message, only for items closed as done (GitHub `completed`, Plane state group `completed`). The
+message, only for items closed as done (Plane state group `completed`, GitHub `completed`). The
 text is `RESOLVED_MESSAGE` in `worker/support.py` (English; change it for your audience).
 
-Releases (GitHub): "closed" only means merged. When the repo uses the release flow
-(docs/releases.md), `scripts/released.mjs` comments `Released in vX.Y.Z (via #PR) ...` on each
-closed issue. Subscribe the same GitHub webhook to **Issue comments** as well: a comment with
-that prefix on a `support` issue starts the same workflow (id per tag), which notes "Linked issue
-... is live in vX.Y.Z". With `SUPPORT_NOTIFY_ON_CLOSE=release` the customer message waits for
-that comment instead of the close.
+Releases: when the repo uses the release flow (docs/releases.md), `worker/released.py`
+comments `Released in vX.Y.Z (via #PR) ...` on every item a released PR closes: a closing
+keyword in the PR title or body (`Fixes PROJ-123` for Plane, `Closes #12` with `TRACKER=github`);
+a bare mention is not enough. It never changes an item's state. That comment starts the same
+workflow (id per tag), which notes "Linked issue ... is live in vX.Y.Z", also while the Plane
+item is still open (nobody has moved it yet). On Plane the worker acts only on release comments
+written by its own token's user (`users/me`, looked up once), so give the release workflow the
+same `PLANE_API_TOKEN`; a person typing "Released in v9" changes nothing. With
+`SUPPORT_NOTIFY_ON_CLOSE=release` the customer message waits for that comment
+instead of the close.
+
+## Lite: Telegram only
+
+A support bot users message in Telegram, with the team answering from a Telegram group: no
+Chatwoot, no extra containers. Built into the API and the worker, behind the flag
+`telegram-support` (default off).
+
+**Which one.** Lite when Telegram is where your users are (markets where it is the main
+messenger), a few people answer and the team lives in Telegram anyway. Chatwoot when you need more
+than one channel (widget, email), assignment, SLAs, canned answers, reports or the AI triage note,
+or when agents should not work from a messenger. Outgrowing lite = connecting the bot to a
+Chatwoot Telegram inbox ("Channels" above, `TELEGRAM_SUPPORT_*` unset); the tracker and the return
+path stay the same.
+
+```
+user ──> bot (private chat) ──webhook──> POST /api/hooks/telegram ──signal──> TelegramChatWorkflow
+          (X-Telegram-Bot-Api-Secret-Token, constant time)                    (id telegram-chat-<chat>-<thread>)
+worker: one forum topic per Telegram user in the team's supergroup, created on first contact;
+  user's message copied into it (copyMessage: text, photos, files, voice), 👍 reaction on it,
+  an acknowledgement on first contact (TEXTS in worker/telegram.py, by the user's language)
+team reply in the topic ──> same webhook ──> copied to the user's private chat
+/bug <title> or /feature <title> in a topic ──> tracker item (support-bug / support-feature-request)
+```
+
+- **Order and retries**: one workflow per private chat and one per topic, started or signalled
+  per message (signal-with-start); it relays its messages one at a time, in order, drops message
+  ids it has already seen (Telegram redelivers when an answer is slow), ends after an idle hour and
+  continues as new every 100 messages. The webhook is registered with `max_connections: 1`, so
+  Telegram sends updates one after another. Each step of a message (copy, reaction,
+  acknowledgement, note) is its own activity: a retry repeats only the failed step. A 429 waits
+  Telegram's `retry_after`; steps keep retrying for up to an hour, other 4xx are not retried.
+- **Storage**: `telegram_support_users` (Telegram user id, group id, topic id, linked app user id)
+  and `telegram_support_links` (signatures of used deep links). Messages are not stored by us: they
+  stay in Telegram. Workflow arguments carry ids only: message ids, the app user id of a verified
+  link, and for `/bug` the S3 key of the title (`tracker-inbox/`, deleted after filing, leftovers
+  purged daily).
+- **Account link**: Help -> Telegram in the app fetches a fresh payload from
+  `GET /api/support/telegram` on each click and opens `t.me/<bot>?start=<payload>`. The payload is
+  `<expiry>_<signature>_<user id>`, signed with a key derived from the bot token, valid for **10
+  minutes and once**: the API verifies it when `/start` arrives and stores its signature, so a
+  replayed or forwarded link is refused. The user gets "Done: this chat is now linked to your
+  account j\*\*\*@example.com" (masked email: they see at once if it is not theirs), or "expired or
+  already used"; the team gets "Linked to app user ... (organizations: ...)" in the topic. Without
+  a link the user is anonymous to the team (their Telegram name and id are in the topic title).
+- **Team commands** in a topic: `/bug <title>` and `/feature <title>` file a tracker item with the
+  Chatwoot triage's producers (`config/tracker.json`), or add "+1" to the open item with that exact
+  title (not when that item already links this topic: no "+1" on its own item). The title is
+  redacted once, in the API (`redact()`: Presidio with the `pii` sidecar, else emails only;
+  "Personal data" below); the item carries the topic link, never the user's messages. The bot
+  answers in the topic with the link (or "dry run" without tracker credentials). Other commands
+  are not relayed: the team can talk in the topic with `/note ...` and similar.
+- **Return path**: `SupportIssueClosedWorkflow` also finds topic links (`https://t.me/c/<group>/<topic>`)
+  in the item and notes the outcome in each topic; with `SUPPORT_NOTIFY_ON_CLOSE` the user gets
+  `RESOLVED_MESSAGE` in Telegram too.
+- **Rate limit**: 5 messages per minute per Telegram user (the API's Redis rate-limit store).
+  Over it, messages are dropped with a 200 answer, so Telegram does not redeliver them.
+- A deleted topic is recreated on the user's next message, a closed one is reopened; a reply the
+  user cannot receive (they blocked the bot) gets a "Not delivered" note in the topic.
+
+### Set up
+
+1. [@BotFather](https://t.me/BotFather): `/newbot`, keep the token. `/setprivacy` -> Disable is
+   not needed (the bot is an admin, admins get every message).
+2. Create a group, Settings -> **Topics** on (it becomes a forum supergroup). Add the team.
+   **The group is the trust boundary**: everyone in it reads every user's messages and can answer
+   as the bot. Keep it private (Group type: Private), revoke every invite link (Invite links ->
+   revoke, add people by hand), and leave _Remain anonymous_ off for every admin: replies from
+   anonymous admins come from Telegram's stand-in bot and are not relayed.
+3. Add the bot as **administrator** with _Manage topics_ (needed for `createForumTopic` and to
+   reopen closed topics).
+4. Chat id: send a message in the group, then
+   `curl -s https://api.telegram.org/bot<token>/getUpdates` (before the webhook is set) and take
+   `message.chat.id` (`-100...`).
+5. Configure and roll out:
+
+```sh
+TELEGRAM_SUPPORT_BOT_TOKEN=<token>                 # API + worker
+TELEGRAM_SUPPORT_CHAT_ID=-1001234567890            # API + worker
+TELEGRAM_SUPPORT_WEBHOOK_URL=https://app.example.com/api/hooks/telegram   # worker
+VITE_TELEGRAM_SUPPORT_BOT=example_support_bot      # web, build time: the Help menu entry
+pnpm flags:sync   # then turn `telegram-support` on in PostHog (or FLAGS_ON / VITE_FLAGS_ON)
+```
+
+The worker registers the webhook at start (`setWebhook` with `secret_token` = HMAC of the token,
+`allowed_updates: ["message"]`, `max_connections: 1`) while the flag is on; the API checks that header and answers 404
+while the flag is off. The flag is one switch for the bot (no per-user rollout: Telegram would
+redeliver what a user outside the rollout sends). The webhook URL must be public HTTPS (ports 443,
+80, 88 or 8443). To test locally, point a tunnel at the API and set the URL to it.
+
+### Limits
+
+- Telegram lets a bot send at most 20 messages per minute into one group (Bot FAQ). Every user
+  message is one copy into the support group, plus notes: beyond roughly 20 incoming messages a
+  minute the copies get 429s and wait (`retry_after`, up to an hour per step, then the step is
+  dropped). Sustained traffic like that is the point to move to Chatwoot.
+- A copy that succeeds just before its activity times out is retried and arrives twice (rare;
+  at-least-once delivery).
+- Edited messages and reactions are not relayed (the webhook subscribes to `message` only).
+  Messages Telegram cannot copy (polls with hidden answers, paid media, service messages) are not
+  relayed.
+- No assignment, statuses, search or reports beyond what Telegram offers (topic open/closed, pins).
+- Telegram is the processor of all support content: the residency notes below apply to it, and
+  there is no self-hosted variant.
 
 ## Personal data
 
@@ -282,7 +441,7 @@ Chats, emails and Telegram messages are personal data. Deployments with data-res
 requirements self-host Chatwoot (this profile) in the required jurisdiction instead of using
 Chatwoot Cloud, and keep the rest of the path there too: a self-hosted tracker (Plane, not
 GitHub), a triage model served from an allowed endpoint (a contour in `config/ai-models.json`
-with an OpenAI-compatible `OPENAI_BASE_URL`), and the Chatwoot version check blocked if nothing
+with a self-hosted or custom OpenAI-compatible endpoint, docs/llm-providers.md), and the Chatwoot version check blocked if nothing
 may leave. Telegram messages transit Telegram's own servers; that is the user's choice of channel,
 but Chatwoot's copy stays where you host it.
 

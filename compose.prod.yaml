@@ -3,7 +3,11 @@
 # writes .env (decrypted deploy/env/<env>.enc.env + the IMAGE_* digests of the release) and runs
 # `docker compose up -d --wait`. Nothing is built here: api, worker and web are the images CI
 # pushed on a `v*` tag, pinned by digest. Optional on-box services are profiles, enabled with
-# COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback).
+# COMPOSE_PROFILES in the env file: db (Postgres), s3 (SeaweedFS), ops (Temporal UI on loopback),
+# llm-cli (vendor CLI subscriptions, an image you build yourself: docs/llm-providers.md),
+# booking (Cal.diy, image built by CI from a pinned upstream commit, IMAGE_CALDIY),
+# vault (Vaultwarden, the secrets vault, docs/secrets.md), analytics (Umami, docs/product-analytics.md).
+# `pnpm run infra` (docs/setup.md) writes the env file and picks the profiles for you.
 # Licenses of every image: docs/LICENSES.md.
 
 x-logging: &logging
@@ -24,12 +28,19 @@ services:
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN}
       CADDY_TLS: ${CADDY_TLS:?set CADDY_TLS to an ACME e-mail or "internal"}
+      # sites of on-box profiles (deploy/sites/<profile>.caddy, shipped only when enabled)
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+      VAULT_PUBLIC_URL: ${VAULT_PUBLIC_URL:-}
+      UMAMI_PUBLIC_URL: ${UMAMI_PUBLIC_URL:-}
+      # vault site: who may reach Vaultwarden's /admin; everyone else gets 403
+      VAULT_ADMIN_IPS: ${VAULT_ADMIN_IPS:-127.0.0.1/32}
     ports:
       - "${PUBLISH_IP:-0.0.0.0}:${HTTP_PORT:-80}:80"
       - "${PUBLISH_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443"
       - "${PUBLISH_IP:-0.0.0.0}:${HTTPS_PORT:-443}:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
       - caddy_data:/data # certificates and ACME account: keep this volume
       - caddy_config:/config
 
@@ -52,7 +63,7 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - TRUST_PROXY=true
+      - TRUST_PROXY=2 # hops in front of the API: Caddy, then the web container's nginx
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - TEMPORAL_ADDRESS=${TEMPORAL_ADDRESS:-temporal:7233}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${APP_DOMAIN}}
@@ -77,12 +88,12 @@ services:
       - POSTHOG_WEBHOOK_SECRET
       - POSTHOG_APP_HOST
       - POSTHOG_PROJECT_ID
-      - GITHUB_TOKEN
-      - GITHUB_REPO
       # profile pii: PII_REDACT_URL=http://pii:8000 (docs/support.md "Personal data")
       - PII_REDACT_URL
       - EMAIL_TASK_QUEUE
-      - REQUIRE_EMAIL_VERIFICATION
+      - SIGNUP_BLOCK_DISPOSABLE
+      - SIGNUP_EMAIL_ALLOW_DOMAINS
+      - SIGNUP_EMAIL_DENY_DOMAINS
       - FLAGS_ON
       - FLAGS_OFF
       - POSTHOG_KEY
@@ -99,11 +110,25 @@ services:
       - GITHUB_WEBHOOK_SECRET
       - PLANE_WEBHOOK_SECRET
       - PLANE_PROJECT_ID
+      # lite Telegram support (docs/support.md)
+      - TELEGRAM_SUPPORT_BOT_TOKEN
+      - TELEGRAM_SUPPORT_CHAT_ID
+      # booking webhook -> CRM (docs/crm.md)
+      - BOOKING_WEBHOOK_SECRET
       # billing (docs/billing.md); AI_CONTOUR picks the cost currencies the billing page shows
       - AI_CONTOUR=${AI_CONTOUR:-}
       - BILLING_CONTOUR
+      - PLANS_FILE
       - STRIPE_SECRET_KEY
       - STRIPE_WEBHOOK_SECRET
+      # rewards (docs/growth.md): the worker applies money rewards through /internal/rewards
+      - INTERNAL_API_TOKEN
+      # referrals via Dub Partners (docs/growth.md); empty = native referrals
+      - DUB_API_KEY
+      # operator console (docs/admin.md); empty OPERATOR_EMAILS = no operators
+      - OPERATOR_EMAILS
+      - OPERATOR_SESSION_MAX_AGE_MINUTES
+      - OPERATOR_IMPERSONATION_MINUTES
       # data-subject rights (docs/privacy.md)
       - PRIVACY_DELETION_GRACE_DAYS
       - PRIVACY_EXPORT_INTERVAL_HOURS
@@ -139,9 +164,27 @@ services:
       - AI_CONTENT_RETENTION_DAYS
       - AI_PROJECT_SUMMARY_PROVIDER
       - AI_PROJECT_SUMMARY_MODEL
+      # providers (docs/llm-providers.md): CLI subscriptions via llm-cli, the rest via LiteLLM
+      - LLM_CLI_URL=${LLM_CLI_URL:-http://llm-cli:8080}
+      - LLM_CLI_TOKEN
+      - AI_REQUEST_TIMEOUT_SECONDS
+      - AI_CLI_TIMEOUT_SECONDS
       - ANTHROPIC_API_KEY
       - OPENAI_API_KEY
-      - OPENAI_BASE_URL
+      - GEMINI_API_KEY
+      - XAI_API_KEY
+      - MOONSHOT_API_KEY
+      - OPENROUTER_API_KEY
+      - OPENAI_COMPATIBLE_BASE_URL
+      - OPENAI_COMPATIBLE_API_KEY
+      - VLLM_BASE_URL
+      - VLLM_API_KEY
+      - OLLAMA_BASE_URL
+      - AI_BYO_ALLOWED_CIDRS
+      # external MCP tools (docs/mcp.md)
+      - MCP_ALLOWED_CIDRS
+      - MCP_TOOL_MAX_ITERATIONS
+      - MCP_TOOL_TIMEOUT_SECONDS
       - EMAIL_TASK_QUEUE
       - SMTP_URL
       - MAIL_FROM
@@ -159,7 +202,7 @@ services:
       - CHATWOOT_URL
       - CHATWOOT_PUBLIC_URL
       - CHATWOOT_API_TOKEN
-      - SUPPORT_TRACKER
+      - TRACKER
       - GITHUB_TOKEN
       - GITHUB_REPO
       - PLANE_API_URL
@@ -171,6 +214,14 @@ services:
       - AI_SUPPORT_TRIAGE_MODEL
       - SUPPORT_AI_ORG_ID
       - SUPPORT_NOTIFY_ON_CLOSE
+      - TELEGRAM_SUPPORT_BOT_TOKEN
+      - TELEGRAM_SUPPORT_CHAT_ID
+      - TELEGRAM_SUPPORT_WEBHOOK_URL
+      # CRM sync (docs/crm.md); Twenty runs elsewhere (docs/deploy.md), empty = dry run
+      - TWENTY_API_URL
+      - TWENTY_API_KEY
+      - CRM_FILE
+      - BOOKING_PUBLIC_URL
       - FLAGS_ON
       - FLAGS_OFF
       - POSTHOG_KEY
@@ -178,6 +229,12 @@ services:
       - POSTHOG_SECRET_KEY
       # billing: plans and LLM spend limits (default: config/plans.json in the image)
       - PLANS_FILE
+      # usage reporting to Stripe Meters (docs/billing.md "Usage-based"); empty = off
+      - STRIPE_SECRET_KEY
+      # rewards (docs/growth.md): rules (default config/rewards.json) and the API link
+      - REWARDS_FILE
+      - API_INTERNAL_URL=${API_INTERNAL_URL:-http://api:3000}
+      - INTERNAL_API_TOKEN
       # data-subject rights (docs/privacy.md): retention and per-person export/deletion in tools
       - PRIVACY_EXPORT_TTL_DAYS
       - PRIVACY_ORG_RECORDS_DAYS
@@ -218,6 +275,25 @@ services:
       retries: 12
 
   # Static files + /api proxy; sets CSP/HSTS/nosniff/Referrer-Policy (apps/web/nginx.conf.template).
+  # Vendor CLI subscriptions for the worker (docs/llm-providers.md). Enable with COMPOSE_PROFILES
+  # containing llm-cli and IMAGE_LLM_CLI (repo@sha256:...) in the env file: the image contains the
+  # proprietary Claude Code CLI, so CI does not publish it; build services/llm-cli/Dockerfile
+  # yourself and push it to a private registry. Logins: files in LLM_CLI_SECRETS_DIR on the host
+  # (mode 600), named in its config. Internal only: no ports.
+  llm-cli:
+    profiles: [llm-cli]
+    image: ${IMAGE_LLM_CLI:-set-IMAGE_LLM_CLI}
+    logging: *logging
+    mem_limit: 2g
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      - LLM_CLI_TOKEN
+      - LLM_CLI_CONFIG=${LLM_CLI_CONFIG:-/etc/llm-cli/config.json}
+    volumes:
+      - ${LLM_CLI_SECRETS_DIR:-./llm-cli-secrets}:/run/secrets/llm-cli:ro
+
   web:
     image: ${IMAGE_WEB:?no release, deploy with scripts/deploy.mjs}
     logging: *logging
@@ -226,8 +302,10 @@ services:
     environment: # nginx's envsubst needs every variable defined, empty is fine
       S3_PUBLIC_ORIGIN: ${S3_PUBLIC_ORIGIN:-}
       SENTRY_PUBLIC_ORIGIN: ${SENTRY_PUBLIC_ORIGIN:-}
+      # analytics + survey origins (PostHog, Umami, Formbricks); VITE_* are baked in at build time
       ANALYTICS_ORIGINS: ${ANALYTICS_ORIGINS:-}
       SUPPORT_ORIGINS: ${SUPPORT_ORIGINS:-}
+      BOOKING_ORIGINS: ${BOOKING_ORIGINS:-}
       # Consent regime (docs/product-analytics.md#consent); must not be empty (nginx map value)
       CONSENT_MODE: ${CONSENT_MODE:-opt-in}
       CONSENT_COUNTRY_HEADER: ${CONSENT_COUNTRY_HEADER:-cf_ipcountry}
@@ -334,8 +412,8 @@ services:
       retries: 30
 
   # --- profile s3: SeaweedFS on this host (single server without managed S3). Internal only;
-  # browser uploads use presigned URLs, so S3_PUBLIC_ENDPOINT must reach it: add the S3 site
-  # in deploy/Caddyfile. Credentials: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY become its admin.
+  # browser uploads use presigned URLs, so S3_PUBLIC_ENDPOINT must reach it: Caddy serves it
+  # (deploy/sites/s3.caddy). Credentials: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY become its admin.
   s3:
     profiles: [s3]
     image: chrislusf/seaweedfs:4.52
@@ -352,8 +430,154 @@ services:
       interval: 2s
       retries: 30
 
+  # --- profile booking: Cal.diy (MIT) on this host (docs/crm.md "Booking", ADR 0026). The image
+  # is the one release.yml built from the pinned upstream commit (infra/caldiy/build.sh);
+  # scripts/deploy.mjs pins it by digest when COMPOSE_PROFILES contains booking. Its database
+  # lives on the app's Postgres server (create role + database `caldiy` once, docs/deploy.md), so
+  # the backups cover it. Reachable through Caddy: add the booking site in deploy/Caddyfile.
+  # Using Cal.com Cloud or a Cal.diy you already run elsewhere: leave the profile off.
+  caldiy:
+    profiles: [booking]
+    image: ${IMAGE_CALDIY:-set-IMAGE_CALDIY-by-deploying-with-scripts-deploy.mjs}
+    logging: *logging
+    mem_limit: 1g
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${CALDIY_DATABASE_URL:-}
+      - DATABASE_DIRECT_URL=${CALDIY_DATABASE_URL:-}
+      - DATABASE_HOST=${CALDIY_DATABASE_HOST:-postgres:5432}
+      - NEXT_PUBLIC_WEBAPP_URL=${CALDIY_PUBLIC_URL:-}
+      - NEXT_PUBLIC_WEBSITE_URL=${CALDIY_PUBLIC_URL:-}
+      - NEXTAUTH_URL=${CALDIY_PUBLIC_URL:-}/api/auth
+      - NEXTAUTH_SECRET=${CALDIY_NEXTAUTH_SECRET:-}
+      - CALENDSO_ENCRYPTION_KEY=${CALDIY_ENCRYPTION_KEY:-}
+      - CRON_API_KEY=${CALDIY_CRON_API_KEY:-}
+      - CALCOM_TELEMETRY_DISABLED=1
+      - EMAIL_FROM=${CALDIY_EMAIL_FROM:-}
+      - EMAIL_FROM_NAME=${CALDIY_EMAIL_FROM_NAME:-}
+      - EMAIL_SERVER_HOST=${CALDIY_SMTP_HOST:-}
+      - EMAIL_SERVER_PORT=${CALDIY_SMTP_PORT:-587}
+      - EMAIL_SERVER_USER=${CALDIY_SMTP_USER:-}
+      - EMAIL_SERVER_PASSWORD=${CALDIY_SMTP_PASSWORD:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 10s
+      start_period: 5m
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  # --- one-shots of profiles vault and analytics: create their role and database on the on-box
+  # Postgres (profile db), so the backups cover them; idempotent (deploy/db-init.sh). Passwords
+  # come from the env, never argv; `pnpm run infra` generates them. No password set: skipped.
+  vault-db:
+    profiles: [vault]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 64m
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: app
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      DB_PASSWORD: ${VAULT_DB_PASSWORD:-}
+      DB_NAME: vaultwarden
+    entrypoint: ["/bin/sh", "/db-init.sh"]
+    volumes: ["./db-init.sh:/db-init.sh:ro"]
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  umami-db:
+    profiles: [analytics]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 64m
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: app
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      DB_PASSWORD: ${UMAMI_DB_PASSWORD:-}
+      DB_NAME: umami
+    entrypoint: ["/bin/sh", "/db-init.sh"]
+    volumes: ["./db-init.sh:/db-init.sh:ro"]
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  # --- profile analytics: Umami (MIT), self-hosted product analytics (docs/product-analytics.md).
+  # Its own domain through Caddy (deploy/sites/analytics.caddy). PRIVATE_MODE: calls nothing
+  # outside. The default admin/umami login is replaced by UMAMI_ADMIN_PASSWORD after the first
+  # deploy (deploy/setup/umami-admin.sh, run by `pnpm run infra`). PostHog Cloud: leave it off.
+  umami:
+    profiles: [analytics]
+    image: ghcr.io/umami-software/umami:3.4.1
+    logging: *logging
+    init: true
+    mem_limit: 1g
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://umami:${UMAMI_DB_PASSWORD:-}@postgres:5432/umami
+      APP_SECRET: ${UMAMI_APP_SECRET:-}
+      PRIVATE_MODE: "1"
+      DISABLE_TELEMETRY: "1"
+      DISABLE_UPDATES: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/heartbeat >/dev/null"]
+      interval: 5s
+      start_period: 60s
+      retries: 30
+    depends_on:
+      umami-db: { condition: service_completed_successfully }
+
+  # --- profile vault: Vaultwarden (AGPL-3.0, unmodified) as the team's secrets vault for humans
+  # and coding agents (docs/secrets.md). Its database lives on the app's Postgres server (create
+  # role + database `vaultwarden`: vault-db), so the backups cover it. Reachable only
+  # through Caddy over TLS (deploy/sites/vault.caddy). No public signups; accounts are
+  # invited from /admin, which is on only while VAULT_ADMIN_TOKEN (an argon2 hash) is set and is
+  # reachable only from VAULT_ADMIN_IPS (Caddy). Its database: the vault-db one-shot above.
+  # Using Bitwarden Cloud or a Vaultwarden you already run: leave the profile off.
+  vault:
+    profiles: [vault]
+    image: vaultwarden/server:1.37.5-alpine@sha256:bbe684a02d6b0db54256ff88eac9754f4519284a7b26314afc241fd7d0918191
+    logging: *logging
+    mem_limit: 128m
+    restart: unless-stopped
+    # Refuses to start with a plain-text admin token: empty (admin off) or an argon2 PHC hash only.
+    # No VAULT_SMTP_HOST: mail off (Vaultwarden refuses empty SMTP_* values).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        [ -n "$$SMTP_HOST" ] || unset SMTP_HOST SMTP_FROM SMTP_PORT SMTP_SECURITY SMTP_USERNAME SMTP_PASSWORD;
+        case "$$ADMIN_TOKEN" in ""|'$$argon2'*) exec /start.sh ;;
+        *) echo "VAULT_ADMIN_TOKEN must be an argon2 hash (docs/secrets.md)" >&2; exit 1 ;; esac
+    environment:
+      - DATABASE_URL=${VAULT_DATABASE_URL:-}
+      - DOMAIN=${VAULT_PUBLIC_URL:-}
+      - ADMIN_TOKEN=${VAULT_ADMIN_TOKEN:-}
+      - SIGNUPS_ALLOWED=false
+      - INVITATIONS_ALLOWED=true
+      - USER_ATTACHMENT_LIMIT=0
+      - ORG_ATTACHMENT_LIMIT=0
+      - SENDS_ALLOWED=false
+      - IP_HEADER=X-Forwarded-For
+      - SMTP_HOST=${VAULT_SMTP_HOST:-}
+      - SMTP_PORT=${VAULT_SMTP_PORT:-587}
+      - SMTP_SECURITY=${VAULT_SMTP_SECURITY:-starttls}
+      - SMTP_USERNAME=${VAULT_SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${VAULT_SMTP_PASSWORD:-}
+      - SMTP_FROM=${VAULT_SMTP_FROM:-}
+    volumes: [vault_data:/data] # RSA signing key + icon cache only; secrets are in Postgres
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:80/alive"]
+      interval: 5s
+      start_period: 30s
+      retries: 12
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+      vault-db: { condition: service_completed_successfully }
+
 volumes:
   caddy_data:
   caddy_config:
   pgdata:
   s3data:
+  vault_data:

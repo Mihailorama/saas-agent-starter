@@ -15,11 +15,14 @@ import { symmetricDecrypt } from 'better-auth/crypto';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { db } from './db.ts';
 
-/** Sensitive changes need a sign-in (password + 2FA, or passkey) at most this old. */
+/** Sensitive changes need a sign-in (email code + 2FA, or passkey) at most this old. */
 export const REAUTH_MAX_AGE_SECONDS = 10 * 60;
 
 // Better Auth path -> audit action; `fresh` = the change also needs a recent sign-in.
 const EVENTS: Record<string, { action: string; fresh?: boolean }> = {
+  // Starting enrolment also needs a recent sign-in: with a stolen session, adding a TOTP the
+  // owner does not have would lock them out. No password is asked (ADR 0033).
+  '/two-factor/enable': { action: 'two_factor.setup_started', fresh: true },
   '/two-factor/verify-totp': { action: 'two_factor.enabled' }, // only when it completes enrolment
   '/two-factor/disable': { action: 'two_factor.disabled', fresh: true },
   '/two-factor/generate-backup-codes': {
@@ -111,21 +114,43 @@ const ORG_OPEN = new Set([
  * mutating organization endpoints (invite, roles, remove member, update, delete...). Reads stay
  * open so the shell can render and send the user to enrolment.
  */
+/** The organization a Better Auth organization endpoint acts on, as Better Auth picks it:
+ * explicit org (id or slug), the invitation's org, else the session's active org. */
+export async function targetOrg(
+  body: unknown,
+  session: { session: unknown } | null,
+): Promise<string | undefined> {
+  const b = (body ?? {}) as {
+    organizationId?: unknown;
+    organizationSlug?: unknown;
+    invitationId?: unknown;
+  };
+  if (typeof b.organizationId === 'string') return b.organizationId;
+  if (typeof b.organizationSlug === 'string') {
+    const [org] = await db
+      .select({ id: organization.id })
+      .from(organization)
+      .where(eq(organization.slug, b.organizationSlug));
+    return org?.id;
+  }
+  if (typeof b.invitationId === 'string') {
+    const [inv] = await db
+      .select({ orgId: invitation.organizationId })
+      .from(invitation)
+      .where(eq(invitation.id, b.invitationId));
+    return inv?.orgId;
+  }
+  return (
+    (session?.session as { activeOrganizationId?: string | null })?.activeOrganizationId ??
+    undefined
+  );
+}
+
 const enforceOrgPolicy: AuthMiddleware = createAuthMiddleware(async (ctx) => {
   const session = await getSessionFromCtx(ctx);
   if (!session) return;
   if ((session.user as { twoFactorEnabled?: boolean | null }).twoFactorEnabled) return;
-  const body = (ctx.body ?? {}) as { organizationId?: unknown; invitationId?: unknown };
-  // Same target Better Auth picks: explicit org, the invitation's org, else the active org.
-  let orgId = typeof body.organizationId === 'string' ? body.organizationId : undefined;
-  if (!orgId && typeof body.invitationId === 'string') {
-    [{ orgId } = { orgId: undefined }] = await db
-      .select({ orgId: invitation.organizationId })
-      .from(invitation)
-      .where(eq(invitation.id, body.invitationId));
-  }
-  orgId ??=
-    (session.session as { activeOrganizationId?: string | null }).activeOrganizationId ?? undefined;
+  const orgId = await targetOrg(ctx.body, session);
   if (!orgId) return;
   const [org] = await db
     .select({ required: organization.requireTwoFactor })

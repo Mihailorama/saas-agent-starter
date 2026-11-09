@@ -1,0 +1,16 @@
+# Profile analytics (Umami, docs/product-analytics.md): its own domain for the tracking script and
+# the dashboard. Set UMAMI_PUBLIC_URL=https://umami.example.com. Umami starts with the login
+# admin/umami, so this site answers 503 until sites/umami.ready exists: deploy/setup/umami-admin.sh
+# (run by `pnpm run infra`) creates it once UMAMI_ADMIN_PASSWORD has replaced that login. By hand:
+# change the password first, then `touch sites/umami.ready` in DEPLOY_PATH.
+{$UMAMI_PUBLIC_URL} {
+	tls {$CADDY_TLS}
+	@setup {
+		not file {
+			root /etc/caddy/sites
+			try_files /umami.ready
+		}
+	}
+	respond @setup "Analytics is being set up" 503
+	reverse_proxy umami:3000
+}

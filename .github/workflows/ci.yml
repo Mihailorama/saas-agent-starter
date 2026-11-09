@@ -31,7 +31,7 @@ jobs:
         with:
           tool: cargo-deny
       - name: Start infra
-        run: docker compose --profile billing up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock
+        run: docker compose --profile billing --profile mcp up -d --wait postgres redis s3 temporal-ui mailpit stripe-mock mcp-server
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web exec playwright install --with-deps chromium
       - run: pnpm db:migrate
@@ -107,6 +107,59 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose --profile marketing build api web worker site
 
+  # Cal.diy for the booking profile (ADR 0026, docs/crm.md): upstream publishes no image, so it
+  # is built here from the pinned commit with upstream's own Dockerfile (infra/caldiy/build.sh),
+  # scanned with Trivy, then booted on our Postgres the way `--profile booking` runs it.
+  caldiy-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Free disk space (the Next.js monorepo build needs ~15 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/boost \
+            "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}"
+          df -h /
+      - run: infra/caldiy/build.sh caldiy:ci
+      - name: Scan with Trivy (fails on fixable critical vulnerabilities)
+        run: |
+          infra/caldiy/scan.sh caldiy:ci
+      - name: Boot on our Postgres (migrations, login page, memory)
+        env:
+          CALDIY_IMAGE: caldiy:ci
+        run: |
+          docker compose --profile booking up -d --wait --wait-timeout 600 caldiy
+          curl -fsS -o /dev/null -w 'login page: HTTP %{http_code}\n' http://localhost:3500/auth/login
+          sleep 60 # settle after the first requests, then measure
+          docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' | tee -a "$GITHUB_STEP_SUMMARY"
+      - if: failure()
+        run: docker compose --profile booking logs --tail 200 caldiy caldiy-db
+
+  # Secrets vault (`vault` profile, docs/secrets.md): Vaultwarden on our Postgres behind the local
+  # TLS proxy, admin page off without a token, public signups refused.
+  vault:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose --profile vault up -d --wait vault-tls
+      - name: Alive over TLS, admin off, signups closed
+        run: |
+          set -euo pipefail
+          docker compose cp vault-tls:/data/caddy/pki/authorities/local/root.crt "$RUNNER_TEMP/ca.crt"
+          v() { curl -sS --cacert "$RUNNER_TEMP/ca.crt" "$@"; }
+          v -f https://localhost:8222/alive
+          v https://localhost:8222/admin | grep -q "disabled, please configure the 'ADMIN_TOKEN'"
+          v -H 'content-type: application/json' \
+            -d '{"email":"stranger@example.com","name":"x","receiveMarketingEmails":false}' \
+            https://localhost:8222/identity/accounts/register/send-verification-email |
+            grep -q 'Registration not allowed'
+          docker compose exec -T postgres psql -U postgres -d vaultwarden -tAc \
+            "select count(*) from information_schema.tables where table_schema = 'public'" |
+            awk '{ exit !($1 > 10) }'
+      - if: failure()
+        run: docker compose --profile vault logs --tail 100 vault vault-tls vault-db
+
   # The production deploy path end to end on the runner (deploy/rehearsal.sh, docs/deploy.md):
   # SOPS-encrypted env, Caddy internal CA, migrate, deploy v1 -> v2, rollback, failing migration.
   deploy-rehearsal:
@@ -133,7 +186,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --verbose
+      # Scan what this run adds: the PR's own commits, or main's history on a push. gitleaks' default
+      # is every ref, so an unrelated branch's test fixture would fail every PR.
+      - env:
+          RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || 'HEAD' }}
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --verbose --log-opts="$RANGE"
 
   osv-scanner:
     runs-on: ubuntu-24.04

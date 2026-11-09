@@ -1,19 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
-import { mailedLink } from './mail';
+import { requestCode, signIn } from './mail';
 
 async function signUp(page: Page, email: string) {
-  await page.goto('/');
-  await expect(page).toHaveURL(/sign-in/);
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await page.getByLabel('Name').fill('Ada Lovelace');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill('correct-horse-battery');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
-  // The confirmation link signs the user in and lands on the app.
-  await page.goto(await mailedLink(email, /Confirm/));
+  await signIn(page, email);
+  await expect(page.getByLabel('Organization name')).toBeVisible();
 }
+
+test('sign-in refuses a disposable email address with a clear message', async ({ page }) => {
+  await page.goto('/sign-in');
+  await page.getByLabel('Email').fill(`${randomUUID()}@mailinator.com`);
+  await page.getByRole('button', { name: 'Email me a code' }).click();
+  await expect(page.getByText('This email address cannot be used')).toBeVisible();
+});
 
 test('sign up, create an organization and a project', async ({ page }) => {
   // On-prem default: no request leaves our own hosts (analytics sinks are env-gated).
@@ -31,6 +30,9 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await page.getByLabel('Description (optional)').fill('Tabulates polynomial functions.');
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByRole('link', { name: 'Difference Engine' })).toBeVisible();
+  // The `onboarding` flag is off here: no checklist and no tour (e2e/onboarding.spec.ts).
+  await expect(page.getByText('Get set up')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // The owner is an org admin and sees the AI call log (empty: no AI configured in tests).
   await page.getByRole('link', { name: 'AI calls' }).click();
@@ -58,31 +60,37 @@ test('sign up, create an organization and a project', async ({ page }) => {
   await expect(page.locator('#cc-main')).toHaveCount(0);
   // No Chatwoot configured: no Help entry and no widget request (docs/support.md).
   await expect(page.getByRole('button', { name: 'Help' })).toHaveCount(0);
+  // Booking is configured in this build but its flag is off: no "Talk to us" (next test).
+  await expect(page.getByRole('link', { name: 'Talk to us' })).toHaveCount(0);
   expect([...hosts]).toEqual(['localhost']);
 });
 
-test('forgotten password: reset through the mailed link', async ({ page, context }) => {
-  test.slow(); // two mailed links and five page loads on the Vite dev server
-  const email = `${randomUUID()}@example.com`;
-  await signUp(page, email);
-  await expect(page.getByLabel('Organization name')).toBeVisible();
-  await context.clearCookies();
+// "Talk to us" (docs/crm.md) with the `booking` flag on: the build on PLAYWRIGHT_BOOKING_PORT
+// (playwright.config.ts); the flag-off path is the default build above.
+test('booking flag on: "Talk to us" links to the booking page', async ({ page }) => {
+  await signUp(page, `${randomUUID()}@example.com`);
+  await page.getByLabel('Organization name').fill('Analytical Engines');
+  await page.getByRole('button', { name: 'Create organization' }).click();
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
 
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Forgot password?' }).click();
-  await page.getByLabel('Email').fill(email);
-  await page.getByRole('button', { name: 'Send reset link' }).click();
-  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
+  // Same session on the other build: cookies are per host, not per port.
+  await page.goto(`http://localhost:${process.env.PLAYWRIGHT_BOOKING_PORT ?? '5175'}/`);
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible({
+    timeout: 15_000, // first page of this dev server
+  });
+  const link = page.getByRole('link', { name: 'Talk to us' }).first();
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute('href', 'https://cal.example.com/acme/demo');
+});
 
-  await page.goto(await mailedLink(email, /Reset/));
-  await expect(page).toHaveURL(/reset-password\?token=/);
-  await page.getByLabel('New password', { exact: true }).fill('a-brand-new-passphrase');
-  await page.getByRole('button', { name: 'Change password' }).click();
-  await expect(page).toHaveURL(/sign-in/);
-
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill('a-brand-new-passphrase');
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+test('sign-in code: a wrong code shows an error, resend waits for the cooldown', async ({
+  page,
+}) => {
+  const code = await requestCode(page, `${randomUUID()}@example.com`);
+  await expect(page.getByRole('button', { name: /Resend code in \d+ s/ })).toBeDisabled();
+  await page.getByLabel('Code', { exact: true }).fill(code === '000000' ? '111111' : '000000');
+  await expect(page.getByRole('alert')).toHaveText(/not right/);
+  await page.getByLabel('Code', { exact: true }).fill(code);
   await expect(page.getByLabel('Organization name')).toBeVisible();
 });
 

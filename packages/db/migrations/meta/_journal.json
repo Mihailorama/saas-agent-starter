@@ -43,6 +43,69 @@
       "when": 1794058999861,
       "tag": "0005_privacy_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794062569735,
+      "tag": "0006_ai_providers",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794075231353,
+      "tag": "0007_operator_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794141061982,
+      "tag": "0008_mcp_servers",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794157280622,
+      "tag": "0009_billing_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794157678760,
+      "tag": "0010_billing_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794160189545,
+      "tag": "0011_telegram_support",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794163548411,
+      "tag": "0012_reward_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794163740376,
+      "tag": "0013_referrals",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794174255173,
+      "tag": "0014_drop_passwords",
+      "breakpoints": true
     }
   ]
 }

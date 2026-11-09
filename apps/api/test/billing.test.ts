@@ -1,47 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { aiCalls, auditLog, subscriptions, user, withOrg } from '@app/db';
+import { aiCalls, aiProviders, auditLog, subscriptions, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { auth } from '../src/auth.ts';
 import { billingPeriod, entitlementsOf, type Subscription } from '../src/billing/entitlements.ts';
 import { plans } from '../src/billing/plans.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
+import { costCurrency } from '../src/routes/billing.ts';
 import { billingWorkflowId, closeTemporal, temporal } from '../src/temporal.ts';
+import { signUp as codeSignUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 type User = { id: string; cookie: string };
 
-/** Signs up and signs in; the address is marked verified directly (Mailpit flow: api.test.ts). */
-async function signUp(): Promise<User> {
-  const email = `${randomUUID()}@example.com`;
-  const password = 'correct-horse-battery';
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password, name: 'T' },
-  });
-  expect(res.statusCode).toBe(200);
-  const id: string = res.json().user.id;
-  await db.update(user).set({ emailVerified: true }).where(eq(user.id, id));
-  const signIn = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-in/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password },
-  });
-  expect(signIn.statusCode).toBe(200);
-  return { id, cookie: signIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
-}
-const call = (user: User, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: object) =>
+const signUp = () => codeSignUp(app);
+const call = (
+  user: User,
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  url: string,
+  payload?: object,
+) =>
   app.inject({
     method,
     url,
@@ -127,6 +111,9 @@ describe('plans and entitlements', () => {
     llmSpendLimits: null,
     lastEventAt: null,
     updatedAt: new Date(),
+    seats: null,
+    contractRef: null,
+    usageReportedUntil: null,
     ...over,
   });
   const now = new Date('2026-11-20T00:00:00Z');
@@ -165,11 +152,9 @@ describe('plans and entitlements', () => {
       readFileSync(new URL('../../../config/ai-models.json', import.meta.url), 'utf8'),
     );
     const costCurrencies = new Set<string>(
-      Object.values(
-        models.contours as Record<string, { pricePer1kTokens: { currency: string } | null }[]>,
-      )
+      Object.values(models.contours as Record<string, Parameters<typeof costCurrency>[0][]>)
         .flat()
-        .flatMap((m) => (m.pricePer1kTokens ? [m.pricePer1kTokens.currency] : [])),
+        .flatMap((m) => costCurrency(m) ?? []),
     );
     for (const [id, plan] of Object.entries(plans.plans)) {
       for (const cur of costCurrencies) {
@@ -182,7 +167,9 @@ describe('plans and entitlements', () => {
           const price = plan.prices[cur];
           expect(price, `${id} price in ${cur}`).toBeDefined();
           // Stripe charges a price object.
-          if (c.provider === 'stripe') expect(price!.providerPriceId).toBeTruthy();
+          if (c.provider === 'stripe') {
+            for (const part of price!) expect(part.providerPriceId).toBeTruthy();
+          }
         }
       }
     }
@@ -410,5 +397,141 @@ describe('Stripe (stripe-mock)', () => {
       (await app.inject({ method: 'POST', url: '/api/billing/webhooks/paypal', payload: '{}' }))
         .statusCode,
     ).toBe(404);
+  });
+});
+
+describe('organization-owned AI providers (BYO)', () => {
+  // The flag override list and the contour are read per request: switch them for this block.
+  const contour = env.AI_CONTOUR;
+  const withFlag = (on: boolean) => {
+    env.FLAGS_ON.splice(0, env.FLAGS_ON.length, ...(on ? ['byo-llm-providers'] : []));
+  };
+  beforeAll(() => {
+    withFlag(true);
+    env.AI_CONTOUR = 'ru'; // lists the custom openai_compatible endpoint
+  });
+  afterAll(() => {
+    withFlag(false);
+    env.AI_CONTOUR = contour;
+  });
+  const custom = {
+    name: 'On-prem',
+    provider: 'openai_compatible',
+    baseUrl: 'https://llm.example.com/v1',
+    apiKey: 'sk-local-dev-byo-secret-1234',
+    models: { 'project.summary': 'example-model' },
+  };
+
+  it('needs the byoLlm plan feature and an admin', async () => {
+    const { owner, org } = await ownerWithOrg();
+    expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(402);
+    await subscribe(org);
+    const m = await signUp();
+    await auth.api.addMember({ body: { userId: m.id, organizationId: org, role: 'member' } });
+    await call(m, 'POST', '/api/auth/organization/set-active', { organizationId: org });
+    expect((await call(m, 'GET', '/api/ai-providers')).statusCode).toBe(403);
+    expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(201);
+  });
+
+  it('stores the key encrypted, never returns it, and audit-logs changes', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await subscribe(org);
+    const created = await call(owner, 'POST', '/api/ai-providers', custom);
+    expect(created.statusCode).toBe(201);
+    const body = created.json();
+    expect(body).toMatchObject({ kind: 'custom', apiKeyHint: '1234', enabled: true });
+    expect(JSON.stringify(body)).not.toContain(custom.apiKey);
+    const [row] = await withOrg(db, org, (tx) => tx.select().from(aiProviders));
+    expect(row!.apiKey).toMatch(/^v1:[^:]+:[^:]+:[^:]+$/);
+    expect(row!.apiKey).not.toContain(custom.apiKey);
+
+    const listed = await call(owner, 'GET', '/api/ai-providers');
+    expect(JSON.stringify(listed.json())).not.toContain('sk-local-dev');
+    const patched = await call(owner, 'PATCH', `/api/ai-providers/${body.id}`, {
+      apiKey: 'sk-local-dev-rotated-5678',
+      enabled: false,
+    });
+    expect(patched.json()).toMatchObject({ apiKeyHint: '5678', enabled: false });
+    // The stored key is never sent to a new endpoint without entering it again.
+    const moved = await call(owner, 'PATCH', `/api/ai-providers/${body.id}`, {
+      baseUrl: 'https://evil.example.com/v1',
+    });
+    expect(moved.statusCode).toBe(400);
+    expect((await call(owner, 'DELETE', `/api/ai-providers/${body.id}`)).statusCode).toBe(204);
+    const audit = await withOrg(db, org, (tx) =>
+      tx.select().from(auditLog).where(eq(auditLog.target, body.id)),
+    );
+    expect(audit.map((a) => a.action).sort()).toEqual([
+      'DELETE /api/ai-providers/:id',
+      'PATCH /api/ai-providers/:id',
+      'POST /api/ai-providers',
+    ]);
+  });
+
+  it('validates the shape and isolates organizations', async () => {
+    const a = await ownerWithOrg();
+    const b = await ownerWithOrg();
+    await subscribe(a.org);
+    await subscribe(b.org);
+    const bad = async (payload: object) =>
+      (await call(a.owner, 'POST', '/api/ai-providers', { ...custom, ...payload })).statusCode;
+    expect(await bad({ baseUrl: null })).toBe(400); // custom without a base URL
+    expect(await bad({ provider: 'anthropic' })).toBe(400); // vendor with a base URL
+    expect(await bad({ provider: 'claude_cli', baseUrl: null })).toBe(400); // not BYO-able
+    expect(await bad({ baseUrl: 'https://user:pw@llm.example.com' })).toBe(400);
+    expect(await bad({ models: { 'contract.review': 'x' } })).toBe(400);
+    expect(await bad({ provider: 'anthropic', baseUrl: null, apiKey: undefined })).toBe(400);
+
+    const own = (await call(a.owner, 'POST', '/api/ai-providers', custom)).json();
+    expect((await call(b.owner, 'GET', '/api/ai-providers')).json()).toEqual([]);
+    const other = await call(b.owner, 'PATCH', `/api/ai-providers/${own.id}`, { enabled: false });
+    expect(other.statusCode).toBe(404);
+    expect((await call(b.owner, 'DELETE', `/api/ai-providers/${own.id}`)).statusCode).toBe(404);
+    const options = (await call(a.owner, 'GET', '/api/ai-providers/options')).json();
+    expect(options.purposes).toContain('project.summary');
+    expect(options.purposes).not.toContain('judge');
+    expect(options.providers.map((p: { id: string }) => p.id)).not.toContain('claude_cli');
+  });
+
+  it('offers and accepts only providers the contour lists', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await subscribe(org);
+    const ids = async () =>
+      (await call(owner, 'GET', '/api/ai-providers/options'))
+        .json()
+        .providers.map((p: { id: string }) => p.id);
+    const anthropic = { ...custom, provider: 'anthropic', baseUrl: null };
+    expect(await ids()).toEqual(['openai_compatible']);
+    expect((await call(owner, 'POST', '/api/ai-providers', anthropic)).statusCode).toBe(400);
+    env.AI_CONTOUR = 'eu'; // lists anthropic, not openai_compatible or openrouter
+    try {
+      expect(await ids()).toEqual(['anthropic']);
+      expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(400);
+      const openrouter = { ...anthropic, provider: 'openrouter' };
+      expect((await call(owner, 'POST', '/api/ai-providers', openrouter)).statusCode).toBe(400);
+      expect((await call(owner, 'POST', '/api/ai-providers', anthropic)).statusCode).toBe(201);
+    } finally {
+      env.AI_CONTOUR = 'ru';
+    }
+  });
+
+  it('is not there (404) while the byo-llm-providers flag is off', async () => {
+    const { owner, org } = await ownerWithOrg();
+    await subscribe(org);
+    const created = (await call(owner, 'POST', '/api/ai-providers', custom)).json();
+    withFlag(false);
+    try {
+      expect((await call(owner, 'GET', '/api/ai-providers')).statusCode).toBe(404);
+      expect((await call(owner, 'GET', '/api/ai-providers/options')).statusCode).toBe(404);
+      expect((await call(owner, 'POST', '/api/ai-providers', custom)).statusCode).toBe(404);
+      const patch = await call(owner, 'PATCH', `/api/ai-providers/${created.id}`, {
+        enabled: false,
+      });
+      expect(patch.statusCode).toBe(404);
+      expect((await call(owner, 'DELETE', `/api/ai-providers/${created.id}`)).statusCode).toBe(404);
+    } finally {
+      withFlag(true);
+    }
+    expect((await call(owner, 'GET', '/api/ai-providers')).json()).toHaveLength(1);
   });
 });

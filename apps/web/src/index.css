@@ -24,6 +24,14 @@
   --color-popover-foreground: hsl(var(--popover-foreground));
   --color-card: hsl(var(--card));
   --color-card-foreground: hsl(var(--card-foreground));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
@@ -42,7 +50,7 @@
     --secondary: 220 14% 96%;
     --secondary-foreground: 222 47% 11%;
     --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
+    --muted-foreground: 220 9% 40%;
     --accent: 220 14% 96%;
     --accent-foreground: 222 47% 11%;
     --destructive: 0 72% 51%;
@@ -50,6 +58,14 @@
     --border: 220 13% 91%;
     --input: 220 13% 91%;
     --ring: 221 83% 53%;
+    --sidebar: 220 20% 98%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 94%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 221 83% 53%;
     --radius: 0.5rem;
   }
   .dark {
@@ -67,11 +83,19 @@
     --muted-foreground: 218 11% 65%;
     --accent: 223 14% 17%;
     --accent-foreground: 210 20% 96%;
-    --destructive: 0 63% 50%;
+    --destructive: 0 84% 66%;
     --destructive-foreground: 0 0% 100%;
     --border: 223 14% 19%;
     --input: 223 14% 19%;
     --ring: 217 91% 60%;
+    --sidebar: 224 20% 9.5%;
+    --sidebar-foreground: 210 20% 96%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 224 20% 8%;
+    --sidebar-accent: 223 14% 17%;
+    --sidebar-accent-foreground: 210 20% 96%;
+    --sidebar-border: 223 14% 19%;
+    --sidebar-ring: 217 91% 60%;
   }
   /* v4 defaults borders to currentcolor and buttons to cursor: default; keep the v3 look. */
   *,
@@ -123,4 +147,41 @@
   --cc-footer-color: hsl(var(--muted-foreground));
   --cc-footer-border-color: hsl(var(--border));
   --cc-link-color: hsl(var(--primary));
+}
+
+/* Product tour (driver.js, docs/onboarding.md) in the app's tokens, light and dark. */
+.app-tour.driver-popover {
+  font-family: inherit;
+  color: hsl(var(--popover-foreground));
+  background-color: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+}
+.app-tour .driver-popover-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.app-tour .driver-popover-description,
+.app-tour .driver-popover-progress-text,
+.app-tour .driver-popover-close-btn {
+  color: hsl(var(--muted-foreground));
+}
+.app-tour .driver-popover-close-btn:hover,
+.app-tour .driver-popover-close-btn:focus-visible {
+  color: hsl(var(--foreground));
+}
+.app-tour .driver-popover-footer-btn {
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--background));
+  border-color: hsl(var(--border));
+  border-radius: calc(var(--radius) - 2px);
+  text-shadow: none;
+}
+.app-tour .driver-popover-footer-btn:focus-visible,
+.app-tour .driver-popover-close-btn:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+.app-tour .driver-popover-arrow {
+  border-color: hsl(var(--popover));
 }

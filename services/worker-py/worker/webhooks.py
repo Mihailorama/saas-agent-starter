@@ -8,7 +8,8 @@ checked IP (Host header and TLS SNI keep the hostname), so DNS cannot swap the t
 check and connect. Redirects are not followed and response bodies are never read.
 
 Signing secrets are stored encrypted (AES-256-GCM, `v1:<key id>:<iv>:<ciphertext+tag>`, bound
-to the endpoint id); this module is the only place that decrypts them. Twin of
+to the endpoint id); this module holds the only decryption code (the AI gateway uses it for
+organization-owned provider keys, bound to org and row id). Twin of
 apps/api/src/webhook-secret.ts, which only encrypts.
 """
 
@@ -46,6 +47,7 @@ PERMANENT = {
     "invalid_url",
     "blocked_address",
     "secret_unreadable",
+    "org_suspended",  # an operator suspended the org (docs/admin.md); a replay resends it later
 }
 
 
@@ -159,7 +161,9 @@ class WebhookActivities:
             row = await conn.fetchrow(
                 "select d.status, e.id::text as event_id, e.payload, ep.id::text as endpoint_id,"
                 " ep.url, ep.enabled,"
-                " ep.secret, ep.previous_secret, ep.previous_secret_expires_at"
+                " ep.secret, ep.previous_secret, ep.previous_secret_expires_at,"
+                " (select o.suspended_at is not null from organization o where o.id = ep.org_id)"
+                " as org_suspended"
                 " from webhook_deliveries d"
                 " join webhook_events e on e.id = d.event_id"
                 " join webhook_endpoints ep on ep.id = d.endpoint_id"
@@ -201,6 +205,8 @@ class WebhookActivities:
         return status
 
     async def _send(self, row: asyncpg.Record) -> tuple[int | None, str | None]:
+        if row["org_suspended"]:
+            return None, "org_suspended"
         if not row["enabled"]:
             return None, "endpoint_disabled"
         body: str = row["payload"]
@@ -287,7 +293,7 @@ class WebhookActivities:
                 status,
                 d.deliveryId,
             )
-            if final and error != "endpoint_disabled":
+            if final and error not in ("endpoint_disabled", "org_suspended"):
                 await self._track_endpoint(conn, d.orgId, endpoint_id, status, status_code)
         return True
 
@@ -362,7 +368,8 @@ class WebhookActivities:
     @activity.defn(name="reencrypt_webhook_secrets")
     async def reencrypt_webhook_secrets(self) -> int:
         """After a key rotation (new key first in WEBHOOK_ENCRYPTION_KEYS), moves secrets that are
-        still under an older key to the active one, so the old key can then be removed."""
+        still under an older key to the active one, so the old key can then be removed. Covers
+        the API keys of organization-owned AI providers too (same key ring)."""
         active_id, active_key = next(iter(self.keys.items()))
         prefix = f"v1:{active_id}:"
         moved = 0
@@ -398,4 +405,24 @@ class WebhookActivities:
                         r["id"],
                     )
                     moved += 1
+                # AI provider keys and MCP auth headers: bound to org and row id
+                # (apps/api/src/routes/ai-providers.ts, mcp-servers.ts).
+                for table, column in (("ai_providers", "api_key"), ("mcp_servers", "auth_secret")):
+                    for r in await conn.fetch(
+                        f"select id::text as id, {column} as s from {table}"  # noqa: S608
+                        f" where {column} not like $1 for update",
+                        f"{prefix}%",
+                    ):
+                        aad = f"{org_id}/{r['id']}"
+                        try:
+                            plain = decrypt_secret(r["s"], aad, self.keys)
+                        except Exception:  # unreadable: its calls already fail visibly
+                            activity.logger.warning("cannot re-encrypt %s %s", table, r["id"])
+                            continue
+                        await conn.execute(
+                            f"update {table} set {column} = $1 where id = $2",  # noqa: S608
+                            encrypt_secret(plain, aad, active_id, active_key),
+                            r["id"],
+                        )
+                        moved += 1
         return moved

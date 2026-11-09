@@ -11,6 +11,9 @@ from typing import Any
 import asyncpg
 import httpx2
 import pytest
+import requests
+from plane import PlaneClient
+from requests.adapters import BaseAdapter
 from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -23,15 +26,13 @@ from worker.ai import AllowedModel, Completion, Gateway, Message
 from worker.s3 import S3
 from worker.support import (
     Chatwoot,
-    DryRunTracker,
-    GitHubIssues,
-    PlaneIntake,
     SupportActivities,
     SupportConversation,
     SupportIssueClosed,
     linked_conversations,
     parse_triage,
 )
+from worker.tracker import DryRunTracker, GitHub, Plane
 from worker.workflows import SupportTriageWorkflow
 
 C = SupportConversation(accountId=1, conversationId=42)
@@ -39,13 +40,32 @@ CW = "http://chatwoot.test"
 LINK = f"{CW}/app/accounts/1/conversations/42"
 
 
+def page(results: list[Any], next_cursor: str = "") -> dict[str, Any]:
+    """A Plane cursor page with every field the SDK's models require."""
+    return {
+        "results": results,
+        "next_cursor": next_cursor,
+        "prev_cursor": "",
+        "next_page_results": bool(next_cursor),
+        "prev_page_results": False,
+        "count": len(results),
+        "total_count": len(results),
+        "total_pages": 1,
+        "total_results": len(results),
+    }
+
+
 class Fake:
-    """Chatwoot + GitHub + Plane over one mock transport; records every request."""
+    """Chatwoot + GitHub (httpx2) + Plane (the SDK's requests) on one handler; records requests."""
+
+    current: "Fake | None" = None  # the Plane SDK's requests go to the last one created
 
     def __init__(self, *, attrs: dict[str, Any] | None = None, open_issues: int = 0) -> None:
         self.calls: list[tuple[str, str, Any]] = []
         self.attrs: dict[str, Any] = attrs or {}
         self.open_issues = open_issues
+        self.plane: dict[tuple[str, str], Any] = {}  # extra Plane routes: (method, path) -> JSON
+        Fake.current = self
 
     def handle(self, req: httpx2.Request) -> httpx2.Response:
         body: Any = json.loads(req.content) if req.content else None
@@ -94,21 +114,41 @@ class Fake:
             )
         if path == "/repos/x/y/issues/7/comments" and req.method == "GET":
             other = f"+1 user\n\nSupport conversation: {CW}/app/accounts/1/conversations/43"
-            return httpx2.Response(200, json=[{"body": other}, {"body": f"again {LINK}"}])
+            extra = self.attrs.get("gh_comments", [])
+            return httpx2.Response(200, json=[{"body": other}, {"body": f"again {LINK}"}, *extra])
+        plane = "/api/v1/workspaces/ws/projects/p1"
+        if (req.method, path) in self.plane:
+            return httpx2.Response(200, json=self.plane[req.method, path])
+        if path == "/api/v1/users/me/":
+            return httpx2.Response(200, json={"id": "u-bot"})  # the integration token's user
         if path == "/api/v1/workspaces/ws/work-items/search/":
-            return httpx2.Response(200, json={"issues": []})
-        if "/intake-issues/" in path:
-            return httpx2.Response(201, json={"id": "intake-1", "issue": {"id": "wi-1"}})
-        if path.endswith("/work-items/wi-1/"):
+            return httpx2.Response(200, json={"issues": self.attrs.get("plane_search", [])})
+        if path == f"{plane}/intake-issues/" and req.method == "GET":
+            # Two pages; only pending (-2) and snoozed (0) items are still open.
+            last = req.url.params.get("cursor") == "100:1:0"
+            results = [
+                {"status": 1, "issue": "wi-accepted", "issue_detail": {"name": "Upload fails"}},
+                {"status": -2, "issue": "wi-0", "issue_detail": {"name": "Upload fails twice"}},
+            ]
             return httpx2.Response(
-                200,
-                json={
-                    "state": {"group": "completed"},
-                    "description_html": f"<p>{LINK}</p>",
-                },
+                200, json=page(results[1:], "") if last else page(results[:1], "100:1:0")
             )
-        if path.endswith("/work-items/wi-1/comments/"):
-            return httpx2.Response(200, json={"results": []})
+        if path == f"{plane}/intake-issues/":
+            return httpx2.Response(201, json={"id": "intake-1", "issue": "wi-1"})
+        if path == f"{plane}/labels/" and req.method == "GET":
+            return httpx2.Response(200, json=page([{"id": "l-1", "name": "from-users"}]))
+        if path == f"{plane}/labels/":
+            return httpx2.Response(201, json={"id": f"l-{body['name']}", "name": body["name"]})
+        if path.startswith(f"{plane}/work-items/wi-") and req.method == "GET":
+            if path.endswith("/comments/"):
+                return httpx2.Response(200, json=page([]))
+            group = self.attrs.get("plane_group", "completed")
+            item = {"state": {"group": group}, "description_html": f"<p>{LINK}</p>"}
+            return httpx2.Response(200, json=item)
+        if path.startswith(f"{plane}/work-items/") and req.method in ("PATCH", "POST"):
+            return httpx2.Response(200, json={"id": "wi-new"})  # labels, comments, create
+        if path.startswith("/repos/x/y/commits/") and path.endswith("/pulls"):
+            return httpx2.Response(200, json=self.attrs.get("prs", []))
         if req.method == "POST" and path.startswith("/repos/x/y/issues/"):
             return httpx2.Response(201, json={})  # comments, labels
         return httpx2.Response(404, json={})
@@ -116,12 +156,52 @@ class Fake:
     def client(self) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle))
 
+    def plane_client(self) -> Plane:
+        return Plane(PlaneClient(base_url="http://plane.test", api_key="t"), **PLANE)
+
     def posted(self, suffix: str) -> list[Any]:
         return [b for m, p, b in self.calls if m == "POST" and p.endswith(suffix)]
 
 
+PLANE = {"app_url": "http://plane.test", "workspace": "ws", "project_id": "p1"}
+
+
+class _ToFake(BaseAdapter):
+    """Sends the Plane SDK's requests to Fake.current."""
+
+    def send(self, request: requests.PreparedRequest, *args: Any, **kwargs: Any) -> Any:
+        assert Fake.current is not None
+        body = request.body.encode() if isinstance(request.body, str) else request.body
+        res = Fake.current.handle(
+            httpx2.Request(
+                str(request.method),
+                str(request.url),
+                headers={k: str(v) for k, v in request.headers.items()},
+                content=body if isinstance(body, bytes) else b"",
+            )
+        )
+        out = requests.Response()
+        out.status_code, out.reason, out.url = res.status_code, "fake", str(request.url)
+        out.headers.update(res.headers)
+        out._content = res.content  # pyright: ignore[reportPrivateUsage]
+        return out
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def plane_to_fake(monkeypatch: pytest.MonkeyPatch) -> None:
+    def adapter(_self: requests.Session, url: str) -> BaseAdapter:
+        return _ToFake()
+
+    monkeypatch.setattr(requests.Session, "get_adapter", adapter)
+
+
 def llm(triage: dict[str, str] | str, duplicate: str = "0"):
-    async def provider(model: str, messages: Sequence[Message], max_tokens: int) -> Completion:
+    async def provider(
+        model: str, messages: Sequence[Message], max_tokens: int, _tools: object = ()
+    ) -> Completion:
         system = messages[0].content
         assert "a@example.com" in messages[1].content or "duplicate" in system  # gets the text
         assert "never customer text" not in messages[1].content
@@ -165,15 +245,8 @@ async def make(
     )
     http = fake.client()
     trackers: dict[str, Any] = {
-        "github": GitHubIssues("x/y", "test-token", http),
-        "plane": PlaneIntake(
-            api_url="http://plane.test",
-            app_url="http://plane.test",
-            workspace="ws",
-            project_id="p1",
-            token="t",  # noqa: S106 - fake
-            http=http,
-        ),
+        "github": GitHub("x/y", "test-token", http),
+        "plane": fake.plane_client(),
         "dry-run": DryRunTracker(),
     }
     acts = SupportActivities(
@@ -287,6 +360,10 @@ async def test_plane_intake_create_and_close(pool: asyncpg.Pool, s3: S3) -> None
     assert await acts.triage(C) == "bug"
     [intake] = fake.posted("/projects/p1/intake-issues/")
     assert intake["issue"]["name"] == "Upload fails" and LINK in intake["issue"]["description_html"]
+    # config/tracker.json labels: existing ones reused, missing ones created, set on the item.
+    assert fake.posted("/labels/") == [{"name": "support"}, {"name": "bug"}]
+    patched = [b for m, p, b in fake.calls if m == "PATCH" and p.endswith("/work-items/wi-1/")]
+    assert patched == [{"labels": ["l-1", "l-support", "l-bug"]}]
     assert fake.attrs["tracker_issue_url"] == "http://plane.test/ws/projects/p1/issues/wi-1"
 
     assert await acts.issue_closed(SupportIssueClosed("plane", "wi-1")) == 1
@@ -295,6 +372,30 @@ async def test_plane_intake_create_and_close(pool: asyncpg.Pool, s3: S3) -> None
     assert "private" not in reply  # the opt-in customer message
     # A close event from the other tracker is not ours.
     assert await acts.issue_closed(SupportIssueClosed("github", "7")) == 0
+    # The release comment counts while the item is still open (nobody moved it): "live in".
+    fake.attrs["plane_group"] = "started"
+    assert await acts.issue_closed(SupportIssueClosed("plane", "wi-1")) == 0
+    # Release comments count only from our own integration user (the token's `me`).
+    assert await acts.issue_closed(SupportIssueClosed("plane", "wi-1", release="v1.2.0")) == 0
+    human = SupportIssueClosed("plane", "wi-1", release="v1.2.0", author="u-human")
+    assert await acts.issue_closed(human) == 0
+    ours = SupportIssueClosed("plane", "wi-1", release="v1.2.0", author="u-bot")
+    assert await acts.issue_closed(ours) == 1
+    assert "is live in v1.2.0" in fake.posted("/messages")[-1]["content"]
+    assert [p for _, p, _ in fake.calls if p == "/api/v1/users/me/"] == ["/api/v1/users/me/"]
+    # Never a state change: the worker only reads and comments.
+    assert not [b for m, _, b in fake.calls if m == "PATCH" and "state" in b]
+
+
+async def test_plane_duplicate_search_includes_intake(pool: asyncpg.Pool, s3: S3) -> None:
+    fake = Fake()
+    acts, _ = await make(pool, s3, fake, llm(BUG, duplicate="1"), tracker="plane")
+    assert await acts.triage(C) == "bug"
+    # The still-pending Intake item (second page) is the duplicate; the accepted one is not.
+    assert fake.posted("/intake-issues/") == []
+    [comment] = fake.posted("/work-items/wi-0/comments/")
+    assert LINK in comment["comment_html"]
+    assert fake.attrs["tracker_issue_url"] == "http://plane.test/ws/projects/p1/issues/wi-0"
 
 
 async def test_github_close_notes_every_linked_conversation(pool: asyncpg.Pool, s3: S3) -> None:
@@ -354,3 +455,23 @@ async def test_workflow_runs_once_per_conversation(pool: asyncpg.Pool) -> None:
         assert await client.execute_workflow(SupportTriageWorkflow.run, c, **opts) == "dry-run"
         with pytest.raises(WorkflowAlreadyStartedError):
             await client.execute_workflow(SupportTriageWorkflow.run, c, **opts)
+
+
+async def test_triage_redacts_what_it_files(pool: asyncpg.Pool, s3: S3) -> None:
+    # The model may echo personal data: title, summary and the "+1" comment are redacted first.
+    leaky = {
+        **BUG,
+        "title": "Upload fails for bob@corp.example",
+        "summary": "John Smith cannot upload; call +1 415 555 0100 or bob@corp.example.",
+    }
+    for duplicate in ("0", "1"):  # a new item, then a "+1" on an open one
+        fake = Fake(open_issues=2)
+        acts, _ = await make(pool, s3, fake, llm(leaky, duplicate=duplicate))
+        assert await acts.triage(C) == "bug"
+        filed = [b for m, p, b in fake.calls if m == "POST" and p.startswith("/repos/x/y/issues")]
+        assert filed
+        text = json.dumps(filed)
+        for leak in ("bob@corp.example", "John Smith", "555 0100"):
+            assert leak not in text
+        assert "[email]" in text and "[name]" in text
+        assert ("+1 user" in text) == (duplicate == "1")

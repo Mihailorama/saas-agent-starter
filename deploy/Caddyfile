@@ -24,9 +24,13 @@
 	}
 }
 
-# Profile s3 (SeaweedFS on this host): presigned browser uploads need a public S3 endpoint.
-# Uncomment, set S3_PUBLIC_ENDPOINT=https://s3.example.com and S3_PUBLIC_ORIGIN to the same.
-# s3.example.com {
+# Sites of on-box profiles (s3, vault, analytics): scripts/deploy.mjs copies
+# deploy/sites/<profile>.caddy for each profile in COMPOSE_PROFILES into sites/ on the server.
+import /etc/caddy/sites/*.caddy
+
+# Profile booking (Cal.diy on this host, docs/crm.md): its own domain. Uncomment, set
+# CALDIY_PUBLIC_URL=https://cal.example.com, BOOKING_PUBLIC_URL and VITE_BOOKING_ORIGIN to it.
+# cal.example.com {
 # 	tls {$CADDY_TLS}
-# 	reverse_proxy s3:8333
+# 	reverse_proxy caldiy:3000
 # }

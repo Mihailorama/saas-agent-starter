@@ -15,15 +15,25 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { Redis } from 'ioredis';
+import { z } from 'zod';
 import { auth, ssoEnabled } from './auth.ts';
 import { db } from './db.ts';
 import { allowedOrigins, env } from './env.ts';
+import { READ_ONLY } from './operator-guard.ts';
+import { adminRoutes, impersonationRoutes } from './routes/admin.ts';
 import { aiCallRoutes } from './routes/ai-calls.ts';
+import { aiProviderRoutes } from './routes/ai-providers.ts';
 import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
+import { crmHookRoutes } from './routes/crm.ts';
 import { hookRoutes } from './routes/hooks.ts';
+import { mcpRoutes } from './routes/mcp.ts';
+import { mcpServerRoutes } from './routes/mcp-servers.ts';
+import { onboardingRoutes } from './routes/onboarding.ts';
 import { privacyRoutes } from './routes/privacy.ts';
 import { projectRoutes } from './routes/projects.ts';
+import { referralRoutes } from './routes/referrals.ts';
+import { rewardRoutes } from './routes/rewards.ts';
 import { securityRoutes } from './routes/security.ts';
 import { supportHookRoutes, supportRoutes } from './routes/support.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
@@ -34,7 +44,12 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export async function buildApp() {
   const app = Fastify({
-    trustProxy: env.TRUST_PROXY,
+    // A hop count trusts that many proxies next to the API (what proxy-addr does for a number;
+    // Fastify's types only take the function form).
+    trustProxy:
+      typeof env.TRUST_PROXY === 'number'
+        ? (_addr: string, hop: number) => hop < (env.TRUST_PROXY as number)
+        : env.TRUST_PROXY,
     requestIdHeader: 'x-request-id',
     genReqId: () => randomUUID(),
     logger: {
@@ -45,9 +60,11 @@ export async function buildApp() {
         const ctx = trace.getActiveSpan()?.spanContext();
         return ctx ? { trace_id: ctx.traceId, span_id: ctx.spanId } : {};
       },
-      redact: { paths: ['*.password', '*.token', '*.secret', '*.cookie', '*.authorization'] },
+      redact: {
+        paths: ['*.password', '*.otp', '*.token', '*.secret', '*.cookie', '*.authorization'],
+      },
       serializers: {
-        // Never log query strings or reset tokens (mailed auth links carry them) or headers.
+        // Never log query strings (mailed links can carry tokens) or headers.
         req: (req) => ({ method: req.method, url: redactUrl(req.url), ip: req.ip }),
       },
     },
@@ -61,6 +78,7 @@ export async function buildApp() {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorateRequest('tenant');
+  app.decorateRequest('operator');
 
   // Redis store: limits hold across API replicas.
   const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 1 });
@@ -126,6 +144,17 @@ export async function buildApp() {
     }
   });
 
+  // "View as user" is read-only on every route, also ones added later (docs/admin.md): one guard
+  // for all mutating requests with a session. Better Auth's endpoints have their own (/api/auth/*,
+  // operator-guard.ts), and leaving the view must work.
+  app.addHook('onRequest', async (req, reply) => {
+    const url = req.routeOptions.url ?? '';
+    if (!UNSAFE.has(req.method) || !req.headers.cookie || bearerToken(req)) return;
+    if (url.startsWith('/api/auth/') || url === '/api/impersonation/stop') return;
+    const s = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (s?.session.impersonatedBy) return reply.code(403).send({ error: READ_ONLY });
+  });
+
   // Lets the web attach the trace id to analytics error events (docs/product-analytics.md).
   app.addHook('onSend', async (_req, reply) => {
     const ctx = trace.getActiveSpan()?.spanContext();
@@ -179,10 +208,18 @@ export async function buildApp() {
       handler: authHandler,
     });
   // Public: tells the sign-in page whether to offer "Sign in with SSO".
-  app.get('/api/auth-config', { schema: { hide: true } }, async () => ({ sso: ssoEnabled }));
+  app.get(
+    '/api/auth-config',
+    { schema: { response: { 200: z.object({ sso: z.boolean() }) } } },
+    async () => ({ sso: ssoEnabled }),
+  );
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
   // API keys are managed through /api/api-keys (scopes, audit log), not the plugin's endpoints.
   app.all('/api/auth/api-key/*', { schema: { hide: true } }, async (_req, reply) =>
+    reply.code(404).send({ error: 'not found' }),
+  );
+  // Operator actions go through /api/admin (reason, audit log), not the admin plugin's endpoints.
+  app.all('/api/auth/admin/*', { schema: { hide: true } }, async (_req, reply) =>
     reply.code(404).send({ error: 'not found' }),
   );
   authRoute('/api/auth/sign-in/*', 10, ['POST']);
@@ -190,20 +227,87 @@ export async function buildApp() {
   // Second factors and passkey sign-in (the twoFactor plugin also locks the account itself).
   authRoute('/api/auth/two-factor/*', 10, ['POST']);
   authRoute('/api/auth/passkey/verify-authentication', 10, ['POST']);
-  authRoute('/api/auth/request-password-reset', 10, ['POST']);
   authRoute('/api/auth/send-verification-email', 10, ['POST']);
+  authRoute('/api/auth/email-otp/*', 10, ['POST']);
+  // The plugin's password-reset and change-email endpoints: nothing here uses them (ADR 0033).
+  for (const url of [
+    '/api/auth/email-otp/request-password-reset',
+    '/api/auth/forget-password/email-otp',
+    '/api/auth/email-otp/reset-password',
+    '/api/auth/email-otp/request-email-change',
+    '/api/auth/email-otp/change-email',
+  ]) {
+    app.all(url, { schema: { hide: true } }, async (_req, reply) =>
+      reply.code(404).send({ error: 'not found' }),
+    );
+  }
+  // Email codes per address (ADR 0033), in Redis keyed by a hash of the address (never the
+  // address itself). The rate-limit plugin runs only one limiter per request, hence own keys.
+  const addressHash = (body: unknown) =>
+    createHash('sha256')
+      .update(String((body as { email?: unknown })?.email ?? '').toLowerCase())
+      .digest('base64url');
+  // Wrong codes per address: past these, no new code is mailed until the window ends.
+  const FAILURE_CAPS = [
+    { key: 'otp-fail-h', seconds: 3600, max: 10 },
+    { key: 'otp-fail-d', seconds: 86_400, max: 20 },
+  ];
+  app.addHook('onResponse', async (req, reply) => {
+    if (req.url !== '/api/auth/sign-in/email-otp') return;
+    const hash = addressHash(req.body);
+    if (reply.statusCode === 400 || reply.statusCode === 403) {
+      const tx = redis.multi();
+      for (const c of FAILURE_CAPS)
+        tx.incr(`${c.key}:${hash}`).expire(`${c.key}:${hash}`, c.seconds, 'NX');
+      await tx.exec();
+    }
+    // A code that signed in (a session cookie, not a 2FA challenge) ends the resend cooldown.
+    const cookies = [reply.getHeader('set-cookie') ?? []].flat().map(String);
+    if (reply.statusCode === 200 && cookies.some((c) => /session_token=[^;]/.test(c))) {
+      await redis.del(`otp-cooldown:${hash}`);
+    }
+  });
+  app.post(
+    '/api/auth/email-otp/send-verification-otp',
+    {
+      schema: { hide: true },
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+      preHandler: async (req, reply) => {
+        const hash = addressHash(req.body);
+        const counts = await redis.mget(FAILURE_CAPS.map((c) => `${c.key}:${hash}`));
+        if (FAILURE_CAPS.some((c, i) => Number(counts[i] ?? 0) >= c.max)) {
+          req.log.warn({ address: hash }, 'email code: failure cap reached, no code sent');
+          return reply.send({ success: true }); // Better Auth's answer: nothing to enumerate
+        }
+        // Resend cooldown: one code per address per 30 s, whoever asks.
+        if (!(await redis.set(`otp-cooldown:${hash}`, '1', 'EX', 30, 'NX'))) {
+          return reply.code(429).send({ error: 'wait 30 seconds before asking for another code' });
+        }
+      },
+    },
+    authHandler,
+  );
 
   await app.register(projectRoutes, { prefix: '/api/projects' });
   await app.register(aiCallRoutes, { prefix: '/api/orgs/:orgId/ai-calls' });
+  await app.register(aiProviderRoutes, { prefix: '/api/ai-providers' });
+  await app.register(mcpServerRoutes, { prefix: '/api/mcp-servers' });
   await app.register(hookRoutes, { prefix: '/api/hooks' });
   await app.register(billingRoutes, { prefix: '/api/billing' });
   await app.register(billingWebhookRoutes, { prefix: '/api/billing/webhooks' });
   await app.register(apiKeyRoutes, { prefix: '/api/api-keys' });
   await app.register(webhookRoutes, { prefix: '/api/webhooks' });
   await app.register(securityRoutes, { prefix: '/api/security' });
+  await app.register(onboardingRoutes, { prefix: '/api/onboarding' });
   await app.register(supportHookRoutes, { prefix: '/api/hooks' });
+  await app.register(crmHookRoutes, { prefix: '/api/hooks' });
   await app.register(supportRoutes, { prefix: '/api/support' });
+  await app.register(adminRoutes, { prefix: '/api/admin' });
+  await app.register(impersonationRoutes, { prefix: '/api/impersonation' });
   await app.register(privacyRoutes, { prefix: '/api/privacy' });
+  await app.register(mcpRoutes);
+  await app.register(rewardRoutes, { prefix: '/internal/rewards' });
+  await app.register(referralRoutes, { prefix: '/api/referrals' });
   app.get('/openapi.json', { schema: { hide: true } }, async () => app.swagger());
   // Same spec under /api, which the web origin proxies: what API customers can reach.
   app.get('/api/openapi.json', { schema: { hide: true } }, async () => app.swagger());
