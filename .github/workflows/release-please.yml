@@ -60,3 +60,10 @@ jobs:
             echo "dispatch $(basename "$f") on $TAG"
             gh workflow run "$(basename "$f")" --ref "$TAG"
           done
+      # The landing page (pages.yml) goes out with each release. It is dispatched on main (the
+      # release commit at this point), because the github-pages environment only accepts
+      # deployments from the default branch unless a tag rule is added in its settings.
+      - name: Publish the landing page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main

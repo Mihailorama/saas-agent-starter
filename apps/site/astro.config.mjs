@@ -3,10 +3,12 @@ import mdx from '@astrojs/mdx';
 import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, passthroughImageService } from 'astro/config';
-import { locales, site } from './src/site.ts';
+import { base, locales, site } from './src/site.ts';
 
 export default defineConfig({
   site: site.url,
+  // A path in SITE_URL (GitHub Pages: https://owner.github.io/repo) becomes the base.
+  base,
   trailingSlash: 'always',
   // hreflang-ready: add a locale here and its pages under src/pages/<locale>/ (docs/marketing.md).
   i18n: {

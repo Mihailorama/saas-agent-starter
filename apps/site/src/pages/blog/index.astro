@@ -1,7 +1,7 @@
 ---
 import Base from '../../layouts/Base.astro';
 import { posts } from '../../posts.ts';
-import { site } from '../../site.ts';
+import { path, site } from '../../site.ts';
 
 const all = await posts();
 const fmt = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
@@ -10,11 +10,12 @@ const fmt = new Intl.DateTimeFormat('en', { dateStyle: 'medium' });
 <Base title="Blog" description={`Product notes, guides and release news from the ${site.name} team.`}>
   <div class="mx-auto max-w-3xl px-6 py-16">
     <h1 class="text-3xl font-bold tracking-tight">Blog</h1>
+    {all.length === 0 && <p class="mt-8 text-muted-foreground">No posts yet. Follow the RSS feed to get the first one.</p>}
     <ul class="mt-8 space-y-8">
       {
         all.map((p) => (
           <li>
-            <a href={`/blog/${p.id}/`} class="text-xl font-semibold hover:underline">
+            <a href={path(`/blog/${p.id}/`)} class="text-xl font-semibold hover:underline">
               {p.data.title}
             </a>
             <p class="mt-1 text-sm text-muted-foreground">

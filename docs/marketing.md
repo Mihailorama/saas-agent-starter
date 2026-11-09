@@ -30,13 +30,17 @@ docker compose up -d site     # nginx container on :8090 (SITE_PORT)
 Astro 7 refuses to run on Node older than 22.23.4 (a check in its CLI), newer than the 22.18
 the rest of the repo needs; CI and the `node:22-alpine` image already use the latest 22.x.
 
-- **Settings** in `src/site.ts`: name, tagline, description, organization and product data for
-  schema.org. URLs come from env at build time: `SITE_URL` (canonical origin), `SITE_APP_URL`
-  (where "Start free" / "Sign in" go), `SITE_OG_IMAGE` (absolute URL of a 1200x630 share image
+- **Settings** in `src/site.ts`: name, tagline, description, repository, organization data for
+  schema.org. URLs come from env at build time: `SITE_URL` (canonical URL; a path in it, such as
+  `https://owner.github.io/repo`, becomes Astro's `base`, so build links with `path()`/`abs()` from
+  `src/site.ts`, never as bare `/...`), `SITE_APP_URL` (adds the "Sign in" link to the app; none
+  without it), `SITE_OG_IMAGE` (absolute URL of a 1200x630 share image
   hosted outside git), `SITE_TWITTER`, `SITE_NOINDEX=true` for staging.
 - **Blog**: one `.md` or `.mdx` file per post in `src/content/blog/`; the file name is the URL.
   Front matter: `title` (max 60), `description` (50-160), `pubDate`, `author`, optional
   `updatedDate`, `draft`, `faq`. The build fails when a field breaks the limits.
+  The template ships no published post: `writing-posts.mdx` is the authoring guide, a draft that
+  only `pnpm --filter site dev` shows; the blog index, RSS and llms.txt handle an empty blog.
 - **Media**: images and video are not stored in git (AGENTS.md). Host them on your CDN or object
   storage and use absolute URLs; the CSP allows `https:` images. Astro's image optimizer is off
   (it needs `sharp`, whose libvips is LGPL; ADR 0021).
@@ -45,7 +49,7 @@ the rest of the repo needs; CI and the `node:22-alpine` image already use the la
 
 Every page gets, from `src/components/Seo.astro`: `<title>` and meta description, a canonical
 URL on `SITE_URL`, `hreflang` alternates plus `x-default`, Open Graph and Twitter card tags,
-and one schema.org JSON-LD graph (Organization and WebSite on every page; SoftwareApplication
+and one schema.org JSON-LD graph (Organization and WebSite on every page; SoftwareSourceCode
 and FAQPage on the home page; BlogPosting, plus FAQPage when a post has `faq`). Generated from the
 content at build: `sitemap-index.xml` (`@astrojs/sitemap`), `robots.txt` (allows every crawler,
 AI crawlers included; `SITE_NOINDEX=true` disallows all), `rss.xml`, `llms.txt`
@@ -74,13 +78,30 @@ subdomains). The container's CSP takes the sink origins from `ANALYTICS_ORIGINS`
 ### Lighthouse CI
 
 `.github/workflows/site.yml` builds the site with `SITE_URL=http://localhost:4321` and runs
-Lighthouse CI three times per URL (`/`, `/blog/`, the example post) on every PR that touches the
+Lighthouse CI three times per URL (`/` and `/blog/`; add a post's URL to `lighthouserc.cjs` once one is published) on every PR that touches the
 site, its shared CSS/analytics or the event catalog. It fails when the median score drops below:
 performance 0.90, accessibility 0.95, best practices 0.95, SEO 0.95. Reports are a workflow
-artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measured on this branch:
-0.99 / 1 / 1 / 1. Locally: build with `SITE_URL=http://localhost:4321`, then
+artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measured on the landing page and `/blog/` (2026-11-09, median of 3): 1 / 1 / 1 / 1. Locally: build with `SITE_URL=http://localhost:4321`, then
 `pnpm --filter site lhci` (needs Chrome; `LHCI_PORT` for another port). Lighthouse CI runs through
 `pnpm dlx`, not as a dependency (license note in [LICENSES.md](LICENSES.md)).
+
+### The starter's own landing page (GitHub Pages)
+
+The home page of `apps/site` is this repository's landing page (owner decision, 2026-11-07):
+products built on the template replace `src/pages/index.astro` and the texts in `src/site.ts`.
+Every claim on it must hold for the code on `main` (sources: AGENTS.md's architecture map and
+component picks, `docs/*.md`): a PR that adds or removes a user-facing feature updates the feature
+groups there, and every external service is listed with its install and connect paths.
+
+`.github/workflows/pages.yml` builds it with
+`SITE_URL=https://mihailorama.github.io/saas-agent-starter` and deploys it with the official Pages
+actions. It runs only by dispatch on `main` (both jobs check `github.ref`, so a dispatch from
+another branch deploys nothing): release-please's release workflow dispatches it after each
+release (a release made with `GITHUB_TOKEN` starts no other workflow, and the `github-pages`
+environment accepts the default branch only), or run it by hand on `main`. Before the first
+release, enable Pages with source "GitHub Actions" in the repository settings. Custom domain: set
+the repository variable `PAGES_SITE_URL` (e.g. `https://starter.example.com`) and add the domain
+in the Pages settings; nothing else changes.
 
 ## SEO checklist per release
 
@@ -207,7 +228,7 @@ goes to `dist/geo/<date>.md` (`--out <dir>` to keep a history elsewhere).
   CLI's environment so it never bills an API key; log in to Claude Code once instead.
   `--dry-run` (or no `claude` on the PATH) prints the commands.
 - Write questions as buyers ask them, without your product name; keep them stable so reports
-  compare over time. A generic product name (like the template's "Workspace") needs a distinctive
+  compare over time. A generic product name needs a distinctive
   alias or it will never count.
 - It measures one assistant (Claude) at one point in time; answers vary run to run. Treat it as
   a trend, and fix the inputs it reflects: clear pages, FAQ answers, `llms.txt`, third-party

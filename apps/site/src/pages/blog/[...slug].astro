@@ -21,7 +21,7 @@ const article = {
   dateModified: (updatedDate ?? pubDate).toISOString(),
   author: { '@type': 'Person', name: author },
   publisher: { '@id': abs('/#organization') },
-  mainEntityOfPage: abs(Astro.url.pathname),
+  mainEntityOfPage: new URL(Astro.url.pathname, site.url).href,
   ...(site.ogImage ? { image: site.ogImage } : {}),
 };
 const fmt = new Intl.DateTimeFormat('en', { dateStyle: 'long' });

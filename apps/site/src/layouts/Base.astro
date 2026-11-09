@@ -1,12 +1,11 @@
 ---
 import type { ComponentProps } from 'astro/types';
 import Seo from '../components/Seo.astro';
-import { site } from '../site.ts';
+import { path, site } from '../site.ts';
 import '../styles.css';
 
 type Props = ComponentProps<typeof Seo>;
 const lang = Astro.currentLocale ?? 'en';
-const signIn = new URL('/', site.appUrl).href;
 ---
 
 <!doctype html>
@@ -14,20 +13,32 @@ const signIn = new URL('/', site.appUrl).href;
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href={path('/favicon.svg')} type="image/svg+xml" />
     <Seo {...Astro.props} />
   </head>
   <body class="flex min-h-screen flex-col">
     <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:p-2">Skip to content</a>
     <header class="border-b">
       <nav aria-label="Main" class="mx-auto flex max-w-5xl items-center gap-6 px-6 py-4">
-        <a href="/" class="font-semibold">{site.name}</a>
-        <a href="/blog/" class="text-sm text-muted-foreground hover:text-foreground">Blog</a>
-        <a
-          href={signIn}
-          data-cta="nav_sign_in"
-          class="ml-auto rounded-md border px-3 py-1.5 text-sm hover:bg-secondary">Sign in</a
-        >
+        <a href={path('/')} class="font-semibold">{site.name}</a>
+        <a href={path('/blog/')} class="text-sm text-muted-foreground hover:text-foreground">Blog</a>
+        <span class="ml-auto flex items-center gap-4">
+          <a
+            href={site.repo}
+            data-cta="nav_github"
+            class="text-sm text-muted-foreground hover:text-foreground">GitHub</a
+          >
+          {
+            site.appUrl && (
+              <a
+                href={new URL('/', site.appUrl).href}
+                data-cta="nav_sign_in"
+                class="rounded-md border px-3 py-1.5 text-sm hover:bg-secondary">
+                Sign in
+              </a>
+            )
+          }
+        </span>
       </nav>
     </header>
     <main id="main" class="flex-1">
@@ -36,8 +47,9 @@ const signIn = new URL('/', site.appUrl).href;
     <footer class="border-t">
       <div class="mx-auto flex max-w-5xl flex-wrap gap-4 px-6 py-6 text-sm text-muted-foreground">
         <span>© {new Date().getFullYear()} {site.organization.name}</span>
-        <a href="/blog/" class="hover:text-foreground">Blog</a>
-        <a href="/rss.xml" class="hover:text-foreground">RSS</a>
+        <a href={path('/blog/')} class="hover:text-foreground">Blog</a>
+        <a href={path('/rss.xml')} class="hover:text-foreground">RSS</a>
+        <a href={`${site.repo}/blob/main/LICENSE`} class="hover:text-foreground">License (MIT-0)</a>
         <button type="button" id="privacy-choices" hidden class="hover:text-foreground"></button>
       </div>
     </footer>
