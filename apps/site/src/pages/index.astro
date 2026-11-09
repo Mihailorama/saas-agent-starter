@@ -1,6 +1,6 @@
 ---
 // The starter's own landing page (dogfooding apps/site). Every claim here must hold for the code
-// on main, except the "Also in 1.0" block, which lists open PRs planned for the 1.0.0 release.
+// on main: source of truth is AGENTS.md (architecture map, component picks) and docs/*.md.
 import Faq from '../components/Faq.astro';
 import { faqLd } from '../faq.ts';
 import Base from '../layouts/Base.astro';
@@ -12,47 +12,101 @@ const agentsMd = file('AGENTS.md');
 const rails = [
   {
     title: 'AGENTS.md is the rulebook',
-    text: 'One file for Claude Code, Codex and humans: architecture map, where code goes, security, AI, analytics and release rules. CLAUDE.md only imports it.',
+    text: 'One file for Claude Code, Codex and humans: architecture map, where code goes, security, AI, analytics, UI and release rules. CLAUDE.md only imports it.',
   },
   {
     title: 'Recipes instead of guesses',
-    text: 'Step-by-step recipes for a tenant resource, a webhook event, a background workflow, an AI purpose, a prompt version. /add-resource runs the first one in Claude Code.',
+    text: 'Step-by-step recipes for a tenant resource, an API key scope or webhook event, an MCP tool, an onboarding item, a background workflow, an AI purpose and a prompt version. /add-resource runs the first one in Claude Code.',
   },
   {
     title: 'One definition of done',
-    text: 'pnpm check runs Biome, typecheck, TS, Python and Rust tests, the license gate, the key-free eval and a Playwright smoke. Red means not done.',
+    text: 'pnpm check runs Biome, the API types, event and flag checks, typecheck, TS, Python and Rust tests, the license gate, the key-free eval, a Playwright smoke and the visual check. Red means not done.',
   },
   {
-    title: 'A license gate in CI',
-    text: 'npm, PyPI and crates.io dependencies must be permissive or MPL-2.0. Copyleft and source-available code is refused, and exceptions need a human.',
+    title: 'Visual checks without a reviewer',
+    text: 'Layout guards on every page at desktop and mobile, light and dark: overflow, clipped text, overlapping controls, axe. Screenshots are compared with main on your machine, and every changed screen must be declared.',
   },
   {
-    title: 'Evals for every prompt',
-    text: 'Each AI purpose has a Promptfoo golden set and a judge prompt. A test fails when a prompted purpose has no eval.',
+    title: 'A secrets vault agents can use',
+    text: 'A wrapper over the official bw CLI hands values to commands through pipes, never into chat, .env files or git. Vaultwarden in a compose profile, or any Bitwarden you connect.',
+  },
+  {
+    title: 'Validate the idea first',
+    text: '/validate-idea runs an opt-in founder-skill plugin in Claude Code: simulated critique and buyers, then a plan for real signals such as a waitlist page, a price survey and interviews.',
   },
 ];
 
 const stack = [
-  ['API', 'TypeScript and Fastify, Zod at every boundary, OpenAPI generated from the same schemas.'],
-  ['Web', 'React, Vite, TanStack Router, Query and Table, shadcn/ui components you own.'],
-  ['Data and tenancy', 'Postgres and Drizzle. Row-Level Security isolates organizations even when a query forgets its filter.'],
-  ['Auth', 'Better Auth on your own tables: organizations and roles, 2FA (TOTP), passkeys, organization API keys with scopes.'],
+  ['API', 'TypeScript and Fastify, Zod at every boundary, OpenAPI generated from the same schemas and typed web clients generated from it.'],
+  ['Web', 'React, Vite, TanStack Router, Query and Table, shadcn/ui components and patterns you own, with a /dev/ui gallery.'],
+  ['Data and tenancy', 'Postgres and Drizzle. Row-Level Security isolates organizations even when a query forgets its filter; migrations are checked for expand/contract.'],
   ['Workflows', 'Temporal: durable background work with retries and timeouts, typed SDKs for TypeScript and Python.'],
   ['Worker', 'Python for AI and data work: uv, ruff, strict pyright, pytest.'],
   ['Hot paths', 'Rust via PyO3 only where measured, each with a pure-Python twin and a parity test.'],
   ['Observability', 'OpenTelemetry in every service; Grafana, Prometheus, Loki and Jaeger with dashboards and alert rules as files.'],
   ['Errors', 'The Sentry protocol: Sentry SDKs with GlitchTip or Sentry behind them; only the DSN changes.'],
-  ['Product analytics', 'PostHog Cloud by default, self-hosted Umami where data must stay; a typed event catalog and journeys as code.'],
-  ['Billing', 'Stripe behind a provider interface, plans and entitlements in config, a per-organization LLM spend limit enforced in the AI gateway.'],
-  ['Email', 'React Email templates, delivered by a Temporal activity over any SMTP provider; Mailpit in development.'],
-  ['Webhooks', 'Outbound events signed per Standard Webhooks, retried by Temporal, with delivery attempts and replay.'],
-  ['Flags and releases', 'PostHog feature flags with the catalog in the repo; release-please turns Conventional PR titles into changelogs and tags.'],
-  ['Backups', 'pgBackRest WAL archiving for point-in-time recovery, encrypted copies of the app buckets, a weekly automatic restore check.'],
-  ['Privacy', 'User data export and deletion across the database, object storage and each connected tool, with retention enforced on a schedule.'],
-  ['Service desk', 'Chatwoot CE behind one Help menu; AI triage writes private notes and files or upvotes backlog items.'],
-  ['PII redaction', 'Microsoft Presidio replaces emails, phone numbers, cards, IBANs, IPs and names in triage output and feedback before it leaves.'],
   ['Marketing site', 'Astro, static: SEO head and JSON-LD on every page, sitemap, RSS, llms.txt, Lighthouse budgets in CI. You are reading it.'],
-  ['Deploy', 'Images by digest, Caddy with automatic TLS, SOPS-encrypted env files, one-command deploy and rollback over SSH.'],
+];
+
+const groups = [
+  {
+    id: 'access',
+    title: 'Sign-in, organizations and access',
+    items: [
+      ['Passwordless sign-in', 'One-time codes by email, no passwords. TOTP two-factor, passkeys and OIDC single sign-on through Better Auth on your own tables.'],
+      ['Organizations and roles', 'Owners, admins and members, invitations, an optional organization-wide 2FA policy and an audit log.'],
+      ['Disposable email blocking', 'Temporary mailbox domains are refused wherever an address enters: code requests, first sign-in, SSO, invitations.'],
+      ['Public API and webhooks', 'Organization API keys with scopes, outbound events signed per Standard Webhooks, retried by Temporal, with an attempt log and replay.'],
+      ['MCP server at /mcp', "Customers' AI agents use the product over the Model Context Protocol with an organization API key. Each tool wraps a REST route, so the same scopes apply."],
+    ],
+  },
+  {
+    id: 'billing',
+    title: 'Billing and growth',
+    items: [
+      ['Any pricing model', 'Flat, per seat, usage-based pay as you go, base plus overage, prepaid credit packs and enterprise contracts, all described in config/plans.json.'],
+      ['One provider interface', 'Stripe and manual contracts invoiced outside any provider sit behind one interface; the provider does the rating, taxes and invoices.'],
+      ['Entitlements and AI spend', 'Plan limits checked on the server, usage reported to provider meters, and a per-organization LLM spend limit enforced in the AI gateway.'],
+      ['Rewards and referrals', 'Reward rules as code, triggered by server-side events only, with holds and caps. Referral links with Stripe promotion codes, or Dub Partners connected by key.'],
+      ['Onboarding checklist and tour', 'A setup card derived from existing data, never a stored flag, and a short product tour declared on the page elements.'],
+      ['Analytics and surveys', 'A typed event catalog and journeys as code for PostHog or Umami; NPS and CSAT surveys as config, synced to PostHog or shown by Formbricks.'],
+      ['Feature flags and releases', 'PostHog flags with the catalog in the repo; release-please turns Conventional PR titles into changelogs and tags.'],
+    ],
+  },
+  {
+    id: 'ai',
+    title: 'An AI layer you can audit',
+    items: [
+      ['One gateway, any provider', 'Every LLM call goes through Gateway.call_llm on LiteLLM: vendor keys, OpenRouter, OpenAI-compatible endpoints, vLLM or Ollama, CLI subscriptions, and keys an organization brings.'],
+      ['Explicit models', 'No default model in code or config. A model not listed in config/ai-models.json for the deployment is refused.'],
+      ['Prompts and evals', 'One immutable file per prompt version with pinned hashes, a Promptfoo golden set and judge for every purpose; CI runs the evals without an API key.'],
+      ['External MCP tools', "An organization connects remote MCP servers; a purpose may call their allowed tools in a bounded loop inside the gateway, behind an SSRF pin."],
+      ['Audit record', 'An append-only ai_calls row per call, content in object storage, for the EU AI Act. Stored AI output stays marked as generated until a person confirms it.'],
+      ['LLM ops and PII redaction', 'Generations, feedback and judge scores go to PostHog or self-hosted Langfuse. Presidio redacts personal data from triage output and feedback before it leaves.'],
+    ],
+  },
+  {
+    id: 'support',
+    title: 'Support and customers',
+    items: [
+      ['Service desk', 'Chatwoot CE behind one Help menu, with email and Telegram channels. AI triage writes a private note and files or upvotes backlog items.'],
+      ['Lite Telegram support', 'Without Chatwoot: a bot gives each user a topic in your team\'s Telegram forum group and relays replies both ways; /bug and /feature file tracker items.'],
+      ['Plane or GitHub tracker', 'Alerts, feedback and triage land in Plane by default or in GitHub Issues, and each release comments "Released in vX.Y.Z" on the items it fixes.'],
+      ['CRM and booking', 'Twenty CRM kept in sync with sign-ups, organizations, billing and support. Self-hosted Cal.diy ships in the booking profile; Cal.com Cloud connects the same way.'],
+      ['Transactional email', 'React Email templates in English and Russian, delivered by a Temporal activity over any SMTP provider.'],
+    ],
+  },
+  {
+    id: 'operations',
+    title: 'Operations',
+    items: [
+      ['One-command setup', 'pnpm run infra asks a few questions, prepares a fresh VPS, writes the encrypted settings, deploys and verifies every component. Re-runs show what would change.'],
+      ['Deploy', 'Images by digest, Caddy with automatic TLS, SOPS-encrypted env files, deploy and rollback over SSH; Coolify, Kubernetes and on-prem are documented options.'],
+      ['Backups', 'pgBackRest WAL archiving for point-in-time recovery, copies of the app buckets, and a scheduled automatic restore check.'],
+      ['Operator console', 'An internal panel for support staff: organizations and users, audited actions with a reason, suspension and a read-only "view as user".'],
+      ['Privacy requests', 'User and organization data export and deletion across the database, object storage and each connected tool, with retention enforced on a schedule.'],
+    ],
+  },
 ];
 
 const path = [
@@ -64,63 +118,36 @@ const path = [
   ['Postgres', 'result written back under the same RLS scope'],
 ];
 
-const ai = [
-  ['One gateway', 'Every LLM call goes through Gateway.call_llm in the worker. The API and the web never call a model.'],
-  ['Explicit models', 'No default model in code or config. A model not listed in config/ai-models.json for the deployment is refused.'],
-  ['Prompts as files', 'One immutable file per prompt version, hashes pinned in prompts/lock.json; a change is a new version with a passing eval.'],
-  ['Key-free CI', 'CI runs pnpm eval --fake-llm. Real-model evals run on your machine through your Claude subscription; no API key in CI.'],
-  ['Audit record', 'An append-only ai_calls row per call, content in object storage, for the EU AI Act. docs/ai-act.md says what it covers and what it does not.'],
-  ['Quality data', 'Generations, user feedback and judge scores go to PostHog or self-hosted Langfuse, not to tables of our own.'],
-];
-
-// Open PRs planned for 1.0.0 (owner list, 2026-11-07). Drop any entry whose PR misses the release.
-const in10 = [
-  {
-    pr: 44,
-    title: 'Any LLM provider',
-    text: 'The gateway runs on LiteLLM: vendor API keys, OpenRouter, custom OpenAI-compatible endpoints, vLLM or Ollama on-prem, and CLI subscriptions (Claude Code, Codex, Gemini CLI), plus keys an organization brings itself.',
-  },
-  {
-    pr: 42,
-    title: 'UI kit with checks',
-    text: 'shadcn/ui components and patterns (app shell, data table, command palette), with axe accessibility checks and visual screenshots in CI.',
-  },
-  {
-    pr: 43,
-    title: 'Operator console',
-    text: 'An internal panel for support staff: organizations and users, audited actions with a reason, suspension, read-only "view as user".',
-  },
-  {
-    pr: 45,
-    title: 'CRM and booking',
-    text: 'Twenty CRM kept in sync with sign-ups, organizations, billing and support; booking links for Cal.com or Cal.diy.',
-  },
-  {
-    pr: 48,
-    title: 'Plane as the tracker',
-    text: 'Alerts, user feedback and support triage land in Plane by default (GitHub Issues optional), with "Released in vX.Y.Z" comments.',
-  },
-];
-
+// [service, install with the template, connect your own]; '' where the template has no such path.
 const services = [
-  ['Postgres, Redis, S3', 'compose services locally; any managed instance by URL (AWS S3, R2, MinIO).'],
-  ['Analytics', 'PostHog Cloud, or Umami in the analytics profile.'],
-  ['Errors', 'Sentry, or GlitchTip in the glitchtip profile.'],
-  ['LLM ops', 'PostHog, or Langfuse in the llmops profile.'],
-  ['Service desk', 'Chatwoot in the support profile, or your existing Chatwoot by URL.'],
-  ['Email', 'Mailpit in development, any SMTP provider in production.'],
+  ['Postgres and S3', 'compose services; SeaweedFS for S3', 'any managed Postgres or S3 by URL (AWS, R2, MinIO)'],
+  ['Product analytics', 'Umami in the analytics profile', 'PostHog Cloud, or GA4 behind consent'],
+  ['Errors', 'GlitchTip in the glitchtip profile', 'Sentry, by DSN'],
+  ['LLM ops', 'Langfuse in the llmops profile', 'PostHog, or your Langfuse'],
+  ['LLM providers', 'llm-cli for CLI subscriptions; vLLM and Ollama in the local-llm profile', 'any API key, aggregator or OpenAI-compatible endpoint'],
+  ['Secrets vault', 'Vaultwarden in the vault profile', 'Bitwarden Cloud or your own server'],
+  ['Service desk', 'Chatwoot in the support profile, or lite Telegram', 'your Chatwoot by URL'],
+  ['CRM', 'Twenty in the crm profile', 'your Twenty or Twenty Cloud'],
+  ['Booking', 'Cal.diy in the booking profile', 'your Cal.diy, or Cal.com Cloud'],
+  ['Surveys', '', 'PostHog Surveys, or Formbricks'],
+  ['Billing', 'stripe-mock for development', 'Stripe, Dub Partners, or manual contracts'],
+  ['Tracker', '', 'Plane Cloud or self-hosted Plane, or GitHub Issues'],
+  ['Email', 'Mailpit in development', 'any SMTP provider'],
 ];
 
 const quickstart = `docker compose up -d --wait postgres redis s3 temporal-ui mailpit
 docker compose --profile billing up -d stripe-mock   # Stripe API mock
+docker compose --profile mcp up -d mcp-server        # reference MCP server
 pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173
-pnpm worker     # Python Temporal worker (also delivers mail)`;
+pnpm worker     # Python Temporal worker (also delivers mail)
+
+pnpm run infra  # later: a fresh VPS to the running, verified stack`;
 
 const faq = [
   {
     q: 'Which coding agents does it work with?',
-    a: 'Any agent that reads AGENTS.md, such as Codex. Claude Code reads CLAUDE.md, which imports AGENTS.md, and gets the /add-resource command. The rules are plain Markdown, so humans follow the same ones.',
+    a: 'Any agent that reads AGENTS.md, such as Codex. Claude Code reads CLAUDE.md, which imports AGENTS.md, and gets the /add-resource and /validate-idea commands. The rules are plain Markdown, so humans follow the same ones.',
   },
   {
     q: 'Can I use it for a commercial product?',
@@ -129,6 +156,10 @@ const faq = [
   {
     q: 'Do I need to run every service?',
     a: 'No. The default stack is Postgres, Redis, S3, Temporal, Mailpit, the API, the worker and the web app; everything else is an opt-in compose profile or a service you connect by URL. In the measured snapshot in docs/STACK.md the default stack used about 612 MiB of RAM.',
+  },
+  {
+    q: 'Which pricing model does billing assume?',
+    a: 'None. A plan price is one or more components: flat, per seat, metered, prepaid credits or a contract. Stripe sells them through checkout; contracts can also be invoiced by hand and recorded in the operator console.',
   },
   {
     q: 'Does CI need an LLM API key?',
@@ -213,7 +244,78 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
     </p>
   </section>
 
-  <section aria-labelledby="stack" class="border-t">
+  <section aria-labelledby="features" class="border-t">
+    <div class="mx-auto max-w-5xl px-6 pt-16">
+      <h2 id="features" class="text-2xl font-semibold tracking-tight sm:text-3xl">What ships in the template</h2>
+      <p class="mt-3 max-w-2xl text-muted-foreground">
+        Working code with tests and docs, not stubs. Most optional parts sit behind feature flags that
+        are off by default, so you turn on what your product needs.
+      </p>
+      <nav aria-label="Feature groups" class="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+        {
+          groups.map((g) => (
+            <a href={`#${g.id}`} class="font-medium text-primary hover:underline">
+              {g.title}
+            </a>
+          ))
+        }
+      </nav>
+    </div>
+    {
+      groups.map((g) => (
+        <div class="mx-auto max-w-5xl px-6 py-12">
+          <h3 id={g.id} class="text-xl font-semibold tracking-tight">
+            {g.title}
+          </h3>
+          <dl class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {g.items.map(([name, text]) => (
+              <div class="rounded-lg border bg-background p-5">
+                <dt class="font-semibold">{name}</dt>
+                <dd class="mt-1 text-muted-foreground">{text}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ))
+    }
+  </section>
+
+  <section aria-labelledby="services" class="border-y bg-secondary/40">
+    <div class="mx-auto max-w-5xl px-6 py-16">
+      <h2 id="services" class="text-2xl font-semibold tracking-tight sm:text-3xl">Install with the template, or connect your own</h2>
+      <p class="mt-3 max-w-2xl text-muted-foreground">
+        Each external service either runs from a compose profile or connects to an instance you
+        already have, by environment variables. pnpm run infra asks which one per component. A
+        permissive-license twin of the stack swaps out the copyleft containers.
+      </p>
+      <div class="mt-10 overflow-x-auto rounded-lg border bg-background">
+        <table class="w-full text-left">
+          <thead class="border-b">
+            <tr>
+              <th scope="col" class="p-4 font-semibold">Service</th>
+              <th scope="col" class="p-4 font-semibold">Install</th>
+              <th scope="col" class="p-4 font-semibold">Connect</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            {
+              services.map(([name, install, connect]) => (
+                <tr>
+                  <th scope="row" class="p-4 font-semibold">
+                    {name}
+                  </th>
+                  <td class="p-4 text-muted-foreground">{install || 'Not shipped'}</td>
+                  <td class="p-4 text-muted-foreground">{connect}</td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="stack">
     <div class="mx-auto max-w-5xl px-6 py-16">
       <h2 id="stack" class="text-2xl font-semibold tracking-tight sm:text-3xl">Mainstream stack, one reason each</h2>
       <p class="mt-3 max-w-2xl text-muted-foreground">
@@ -250,64 +352,6 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
           ))
         }
       </ol>
-    </div>
-  </section>
-
-  <section aria-labelledby="ai" class="mx-auto max-w-5xl px-6 py-16">
-    <h2 id="ai" class="text-2xl font-semibold tracking-tight sm:text-3xl">An AI layer you can audit</h2>
-    <p class="mt-3 max-w-2xl text-muted-foreground">
-      AI output that is stored is marked as generated until a person confirms or corrects it. The
-      rest is enforced by code and tests.
-    </p>
-    <ul class="mt-10 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
-      {
-        ai.map(([title, text]) => (
-          <li>
-            <h3 class="font-semibold">{title}</h3>
-            <p class="mt-2 text-muted-foreground">{text}</p>
-          </li>
-        ))
-      }
-    </ul>
-  </section>
-
-  <section aria-labelledby="services" class="border-t">
-    <div class="mx-auto grid max-w-5xl gap-10 px-6 py-16 lg:grid-cols-[1fr_1.4fr]">
-      <div>
-        <h2 id="services" class="text-2xl font-semibold tracking-tight sm:text-3xl">Connect your own, or install</h2>
-        <p class="mt-3 text-muted-foreground">
-          Every external service either runs from a compose profile or connects to an instance you
-          already have, by environment variables. A permissive-license twin of the stack swaps out the
-          copyleft containers.
-        </p>
-      </div>
-      <dl class="divide-y rounded-lg border">
-        {
-          services.map(([name, text]) => (
-            <div class="flex flex-col gap-1 p-4 sm:flex-row sm:gap-4">
-              <dt class="font-semibold sm:w-44 sm:shrink-0">{name}</dt>
-              <dd class="text-muted-foreground">{text}</dd>
-            </div>
-          ))
-        }
-      </dl>
-    </div>
-  </section>
-
-  <section aria-labelledby="in-1-0" class="border-y bg-secondary/40">
-    <div class="mx-auto max-w-5xl px-6 py-16">
-      <h2 id="in-1-0" class="text-2xl font-semibold tracking-tight sm:text-3xl">Also in 1.0</h2>
-      <p class="mt-3 max-w-2xl text-muted-foreground">Shipped with the 1.0 release.</p>
-      <ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {
-          in10.map((f) => (
-            <li class="rounded-lg border bg-background p-5">
-              <h3 class="font-semibold">{f.title}</h3>
-              <p class="mt-2 text-muted-foreground">{f.text}</p>
-            </li>
-          ))
-        }
-      </ul>
     </div>
   </section>
 

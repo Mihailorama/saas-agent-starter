@@ -39,6 +39,8 @@ the rest of the repo needs; CI and the `node:22-alpine` image already use the la
 - **Blog**: one `.md` or `.mdx` file per post in `src/content/blog/`; the file name is the URL.
   Front matter: `title` (max 60), `description` (50-160), `pubDate`, `author`, optional
   `updatedDate`, `draft`, `faq`. The build fails when a field breaks the limits.
+  The template ships no published post: `writing-posts.mdx` is the authoring guide, a draft that
+  only `pnpm --filter site dev` shows; the blog index, RSS and llms.txt handle an empty blog.
 - **Media**: images and video are not stored in git (AGENTS.md). Host them on your CDN or object
   storage and use absolute URLs; the CSP allows `https:` images. Astro's image optimizer is off
   (it needs `sharp`, whose libvips is LGPL; ADR 0021).
@@ -76,7 +78,7 @@ subdomains). The container's CSP takes the sink origins from `ANALYTICS_ORIGINS`
 ### Lighthouse CI
 
 `.github/workflows/site.yml` builds the site with `SITE_URL=http://localhost:4321` and runs
-Lighthouse CI three times per URL (`/`, `/blog/`, the example post) on every PR that touches the
+Lighthouse CI three times per URL (`/` and `/blog/`; add a post's URL to `lighthouserc.cjs` once one is published) on every PR that touches the
 site, its shared CSS/analytics or the event catalog. It fails when the median score drops below:
 performance 0.90, accessibility 0.95, best practices 0.95, SEO 0.95. Reports are a workflow
 artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measured on this branch:
@@ -88,8 +90,9 @@ artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measure
 
 The home page of `apps/site` is this repository's landing page (owner decision, 2026-11-07):
 products built on the template replace `src/pages/index.astro` and the texts in `src/site.ts`.
-Every claim on it must hold for the code on `main`; the "Also in 1.0" block lists open PRs
-planned for 1.0.0, so drop any entry whose PR misses the release.
+Every claim on it must hold for the code on `main` (sources: AGENTS.md's architecture map and
+component picks, `docs/*.md`): a PR that adds or removes a user-facing feature updates the feature
+groups there, and every external service is listed with its install and connect paths.
 
 `.github/workflows/pages.yml` builds it with
 `SITE_URL=https://mihailorama.github.io/saas-agent-starter` and deploys it with the official Pages
