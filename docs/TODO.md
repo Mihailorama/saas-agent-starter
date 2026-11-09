@@ -1,14 +1,14 @@
 # Known limitations / backlog
 
-- **No display-name setting** (ADR 0033). A code sign-up names the account after the address's
+- **No display-name setting** (SAASSTARTER-76) (ADR 0033). A code sign-up names the account after the address's
   local part (`ada@example.com` -> `ada`), which mails, invitations and the user menu show. Fix:
   a "Name" field on a profile/settings page calling `authClient.updateUser({ name })`
   (`databaseHooks.user.update.before` already runs), and optionally ask for it once after sign-up.
-- **Email-verification codes have no screen** (ADR 0033). `overrideDefaultEmailVerification`
+- **Email-verification codes have no screen** (SAASSTARTER-77) (ADR 0033). `overrideDefaultEmailVerification`
   mails a code wherever Better Auth verifies an address, but no current flow triggers it (a code
   sign-in verifies the address; email change is off). When email change is turned on, add a code
   step that calls `authClient.emailOtp.verifyEmail`.
-- **TOTP after a code sign-in relies on reusing the twoFactor plugin's hook** (`auth.ts`,
+- **TOTP after a code sign-in relies on reusing the twoFactor plugin's hook** (SAASSTARTER-78) (`auth.ts`,
   `email-otp-guards`). Better Auth 1.7.18 lists only password/username/phone sign-ins in
   `signInPaths`. When an upgrade adds `/sign-in/email-otp` there, delete our hook; `mfa.test.ts`
   ("enrols, challenges at sign-in") fails if the challenge ever goes missing. Worth an upstream
@@ -16,47 +16,47 @@
 - **Infra wizard: deferred parts of `pnpm run infra`** (docs/setup.md, ADR 0032). The MVP covers
   tier S (one Debian/Ubuntu VPS) with Postgres, S3, SMTP, analytics, LLM and the vault. Still to
   do, each a separate change:
-  - `infra add` for the components listed as `available: false` in config/components.json:
+  - (SAASSTARTER-86) `infra add` for the components listed as `available: false` in config/components.json:
     backups (off-site S3 for pgBackRest, `COMPOSE_FILE` overlay; until then the wizard deploys
     with `--skip-backup` and warns), ops, pii, booking, observability, support (Chatwoot), crm
     (Twenty), billing (Stripe), langfuse. The heavy ones (Chatwoot, Twenty, Langfuse) also need
     production compose services first (docs/deploy.md runs them separately today).
-  - The llm-cli install: the image holds proprietary CLIs, so the wizard would have to build it
+  - (SAASSTARTER-87) The llm-cli install: the image holds proprietary CLIs, so the wizard would have to build it
     on the server and walk the human through the logins; LLM is connect-only for now.
-  - DNS automation (Cloudflare, Porkbun APIs) to create the A records instead of only checking them.
-  - Multi-server and Kubernetes targets (tier M/L); OSes other than Debian/Ubuntu (dnf, apk).
-  - The `create-saas-agent` package (`npm create saas-agent@latest`: clone, install, start the
+  - (SAASSTARTER-70) DNS automation (Cloudflare, Porkbun APIs) to create the A records instead of only checking them.
+  - (SAASSTARTER-88) Multi-server and Kubernetes targets (tier M/L); OSes other than Debian/Ubuntu (dnf, apk).
+  - (SAASSTARTER-89) The `create-saas-agent` package (`npm create saas-agent@latest`: clone, install, start the
     wizard).
   - The managed offering reuses `--answers ... --yes`; it lives in a private repository, never here.
-- **Infra wizard: browser analytics need your own web image** (ADR 0032). `VITE_*` values are
+- **Infra wizard: browser analytics need your own web image** (SAASSTARTER-79) (ADR 0032). `VITE_*` values are
   baked into the web bundle at build time, so with the upstream images the PostHog/Umami script is
   off even when the wizard connects or installs analytics (server-side PostHog works). Fix: a fork
   sets the repository variables and releases its own images, or the web image reads its public
   config at runtime (`/config.js` rendered by nginx from env).
-- **Infra wizard: not covered by the e2e** (deploy/setup/e2e.sh): `ssh-copy-id` with a typed
+- **Infra wizard: not covered by the e2e** (SAASSTARTER-80) (deploy/setup/e2e.sh): `ssh-copy-id` with a typed
   password, real ACME certificates and DNS, the interactive questions (clack), the vault push, the
   LLM check against a real provider, macOS as the operator machine (sops' default key path there
   differs; the wizard sets `SOPS_AGE_KEY_FILE`). Also: the vault install leaves `VAULT_SMTP_*`
   empty (invitation mails), and "connect" for the vault has no reachability check yet.
-- **Vault: CI runs no real `bw` round trip** (docs/secrets.md, ADR 0029). The `vault` CI job only
+- **Vault: CI runs no real `bw` round trip** (SAASSTARTER-81) (docs/secrets.md, ADR 0029). The `vault` CI job only
   checks Vaultwarden (alive over TLS, admin off, signups closed); `scripts/vault.test.mjs` uses a
   fake `bw`. The real round trip (invite, register, `unlock`, `put`, `replace`, `get`, `run`, `lock` with
   `@bitwarden/cli` 2026.10.1, agent profile) passed by hand on 2026-11-08, with registration done by a
   throwaway script (Bitwarden client crypto) because `bw` cannot register. Fix: pin `@bitwarden/cli`
   in that job via `npm exec`, register a test user over `/identity/accounts/register/finish`, run
   the wrapper. Catches a change in the `bw` item JSON or its HTTPS rules.
-- **Onboarding: tour "seen" and checklist "dismissed" are per browser** (docs/onboarding.md,
+- **Onboarding: tour "seen" and checklist "dismissed" are per browser** (SAASSTARTER-82) (docs/onboarding.md,
   `apps/web/src/lib/onboarding.ts`). They live in `localStorage` to avoid a table and a migration,
   so a user on a second device sees the tour once more and the card again. If that bothers users:
   a nullable `user.onboarding_tour_seen_at` column (Better Auth `additionalFields`) set from the
   tour and read in the session; the checklist dismissal the same way or per organization.
-- **MCP tools: admins type tool names; no "test connection"** (docs/mcp.md "Not covered"). The
+- **MCP tools: admins type tool names; no "test connection"** (SAASSTARTER-3) (docs/mcp.md "Not covered"). The
   API never connects out. Fix: a small Temporal workflow (`ListMcpToolsWorkflow`) the settings
   page starts, returning the server's tool names through the SSRF pin; offer them as checkboxes.
-- **MCP tools: no OAuth servers, no a11y/e2e coverage of the settings page** (flag off in e2e,
+- **MCP tools: no OAuth servers, no a11y/e2e coverage of the settings page** (SAASSTARTER-4) (flag off in e2e,
   like AI providers). Fix: OAuth via the SDK's client auth provider with tokens stored like the
   auth header; e2e with `VITE_FLAGS_ON=mcp-tools` on the consent build or a third dev server.
-- **MCP: OAuth 2.1 sign-in for hosted connectors** (docs/mcp.md, ADR 0027). `/mcp` accepts only
+- **MCP: OAuth 2.1 sign-in for hosted connectors** (SAASSTARTER-5) (docs/mcp.md, ADR 0027). `/mcp` accepts only
   organization API keys as a bearer header; ChatGPT connectors and claude.ai custom connectors
   expect OAuth 2.1 (RFC 9728 protected resource metadata, PKCE, client registration). Better Auth
   can cover it: `@better-auth/mcp` (MIT, same 1.7.x line as `better-auth`) turns the app into an
@@ -66,68 +66,68 @@
   to `SCOPES` in tenant.ts, accept those tokens in `verifiedKey()` next to keys, and check
   `pnpm check:licenses`. Its README recommends `legacy: 'reject'` (2026-07-28 clients only):
   decide that against the clients customers use.
-- **Agent protocols A2A, AP2 and UCP are not supported** (agent-to-agent, agent payments, agent
+- **Agent protocols A2A, AP2 and UCP are not supported** (SAASSTARTER-6) (agent-to-agent, agent payments, agent
   commerce). Revisit when a customer needs one; MCP (docs/mcp.md) covers tool use.
-- **Operator console: no Chatwoot link per user/organization** (docs/admin.md). The integration
+- **Operator console: no Chatwoot link per user/organization** (SAASSTARTER-7) (docs/admin.md). The integration
   stores none (ADR 0013). If support wants one: read the contact by `identifier` (user id) through
   the Chatwoot API in the worker or API and link `/app/accounts/<id>/contacts/<contact id>`; verify
   the URL scheme against the deployed Chatwoot version first.
-- **Operator console: a suspended org's owner who switched away cannot request its export/deletion**
+- **Operator console: a suspended org's owner who switched away cannot request its export/deletion** (SAASSTARTER-8)
   (`apps/api/src/operator-guard.ts` blocks `organization/set-active` into a suspended org;
   `/api/privacy/org/*` needs it active). Fix: let set-active into a suspended org through (every
   tenant route still answers 403) or give the privacy org routes an explicit org id checked
   against owner membership. Test in `apps/api/test/admin.test.ts`.
-- **Operator console: the app DB login can `SET ROLE app_operator_read` / `app_operator_audit`**
+- **Operator console: the app DB login can `SET ROLE app_operator_read` / `app_operator_audit`** (SAASSTARTER-9)
   (ADR 0025): a SQL injection in the API could read every tenant or write org-less audit rows.
   Fix if the risk matters: a separate login for the console (`OPERATOR_DATABASE_URL`).
-- **LiteLLM's dependencies fail the license gate (blocks CI of ADR 0024).** `pnpm check:licenses`
+- **LiteLLM's dependencies fail the license gate (blocks CI of ADR 0024).** (SAASSTARTER-10) `pnpm check:licenses`
   rejects `jinja2`, `fastuuid`, `aiosignal`, `s3transfer`, `tokenizers`, `tiktoken`,
   `python-dateutil` (metadata the gate cannot map) and `regex` (`Apache-2.0 AND CNRI-Python`). No
   exception was added. Owner decision needed: amend ADR 0005 (classifier mapping + CNRI-Python),
   or move the LiteLLM route to the LiteLLM Proxy container (docs/adr/0024-llm-providers.md).
-- **Billing page does not show the calls/tokens limit** of unmetered models (`llmUsageMonthly`,
+- **Billing page does not show the calls/tokens limit** (SAASSTARTER-11) of unmetered models (`llmUsageMonthly`,
   worker/billing.py `check_llm_usage`); the API's billing response and the web page only show the
   money limit. Add a usage block next to `llmSpend`, and an alert on
   `billing_llm_usage_blocked_total` like `LlmSpendLimitHit`.
-- **llm-cli limits are per process** (services/llm-cli/src/pool.ts): run one replica. If one is not
+- **llm-cli limits are per process** (SAASSTARTER-12) (services/llm-cli/src/pool.ts): run one replica. If one is not
   enough, move the per-subscription counters and cooldowns to Redis.
-- **vLLM CPU path not verified end to end.** On the dev host (AVX2 only, load ~25) the
+- **vLLM CPU path not verified end to end.** (SAASSTARTER-13) On the dev host (AVX2 only, load ~25) the
   `local-llm-cpu` container loaded SmolLM2-135M and allocated its KV cache, then stalled before
   serving (2026-11-07); the vLLM route is tested against an OpenAI-compatible mock only. Retry on
   an AVX-512 host or a GPU box.
 
-- **2FA/passkey audit rows are not atomic with the change** (`apps/api/src/mfa.ts`): written
+- **2FA/passkey audit rows are not atomic with the change** (SAASSTARTER-14) (`apps/api/src/mfa.ts`): written
   after Better Auth commits, so a crash in between loses the row. Fix if it matters: Better Auth
   database hooks inside its transaction once they cover plugin models.
-- **Transactional outbox for workflow starts.** `POST /api/projects` starts the Temporal
+- **Transactional outbox for workflow starts.** (SAASSTARTER-15) `POST /api/projects` starts the Temporal
   workflow after commit; if Temporal is unreachable at that moment the start is logged and lost
   (`apps/api/src/routes/projects.ts`). Fix: write an outbox row in the same transaction and have a
   small relay start workflows from it (still idempotent via the workflow id).
-- **Attachment upload confirmation.** The attachment row is created before the browser uploads
+- **Attachment upload confirmation.** (SAASSTARTER-16) The attachment row is created before the browser uploads
   the bytes, so an abandoned upload leaves a row without an object. Fix: add `uploaded_at`, set it
   from a `POST .../attachments/:id/complete` that HEADs the object, and hide/expire rows without it.
-- **osv-scanner ignore for `@opentelemetry/core` 1.x** expires 2027-02-01 (`osv-scanner.toml`).
+- **osv-scanner ignore for `@opentelemetry/core` 1.x** (SAASSTARTER-17) expires 2027-02-01 (`osv-scanner.toml`).
   Remove it once `@temporalio/interceptors-opentelemetry` depends on OpenTelemetry 2.x.
-- **AI calls export loads all rows in memory** (`apps/api/src/routes/ai-calls.ts`). Fine for
+- **AI calls export loads all rows in memory** (SAASSTARTER-18) (`apps/api/src/routes/ai-calls.ts`). Fine for
   thousands of rows; stream with a server-side cursor before orgs reach ~100k calls.
-- **`audit_log` is not append-only** for the app role, unlike `ai_calls`. Consider adding it
+- **`audit_log` is not append-only** (SAASSTARTER-19) for the app role, unlike `ai_calls`. Consider adding it
   to the append-only list in `packages/db/src/migrate.ts` (check nothing updates it first).
-- **Alert notifications.** Prometheus evaluates the rules but nothing routes them. Fix: add
+- **Alert notifications.** (SAASSTARTER-20) Prometheus evaluates the rules but nothing routes them. Fix: add
   Alertmanager (Apache-2.0) to the observability profile with a receiver per deployment.
-- **Collector reads every container's log file on the host** (filtered to this compose project
+- **Collector reads every container's log file on the host** (SAASSTARTER-21) (filtered to this compose project
   by label). Fine on a dedicated host; on a shared Docker host consider the Docker `fluentd`/OTLP
   log driver per service instead, so other projects' files are never opened.
-- **Browser errors are not linked to backend traces.** The web app has no OpenTelemetry, so
+- **Browser errors are not linked to backend traces.** (SAASSTARTER-22) The web app has no OpenTelemetry, so
   GlitchTip/Sentry browser events carry the SDK's own trace id. Fix if needed: browser OTel with
   `traceparent` on `/api` calls, or tag events with the `trace_id` the API now returns in the
   `x-trace-id` response header (already used by the analytics `api_error` event).
-- **`@sentry/node` 11 pulls the FSL-licensed `sentry` CLI** via `@sentry/bundler-plugins`, so the
+- **`@sentry/node` 11 pulls the FSL-licensed `sentry` CLI** (SAASSTARTER-23) via `@sentry/bundler-plugins`, so the
   API uses `@sentry/node-core` 10. Revisit when a `@sentry/node-core` 11 is published or the CLI
   becomes optional upstream.
-- **Temporal server traces are not exported** (only its metrics are scraped); the Temporal SDK
+- **Temporal server traces are not exported** (SAASSTARTER-24) (only its metrics are scraped); the Temporal SDK
   spans in the API and worker cover workflow/activity timing. Enable the server's OTEL env vars
   if server-side spans are needed.
-- **Alerting on the Umami tier.** Umami has no alerts or outgoing webhooks, so on-prem/RU
+- **Alerting on the Umami tier.** (SAASSTARTER-25) Umami has no alerts or outgoing webhooks, so on-prem/RU
   deployments without PostHog get no `cjm-regression` issue. Grafana is in the observability
   profile: add a PostgreSQL datasource for the `umami` database next to the existing ones in
   `infra/grafana/provisioning/datasources/datasources.yaml` (read-only role), and one Grafana
@@ -137,24 +137,24 @@
   `apps/api/src/routes/hooks.ts`, extended to accept Grafana's alert payload and open the same
   `cjm-regression` issue. Until then run `pnpm journeys:report --json` on a schedule
   (docs/product-analytics.md).
-- **Feedback channel on the Umami-only tier.** Covered when the service desk is configured: the
+- **Feedback channel on the Umami-only tier.** (SAASSTARTER-26) Covered when the service desk is configured: the
   Chatwoot Help menu takes reports on every tier (docs/support.md). Without Chatwoot it remains:
   PostHog Surveys provide "report a problem /
   suggest an improvement"; Umami has no surveys and GlitchTip only implements Sentry's
   crash-report dialog (reports attached to an error; its Sentry User Feedback widget support
   was broken, glitchtip-backend issues #403/#468). Re-check GlitchTip's user feedback support
   (or Umami's error tracking, announced for v3.5.0) before building anything.
-- **Formbricks is not in the privacy export/deletion** (`services/worker-py/worker/privacy.py`,
+- **Formbricks is not in the privacy export/deletion** (SAASSTARTER-83) (`services/worker-py/worker/privacy.py`,
   docs/privacy.md "Per-tool support"). With an Enterprise license the web identifies people in
   Formbricks by user id, so a deletion request leaves their contact and responses there. Fix: a
   Formbricks step in the privacy workflow (Management API: find the contact by `userId`, delete
   it) behind `FORMBRICKS_URL` / `FORMBRICKS_API_KEY`, like the Chatwoot step.
-- **Config surveys: PostHog fields not verified against a live project** (`survey()` in
+- **Config surveys: PostHog fields not verified against a live project** (SAASSTARTER-84) (`survey()` in
   `scripts/journeys.mjs`). Unit-tested only: `targeting_flag_filters` with `is_date_before -14d` on
   `first_seen_at`, `linked_flag_id`, `schedule: recurring` + `iteration_*`. Fix: run
   `pnpm journeys:sync` against a test project once keys exist and compare with a survey made in
   the UI; adjust the mapping if PostHog stores a field differently.
-- **PostHog `$ai_generation` events from the worker.** Thumbs feedback in PostHog AI
+- **PostHog `$ai_generation` events from the worker.** (SAASSTARTER-27) Thumbs feedback in PostHog AI
   observability attaches to `$ai_trace_id`, but the worker sends no generations to PostHog, so
   the trace is empty there (Langfuse gets it through OpenTelemetry). To add: in
   `services/worker-py/worker/ai.py`, after each call, capture `$ai_generation` with
@@ -162,155 +162,155 @@
   `$ai_output_tokens`, `$ai_latency`, cost, and **no** `$ai_input`/`$ai_output_choices`
   (privacy mode; ADR 0008 keeps content in S3 only). Needs the `posthog` Python package
   (run it through the license gate), and a `POSTHOG_PROJECT_KEY`/`POSTHOG_HOST` env on the worker.
-- **PostHog alert webhooks via hog functions** (`scripts/journeys.mjs`) follow PostHog's UI
+- **PostHog alert webhooks via hog functions** (SAASSTARTER-28) (`scripts/journeys.mjs`) follow PostHog's UI
   flow, not a documented API. Verify against a real project once the owner has keys; fall back
   to adding the webhook in the alert UI if the API rejects it.
-- **Backups: off-site storage and alert routing are deployment steps.** The backup overlay
+- **Backups: off-site storage and alert routing are deployment steps.** (SAASSTARTER-29) The backup overlay
   (`compose.backup.yaml`, docs/backups.md) defaults to `backup-s3` on the same host, which does
   not survive losing that host. Each deployment must set `BACKUP_S3_*` to another provider or
   region, store `BACKUP_ENCRYPTION_PASSPHRASE` off the server, and route the `backups` alerts
   (Alertmanager, see "Alert notifications" above).
-- **Production SeaweedFS fits only two buckets.** `s3` in `compose.prod.yaml` (profile `s3`)
+- **Production SeaweedFS fits only two buckets.** (SAASSTARTER-30) `s3` in `compose.prod.yaml` (profile `s3`)
   runs with SeaweedFS's default `-volume.max` (14 volume slots); each bucket takes 7, so a third
   bucket (e.g. Chatwoot's or Langfuse's, if run there) gets HTTP 500 on its first upload. The
   dev `s3` in `docker-compose.yml` sets `-volume.max=64`; do the same in production, sized to
   the disk (`-master.volumeSizeLimitMB` caps each volume, default 30 GB).
-- **Backups: a second repository.** pgBackRest supports `repo2` (e.g. a second provider or
+- **Backups: a second repository.** (SAASSTARTER-31) pgBackRest supports `repo2` (e.g. a second provider or
   object-locked bucket). Add `PGBACKREST_REPO2_*` to `compose.backup.yaml` if one off-site copy is
   not enough; the restore check would then also need a run per repository.
-- **Backups: Grafana dashboard.** Backup and restore-check metrics only have alert rules
+- **Backups: Grafana dashboard.** (SAASSTARTER-32) Backup and restore-check metrics only have alert rules
   (`infra/otel/alerts.yml`); a `backups` dashboard (last backup age, WAL archive lag, restore
   check duration) would help operators. Build it per AGENTS.md "Add a dashboard".
-- **Short downtime on single-host deploys.** `docker compose up` recreates `api`/`web` in place
+- **Short downtime on single-host deploys.** (SAASSTARTER-33) `docker compose up` recreates `api`/`web` in place
   (seconds without the API; Caddy only holds requests to `web`). Zero-downtime on one host needs
   two `api` replicas and a health-aware switch (e.g. a blue/green project pair behind Caddy).
   Tier L on Kubernetes gets rolling updates. docs/deploy.md "Tiers".
-- **No Helm chart for tier L / customer clusters.** What it needs is listed in docs/deploy.md
+- **No Helm chart for tier L / customer clusters.** (SAASSTARTER-34) What it needs is listed in docs/deploy.md
   "Kubernetes / Helm" (migrate as pre-upgrade hook Job, probes, Ingress + cert-manager, secrets).
-- **Production observability.** `compose.prod.yaml` has no observability profile; the dev one
+- **Production observability.** (SAASSTARTER-35) `compose.prod.yaml` has no observability profile; the dev one
   (`docker-compose.yml`) mounts repo files and runs Grafana without login. Add a production
   variant (authenticated Grafana behind Caddy, retention) or document an external backend.
-- **Release images are linux/amd64 only** (`.github/workflows/release.yml`). Add
+- **Release images are linux/amd64 only** (SAASSTARTER-36) (`.github/workflows/release.yml`). Add
   `--platform linux/amd64,linux/arm64` (and QEMU/arm runners) when an arm64 host is needed.
-- **SSH transport of `scripts/deploy.mjs` is not exercised by the rehearsal** (it uses
+- **SSH transport of `scripts/deploy.mjs` is not exercised by the rehearsal** (SAASSTARTER-37) (it uses
   `DEPLOY_HOST=local`, same script on `sh -s` instead of `ssh host sh -s`). Run the first real
   deploy to a staging host and note the result in docs/deploy.md.
-- **Social mentions into the service desk (later, only if volume appears).** X and LinkedIn
+- **Social mentions into the service desk (later, only if volume appears).** (SAASSTARTER-38) X and LinkedIn
   mentions of the product do not reach Chatwoot. When there is enough volume to matter: a
   scheduled Apify actor (one per network) that posts new mentions into a Chatwoot **API inbox**
   (`POST /public/api/v1/inboxes/{identifier}/contacts/.../conversations/.../messages`), so they
   get the same triage as every other channel (docs/support.md). Do not build it before then.
-- **Support triage start is not transactional.** `POST /api/hooks/chatwoot` starts
+- **Support triage start is not transactional.** (SAASSTARTER-39) `POST /api/hooks/chatwoot` starts
   `SupportTriageWorkflow` directly; if Temporal is down at that moment the triage is lost, and
   Chatwoot does not retry account webhooks (`apps/api/src/routes/support.ts`). Same fix as the
   project workflow outbox above, or a periodic sweep for conversations without
   `support_category`.
-- **Online LLM judges have nothing to judge yet** (ADR 0009 "Open"). PostHog privacy mode is on
+- **Online LLM judges have nothing to judge yet** (SAASSTARTER-40) (ADR 0009 "Open"). PostHog privacy mode is on
   by default and our spans carry no prompt/output text, so PostHog and Langfuse evaluators
   (`pnpm llmops:evaluators`) see empty input/output; both tools also need an LLM provider API key
   stored in the tool. Owner decides: privacy mode off for PostHog (DPA), and/or opt-in content on
   the spans exported to the self-hosted Langfuse only (e.g. `gen_ai.input.messages` /
   `gen_ai.output.messages` behind a flag, on a span processor used only for the Langfuse
   exporter), plus which provider key.
-- **PostHog evaluation request is unverified against a live project.** `scripts/llmops-evaluators.mjs`
+- **PostHog evaluation request is unverified against a live project.** (SAASSTARTER-41) `scripts/llmops-evaluators.mjs`
   follows the API reference example (`output_type: boolean`, `model_configuration`,
   `conditions` on `ai_purpose`); run `--apply` once with the owner's personal API key and check the
   evaluation in the UI, then fix the body if PostHog rejects or reinterprets a field.
-- **`pnpm eval:real` may see the operator's Claude Code memory.** `--bare` would drop it but also
+- **`pnpm eval:real` may see the operator's Claude Code memory.** (SAASSTARTER-42) `--bare` would drop it but also
   disables subscription auth. Run it from an account without steering CLAUDE.md, or switch to a
   `--settings`/env option if Claude Code adds one that skips memory with OAuth.
-- **Open owner decision: does the small single-server tier run Langfuse?** (ADR 0009). PostHog
+- **Open owner decision: does the small single-server tier run Langfuse?** (SAASSTARTER-43) (ADR 0009). PostHog
   Cloud is the default; Langfuse costs about 1.9 GiB RAM measured (docs/STACK.md).
-- **Mailed links live in Temporal history.** `SendEmailWorkflow` gets the rendered mail, link
+- **Mailed links live in Temporal history.** (SAASSTARTER-44) `SendEmailWorkflow` gets the rendered mail, link
   included, as its argument (`apps/api/src/temporal.ts`), kept until the namespace retention
   drops it. Same trust boundary as Better Auth's `verification` table while Temporal runs on our
   Postgres server; with Temporal Cloud or a separate cluster, add an encrypting `PayloadCodec`
   on the API client and the worker (key from env) for the `email` queue (ADR 0014).
-- **Bounce/complaint webhooks.** Providers keep their own suppression lists (docs/email.md);
+- **Bounce/complaint webhooks.** (SAASSTARTER-45) Providers keep their own suppression lists (docs/email.md);
   nothing in the app reacts to hard bounces or spam complaints. When volumes grow, accept the
   provider's webhook in `apps/api/src/routes/hooks.ts` and alert on bounce rate.
-- **Mail language is the request's `Accept-Language`.** Users have no stored locale, so an
+- **Mail language is the request's `Accept-Language`.** (SAASSTARTER-47) Users have no stored locale, so an
   invitation is written in the inviter's browser language. Store a locale on the user (and
   pass it for invitations) when the web gets i18n; strings move to i18next then
   (`apps/api/src/email.ts`).
-- **LLM spend rollup.** The spend check sums `ai_calls` per call (index range scan). Past
+- **LLM spend rollup.** (SAASSTARTER-48) The spend check sums `ai_calls` per call (index range scan). Past
   ~1M calls per org per month, add a monthly rollup row written in the gateway's insert
   transaction (ADR 0019 "Alternatives").
-- **Webhook deliveries lost if Temporal is down at publish time** stay `pending` until a
+- **Webhook deliveries lost if Temporal is down at publish time** (SAASSTARTER-49) stay `pending` until a
   replay (`apps/api/src/events.ts` `flushEvents`). The transactional outbox above covers it:
   relay pending deliveries whose workflow never started.
-- **Self-hosted Svix app portal.** Re-check svix/svix-webhooks#2026 (open-source the consumer
+- **Self-hosted Svix app portal.** (SAASSTARTER-50) Re-check svix/svix-webhooks#2026 (open-source the consumer
   portal). If it lands, switch delivery to Svix behind `publishEvent()` (ADR 0018) and replace
   the delivery UI with the portal.
-- **PostHog personless `$ai_generation` events may survive a user deletion.** The worker sends
+- **PostHog personless `$ai_generation` events may survive a user deletion.** (SAASSTARTER-51) The worker sends
   them with `distinct_id` = user id and `$process_person_profile: false`
   (`services/worker-py/worker/posthog.py`). `persons/bulk_delete` deletes the events of persons it
   finds; for a user who never consented in the web there is no person, and PostHog documents no
   event deletion by distinct id. Verify against a real project; if they remain, send these events
   with `distinct_id = org:<orgId>` (the trace id still links feedback) or a per-call id.
-- **GA4 deletion covers only the requesting browser.** The web sends no user id to GA4, so
+- **GA4 deletion covers only the requesting browser.** (SAASSTARTER-52) The web sends no user id to GA4, so
   `submitUserDeletion` gets the client id of the browser the deletion was requested from
   (`apps/web/src/lib/analytics.ts` `gaClientId`). Other browsers of the same person keep their
   events until GA4's retention. Fix if needed: set GA4 `user_id` to a pseudonymous id after
   consent and delete by `userId` (docs/privacy.md, "Per-tool support").
-- **GA4 has no per-user export.** The export README lists it as not supported; a BigQuery export
+- **GA4 has no per-user export.** (SAASSTARTER-53) The export README lists it as not supported; a BigQuery export
   filtered by `user_pseudo_id` is the only route. Add it only if a deployment uses BigQuery export.
-- **Privacy tool adapters are unverified against live tools** (`services/worker-py/worker/privacy.py`):
+- **Privacy tool adapters are unverified against live tools** (SAASSTARTER-54) (`services/worker-py/worker/privacy.py`):
   they follow the vendor docs and source (docs/privacy.md, checked 2026-11-07) and are tested with
   HTTP mocks only. Run one export and one deletion against a real PostHog, Langfuse, Chatwoot and
   GA4 property once the owner has keys, and note the result in docs/privacy.md.
-- **Export ZIP is built in memory** (`build_export`): fine for exports up to a few hundred MB.
+- **Export ZIP is built in memory** (SAASSTARTER-55) (`build_export`): fine for exports up to a few hundred MB.
   Stream to a temporary file and use multipart upload when organizations store more files.
-- **Every organization is visited for a user's export/deletion and the AI-content retention**
+- **Every organization is visited for a user's export/deletion and the AI-content retention** (SAASSTARTER-56)
   (`PrivacyActivities._org_ids`, one RLS transaction each). Fine for thousands of organizations;
   for more, keep a per-user list of organizations they ever acted in, or batch by org.
-- **IndexNow is not wired into a deploy job.** `pnpm seo:indexnow --since <previous sha>` exists
+- **IndexNow is not wired into a deploy job.** (SAASSTARTER-57) `pnpm seo:indexnow --since <previous sha>` exists
   (docs/marketing.md) but nothing calls it: `scripts/deploy.mjs` ships the app images only and the
   site deploys separately (docs/deploy.md). Fix: when the site gets a deploy job (or a `site`
   service in `compose.prod.yaml` behind Caddy), run it after a successful deploy with the
   previously deployed sha and `INDEXNOW_KEY`.
-- **GEO check covers Claude only.** `scripts/geo-check.mjs` asks one assistant. If buyers use
+- **GEO check covers Claude only.** (SAASSTARTER-58) `scripts/geo-check.mjs` asks one assistant. If buyers use
   others, add a runner per assistant CLI the team is logged in to (same config, same report),
   never an API key in CI.
-- **Postiz idle cost.** ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
+- **Postiz idle cost.** (SAASSTARTER-59) ~1.2 GiB RAM and ~20 % of a core at rest (docs/STACK.md). Re-measure on
   each Postiz upgrade. Untested lever: Postiz's `EXCLUDE_QUEUE` env (comma-separated provider
   task queues this server does not poll) listing the networks you do not use; measure before and
   after in docs/STACK.md, and never exclude a network you post to.
-- **Data-subject rights do not reach Cal.diy's bookings** (2026-11-07; docs/privacy.md, docs/crm.md
+- **Data-subject rights do not reach Cal.diy's bookings** (SAASSTARTER-60) (2026-11-07; docs/privacy.md, docs/crm.md
   "Privacy"). Attendee name, email and answers live in Cal.diy's database; its web container has
   no API for them (API v2 is a separate server we do not run), so an operator deletes them in
   Cal.diy's UI. Options: run Cal.diy's API v2 in the `booking` profile and add a privacy `Tool`
   (bookings by attendee email: export, cancel + delete), or a reviewed SQL step against the
   `caldiy` database (couples us to its Prisma schema; pin to the commit). Same gap for Cal.com
   Cloud (its own deletion process).
-- **Cal.diy image build on every CI run** (`caldiy-image`, 20-40 minutes). Add a layer cache
+- **Cal.diy image build on every CI run** (SAASSTARTER-61) (`caldiy-image`, 20-40 minutes). Add a layer cache
   (buildx + GHA cache) or run the job only when `infra/caldiy/` or the compose files change, if
   the runner minutes matter.
-- **Twenty leftovers after a deletion** (docs/privacy.md "Twenty"): notes people wrote on the
+- **Twenty leftovers after a deletion** (SAASSTARTER-62) (docs/privacy.md "Twenty"): notes people wrote on the
   person stay (unlinked) and Twenty's record history (timeline activities) was not checked on a
   live Twenty; verify, and if it keeps the email, delete those entries through the REST API too.
-- **Permissive CRM twin.** `compose.permissive.yaml` only disables Twenty (AGPL); the sync then
+- **Permissive CRM twin.** (SAASSTARTER-63) `compose.permissive.yaml` only disables Twenty (AGPL); the sync then
   dry-runs. Evaluate Krayin (MIT, Laravel) or Atomic CRM (MIT) behind the `Crm` protocol
   (`services/worker-py/worker/crm.py`) if an AGPL-free delivery needs a CRM.
-- **Twenty attachments are not backed up** (`twenty-data` volume, `STORAGE_TYPE=local`,
+- **Twenty attachments are not backed up** (SAASSTARTER-64) (`twenty-data` volume, `STORAGE_TYPE=local`,
   docs/backups.md). Point Twenty at a bucket in `BACKUP_APP_BUCKETS` once attachments matter.
-- **Pages not yet on the UI patterns.** `ai-calls`, `api-keys`, `webhooks`, `security`,
+- **Pages not yet on the UI patterns.** (SAASSTARTER-65) `ai-calls`, `api-keys`, `webhooks`, `security`,
   `billing`, `sign-in` and `two-factor` still use hand-written headers, native `<select>`,
   `<input type="checkbox">` and `<textarea>` and their own empty/error markup. They pass axe, but
   new pages copy what they see. Fix: move each to `PageHeader`, `QueryView`/`DataTable`,
   `EmptyState`, `Select`/`Checkbox`/`Textarea` and `SettingsSection` (docs/ui.md), one page per PR,
   keeping the e2e selectors (labels, roles) unchanged.
-- **`/sign-in` Lighthouse performance ~0.79** (reported, not enforced, in
+- **`/sign-in` Lighthouse performance ~0.79** (SAASSTARTER-66) (reported, not enforced, in
   `apps/web/lighthouserc.cjs`). Routes and the command palette are code-split since 2026-11-07
   (entry JS 212 kB compressed, budget 230 kB enforced), yet total blocking time is still ~440 ms
   on desktop; `/ai-transparency` scores 1.0. Fix: profile the sign-in boot (Sentry, analytics,
   cookie banner, Better Auth client) and defer what is not needed before first input, then raise
   the performance assertion to `error` at 0.9.
-- **Plane Python SDK search has no `project_id`/`limit` params** (`plane-sdk` 0.3.2,
+- **Plane Python SDK search has no `project_id`/`limit` params** (SAASSTARTER-67) (`plane-sdk` 0.3.2,
   `WorkItems.search`; `RetrieveQueryParams` ignores extra fields). `worker/tracker.py` passes them
   through a small `RetrieveQueryParams` subclass and also filters hits by project. Ask upstream
   for the params and drop `_SearchParams` once a release has them (AGENTS.md: no patches).
-- **Bot check on sign-up (captcha), not wired yet** (docs/security.md "Sign-up protection",
+- **Bot check on sign-up (captcha), not wired yet** (SAASSTARTER-85) (docs/security.md "Sign-up protection",
   2026-11-08). Disposable addresses are refused; scripted sign-ups with real-looking addresses
   are only rate-limited. Better Auth's `captcha` plugin (`better-auth/plugins`) supports Cloudflare
   Turnstile, reCAPTCHA, hCaptcha, CaptchaFox and Vercel BotID, server side in a few lines; it needs
