@@ -1,10 +1,15 @@
-// Shared by the e2e specs: axe-core (MPL-2.0, unmodified) accessibility scan of the current page.
+// Shared by the e2e specs: axe-core (MPL-2.0, unmodified) accessibility scan of the current page,
+// plus the layout guards (layout.ts) on the same page.
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Page } from '@playwright/test';
+import { expectGoodLayout } from './layout';
 
 const WCAG = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
-/** Fails on serious or critical WCAG A/AA violations; minor and moderate ones are printed. */
+/**
+ * Fails on serious or critical WCAG A/AA violations (minor and moderate ones are printed) and on
+ * any layout problem: overflow, clipped text, overlapping controls, broken images.
+ */
 export async function expectAccessible(page: Page, name: string) {
   // No transitions or animations: axe would sample half-faded dialogs or half-switched themes.
   await page.addStyleTag({
@@ -21,6 +26,7 @@ export async function expectAccessible(page: Page, name: string) {
   if (other.length)
     console.log(`axe ${name}, not blocking:\n  ${other.map(describe).join('\n  ')}`);
   expect(blocking.map(describe), `axe: ${name}`).toEqual([]);
+  await expectGoodLayout(page, name);
 }
 
 /** Runs the check in light and in dark mode (contrast differs); the app follows the OS by default. */

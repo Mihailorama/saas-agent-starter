@@ -1,6 +1,6 @@
 # 0023. UI kit, patterns, dev gallery and automated UI checks
 
-Status: accepted (owner request, 2026-11-07)
+Status: accepted (owner request, 2026-11-07); visual regression amended 2026-11-08 (below)
 
 Numbering: 0022 is data-subject rights, so this is 0023.
 
@@ -52,7 +52,7 @@ Checks:
   pinned and SHA-256-verified, scans the source and the rendered gallery, reference screens
   and public pages at desktop and mobile widths. It runs offline with no account or key, so it
   blocks.
-- Visual regression (`UI / visual`): Playwright screenshots of every gallery section, reference
+- Visual regression (`UI / visual`, replaced on 2026-11-08, see the amendment): Playwright screenshots of every gallery section, reference
   screen and public page at desktop/mobile × light/dark. Baselines are a workflow artifact
   produced on `main` (and weekly), never committed; PRs download the latest and compare on the
   same pinned Playwright container image (browser and fonts) and Playwright version. Diffs go
@@ -76,3 +76,33 @@ Checks:
   blocking guard, because it is deterministic where the performance score is not.
 - Product teams change `--primary`, `--radius` and the font in `index.css` and update DESIGN.md;
   everything else follows.
+
+## Amendment 2026-11-08: visual checks without a human
+
+Owner decision: a human reviewing screenshots is not acceptable, and a pixel comparison on every
+CI run with an approval label is not workable (PR #65 failed `UI / visual` for an intended
+sign-in change and needed a person to accept it). Checks run on the developer's machine before
+code reaches main, the same harness as CI's, and decide on their own.
+
+- Removed: the `UI / visual` job, the `visual-baseline` artifact and its weekly refresh, the
+  `visual-change-approved` label and `visual:update`.
+- Deterministic layout guards block everywhere (`pnpm check`, so the CI `check` job too): no
+  horizontal overflow, no clipped or overflowing text in buttons, links, headings, labels, tabs,
+  badges and cells, no overlapping controls, no console errors, no broken images, plus axe, on
+  the gallery, the reference screens and the public pages at desktop/mobile × light/dark, and the
+  DOM guards on every page the e2e suite scans. DOM checks, not pixels: no baseline, no flakes
+  from fonts.
+- Pixels are compared locally only (`pnpm --filter web visual`, in `pnpm check` and a pre-push
+  hook set up by `pnpm install` through `core.hooksPath`, no husky): main's side is the merge-base
+  with `origin/main`, rendered from a temporary worktree on the same machine and cached by sha.
+  The baseline cannot go stale and never differs by OS or fonts.
+- A changed screen needs a declared intent in the committed `apps/web/.visual-intent`; only lines
+  the branch adds count, so an intent is spent at merge without a bot commit. Chosen over a
+  PR-body section because the check runs before a PR exists and offline.
+- An optional AI review of declared diffs through the `claude` CLI (subscription, explicit model)
+  is advisory only and never runs in CI.
+
+Consequences: CI does not prove pixels; a push with `--no-verify` and a red local check can land a
+visual change that only the layout guards would catch. The guards are the safety net, the local
+comparison the intent check. The first local run builds main's worktree (about two minutes);
+later runs reuse the cache.

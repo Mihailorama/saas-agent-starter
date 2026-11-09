@@ -26,6 +26,8 @@ export function CommandPalette({
       onOpenChange={setOpen}
       title="Command palette"
       description="Go to a page or run an action."
+      // The close button sat on top of the search field; Esc and a click outside close it.
+      showCloseButton={false}
     >
       <CommandInput placeholder="Type a command or search…" />
       <CommandList>

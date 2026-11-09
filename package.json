@@ -8,6 +8,7 @@
     "node": ">=22.18"
   },
   "scripts": {
+    "prepare": "[ ! -f scripts/install-hooks.mjs ] || node scripts/install-hooks.mjs",
     "dev": "pnpm -r --parallel dev",
     "worker": "cd services/worker-py && uv run python -m worker",
     "bench": "cd services/worker-py && uv run python bench.py",
@@ -24,7 +25,7 @@
     "check:rust": "cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test",
     "check:py": "cd services/worker-py && uv sync --locked && uv run ruff format --check && uv run ruff check && pyright && uv run pytest -q",
     "check:licenses": "node scripts/license-check.mjs",
-    "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm eval --fake-llm && pnpm e2e",
+    "check": "pnpm check:ts && pnpm check:rust && pnpm check:py && pnpm check:licenses && pnpm eval --fake-llm && pnpm e2e && pnpm --filter web visual",
     "check:release": "pnpm check && pnpm typecheck",
     "sbom": "node scripts/sbom.mjs",
     "check:events": "node scripts/check-events.mjs",
