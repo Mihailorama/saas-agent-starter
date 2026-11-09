@@ -3,20 +3,14 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { expectAccessibleInBothThemes } from './axe';
-import { mailedLink } from './mail';
+import { signIn } from './mail';
 
 test('flag on: the tour starts once, can be dismissed and restarted; the checklist renders', async ({
   page,
 }) => {
   test.slow(); // sign-up plus the first load of another dev server
-  const email = `${randomUUID()}@example.com`;
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await page.getByLabel('Name').fill('Ada Lovelace');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill('correct-horse-battery');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await page.goto(await mailedLink(email, /Confirm/));
+  const name = `ada-${randomUUID().slice(0, 8)}`; // a code sign-up is named after the address
+  await signIn(page, `${name}@example.com`);
   await page.getByLabel('Organization name').fill('Analytical Engines');
   await page.getByRole('button', { name: 'Create organization' }).click();
   await expect(page.getByText('No projects yet')).toBeVisible();
@@ -37,7 +31,7 @@ test('flag on: the tour starts once, can be dismissed and restarted; the checkli
   await page.reload();
   await expect(checklist).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button', { name: /Ada Lovelace/ }).click();
+  await page.getByRole('button', { name }).first().click();
   await page.getByRole('menuitem', { name: 'Product tour' }).click();
   await expect(step).toBeVisible();
   for (let i = 0; i < 3; i++) await page.getByRole('button', { name: /Next/ }).click();

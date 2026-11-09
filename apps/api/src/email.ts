@@ -5,8 +5,10 @@ import { plainTextSelectors, render } from '@react-email/render';
 import { createElement as h, type ReactNode } from 'react';
 
 export type Locale = 'en' | 'ru';
-export type EmailKind = 'verify-email' | 'reset-password' | 'invitation' | 'data-export-ready';
+export type EmailKind = 'sign-in-code' | 'verify-email' | 'invitation' | 'data-export-ready';
 type Vars = { name: string; org: string; inviter: string };
+/** Code mails show the one-time code where link mails have the button. */
+const CODE_KINDS: EmailKind[] = ['sign-in-code', 'verify-email'];
 type Copy = {
   subject: (v: Vars) => string;
   heading: (v: Vars) => string;
@@ -18,20 +20,21 @@ type Copy = {
 // TODO: move these strings to i18next when the web gets an i18n framework.
 const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
   en: {
+    'sign-in-code': {
+      subject: () => 'Your sign-in code',
+      heading: () => 'Your sign-in code',
+      body: () => 'Enter this code on the sign-in page to continue.',
+      button: '',
+      footer:
+        'The code expires in 5 minutes. If you did not try to sign in, you can ignore this email: nobody can sign in without the code.',
+    },
     'verify-email': {
       subject: () => 'Confirm your email address',
       heading: () => 'Confirm your email address',
-      body: (v) => `Hi ${v.name}, confirm your email address to finish creating your account.`,
-      button: 'Confirm email',
-      footer: 'The link expires in 1 hour. If you did not sign up, you can ignore this email.',
-    },
-    'reset-password': {
-      subject: () => 'Reset your password',
-      heading: () => 'Reset your password',
-      body: (v) => `Hi ${v.name}, we received a request to reset the password for your account.`,
-      button: 'Choose a new password',
+      body: () => 'Enter this code to confirm your email address.',
+      button: '',
       footer:
-        'The link expires in 1 hour. If you did not ask for this, ignore this email: your password stays the same.',
+        'The code expires in 5 minutes. If you did not ask for it, you can ignore this email.',
     },
     invitation: {
       subject: (v) => `${v.inviter} invited you to ${v.org}`,
@@ -48,25 +51,25 @@ const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
         `Hi ${v.name}, the export of ${v.org ? `the ${v.org} workspace` : 'your data'} you asked for is ready. Download it from the privacy settings after signing in.`,
       button: 'Open privacy settings',
       footer:
-        'The file is kept for a few days, then deleted. If you did not ask for it, change your password.',
+        'The file is kept for a few days, then deleted. If you did not ask for it, contact support.',
     },
     fallback: 'Or open this link:',
   },
   ru: {
+    'sign-in-code': {
+      subject: () => 'Код для входа',
+      heading: () => 'Код для входа',
+      body: () => 'Введите этот код на странице входа, чтобы продолжить.',
+      button: '',
+      footer:
+        'Код действует 5 минут. Если вы не пытались войти, просто проигнорируйте письмо: без кода войти нельзя.',
+    },
     'verify-email': {
       subject: () => 'Подтвердите адрес электронной почты',
       heading: () => 'Подтвердите адрес электронной почты',
-      body: (v) => `${v.name}, подтвердите адрес почты, чтобы завершить регистрацию.`,
-      button: 'Подтвердить адрес',
-      footer: 'Ссылка действует 1 час. Если вы не регистрировались, просто проигнорируйте письмо.',
-    },
-    'reset-password': {
-      subject: () => 'Сброс пароля',
-      heading: () => 'Сброс пароля',
-      body: (v) => `${v.name}, мы получили запрос на сброс пароля к вашей учётной записи.`,
-      button: 'Задать новый пароль',
-      footer:
-        'Ссылка действует 1 час. Если вы не запрашивали сброс, проигнорируйте письмо: пароль не изменится.',
+      body: () => 'Введите этот код, чтобы подтвердить адрес почты.',
+      button: '',
+      footer: 'Код действует 5 минут. Если вы его не запрашивали, просто проигнорируйте письмо.',
     },
     invitation: {
       subject: (v) => `${v.inviter} приглашает вас в ${v.org}`,
@@ -82,7 +85,7 @@ const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
         `${v.name}, запрошенная выгрузка ${v.org ? `данных пространства ${v.org}` : 'ваших данных'} готова. Скачайте её в настройках конфиденциальности после входа.`,
       button: 'Открыть настройки',
       footer:
-        'Файл хранится несколько дней, затем удаляется. Если вы её не запрашивали, смените пароль.',
+        'Файл хранится несколько дней, затем удаляется. Если вы её не запрашивали, напишите в поддержку.',
     },
     fallback: 'Или откройте ссылку:',
   },
@@ -141,11 +144,14 @@ function layout(locale: Locale, preview: string, children: ReactNode[]) {
 
 export type RenderedEmail = { subject: string; html: string; text: string };
 
-/** Subject, HTML and plain-text parts of one email. User-supplied names are escaped by React. */
+/**
+ * Subject, HTML and plain-text parts of one email. `action` is the button's link, or the code for
+ * code mails. User-supplied names are escaped by React.
+ */
 export async function renderEmail(
   kind: EmailKind,
   locale: Locale,
-  url: string,
+  action: string,
   vars: Partial<Vars> = {},
 ): Promise<RenderedEmail> {
   const copy = COPY[locale];
@@ -156,28 +162,41 @@ export async function renderEmail(
   const element = layout(locale, t.body(v), [
     h('h1', { key: 'h', style: { ...text, fontSize: '20px', fontWeight: 600 } }, t.heading(v)),
     h('p', { key: 'b', style: text }, t.body(v)),
-    h(
-      'p',
-      { key: 'a', style: { margin: '24px 0' } },
-      h(
-        'a',
-        {
-          href: url,
-          style: {
-            backgroundColor: '#18181b',
-            borderRadius: '6px',
-            color: '#ffffff',
-            display: 'inline-block',
-            fontSize: '14px',
-            fontWeight: 600,
-            padding: '12px 20px',
-            textDecoration: 'none',
-          },
-        },
-        t.button,
-      ),
-    ),
-    h('p', { key: 'f', style: muted }, `${copy.fallback} `, h('a', { href: url }, url)),
+    ...(CODE_KINDS.includes(kind)
+      ? [
+          h(
+            'p',
+            {
+              key: 'c',
+              style: { ...text, fontSize: '28px', fontWeight: 600, letterSpacing: '6px' },
+            },
+            action,
+          ),
+        ]
+      : [
+          h(
+            'p',
+            { key: 'a', style: { margin: '24px 0' } },
+            h(
+              'a',
+              {
+                href: action,
+                style: {
+                  backgroundColor: '#18181b',
+                  borderRadius: '6px',
+                  color: '#ffffff',
+                  display: 'inline-block',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  padding: '12px 20px',
+                  textDecoration: 'none',
+                },
+              },
+              t.button,
+            ),
+          ),
+          h('p', { key: 'f', style: muted }, `${copy.fallback} `, h('a', { href: action }, action)),
+        ]),
     h('p', { key: 'n', style: muted }, t.footer),
   ]);
   return {

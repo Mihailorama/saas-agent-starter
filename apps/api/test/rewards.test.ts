@@ -2,9 +2,8 @@
 // against stripe-mock, entitlement bumps, the worker's internal route and the triggers (flag on/off).
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { rewardGrants, subscriptions, user, withOrg } from '@app/db';
+import { rewardGrants, subscriptions, withOrg } from '@app/db';
 import { WorkflowNotFoundError } from '@temporalio/client';
-import { eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { OrgMetadata } from '../src/auth.ts';
@@ -21,6 +20,7 @@ import {
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { closeTemporal, rewardWorkflowId, temporal } from '../src/temporal.ts';
+import { signUp as codeSignUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
@@ -35,26 +35,7 @@ afterAll(async () => {
 });
 
 type User = { id: string; cookie: string };
-async function signUp(email = `${randomUUID()}@example.com`): Promise<User> {
-  const password = 'correct-horse-battery';
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password, name: 'T' },
-  });
-  const id: string = res.json().user.id;
-  await db.update(user).set({ emailVerified: true }).where(eq(user.id, id));
-  const signIn = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-in/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password },
-  });
-  return { id, cookie: signIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
-}
+const signUp = (email?: string): Promise<User> => codeSignUp(app, email);
 const post = (u: User, url: string, payload: object) =>
   app.inject({
     method: 'POST',

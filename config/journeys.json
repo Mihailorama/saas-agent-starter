@@ -3,12 +3,11 @@
   "journeys": [
     {
       "name": "activation",
-      "description": "A new visitor signs up, creates an organization and a first project.",
+      "description": "A new user (account created by the first code sign-in) creates an organization and a first project.",
       "windowDays": 1,
       "minConversion": 30,
       "steps": [
-        { "event": "signup_started" },
-        { "event": "signup_completed", "maxStepSeconds": 300 },
+        { "event": "signup_completed" },
         { "event": "org_created", "maxStepSeconds": 600 },
         { "event": "project_created", "maxStepSeconds": 1800 }
       ]
@@ -50,7 +49,7 @@
       "minConversion": 5,
       "steps": [
         { "event": "site_cta_clicked" },
-        { "event": "signup_started", "maxStepSeconds": 120 },
+        { "event": "signin_code_requested", "maxStepSeconds": 120 },
         { "event": "signup_completed", "maxStepSeconds": 300 }
       ]
     }

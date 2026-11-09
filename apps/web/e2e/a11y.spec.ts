@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { expectAccessible, expectAccessibleInBothThemes } from './axe';
-import { mailedLink } from './mail';
+import { requestCode } from './mail';
 
 // Every page is scanned in two themes on a dev server: far beyond the 30s default.
 test.describe.configure({ timeout: 240_000 });
@@ -36,27 +36,21 @@ test('UI gallery and reference screens', async ({ page }) => {
 });
 
 test('public pages', async ({ page }) => {
-  for (const path of ['/sign-in', '/ai-transparency', '/reset-password?error=INVALID_TOKEN']) {
+  for (const path of ['/sign-in', '/ai-transparency']) {
     await page.goto(path);
     await expect(page.getByRole('heading').first()).toBeVisible();
     await expectAccessibleInBothThemes(page, path);
   }
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await expectAccessible(page, '/sign-in (sign up)');
 });
 
 test('signed-in pages', async ({ page }) => {
   const email = `${randomUUID()}@example.com`;
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await page.getByLabel('Name').fill('Ada Lovelace');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill('correct-horse-battery');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
-  await expectAccessible(page, 'check your email');
-  await page.goto(await mailedLink(email, /Confirm/));
+  const code = await requestCode(page, email);
+  await expectAccessibleInBothThemes(page, '/sign-in (code)');
+  await page.getByLabel('Code', { exact: true }).fill(code === '000000' ? '111111' : '000000');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expectAccessible(page, '/sign-in (wrong code)');
+  await page.getByLabel('Code', { exact: true }).fill(code);
 
   await expect(page.getByLabel('Organization name')).toBeVisible();
   await expectAccessibleInBothThemes(page, 'create organization');

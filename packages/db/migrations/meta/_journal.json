@@ -99,6 +99,13 @@
       "when": 1794163740376,
       "tag": "0013_referrals",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794174255173,
+      "tag": "0014_drop_passwords",
+      "breakpoints": true
     }
   ]
 }

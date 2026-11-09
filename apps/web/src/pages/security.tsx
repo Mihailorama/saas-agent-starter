@@ -89,29 +89,6 @@ function BackupCodes({ codes }: { codes: string[] }) {
   );
 }
 
-/** Password field for re-confirming identity; SSO-only accounts have no password to ask. */
-function PasswordField({ hasPassword }: { hasPassword: boolean }) {
-  if (!hasPassword) return null;
-  return (
-    <div className="space-y-2">
-      <Label htmlFor="confirm-password">Password</Label>
-      <Input
-        id="confirm-password"
-        name="password"
-        type="password"
-        autoComplete="current-password"
-        required
-        autoFocus
-      />
-    </div>
-  );
-}
-
-const password = (e: FormEvent<HTMLFormElement>) => {
-  const p = new FormData(e.currentTarget).get('password');
-  return p ? String(p) : undefined;
-};
-
 function StepDialog({
   open,
   onOpenChange,
@@ -141,12 +118,10 @@ function StepDialog({
 function EnrolDialog({
   open,
   onOpenChange,
-  hasPassword,
   onReauth,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  hasPassword: boolean;
   onReauth: (e: AuthError) => boolean;
 }) {
   const queryClient = useQueryClient();
@@ -168,7 +143,7 @@ function EnrolDialog({
   async function start(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
-    const { data, error } = await authClient.twoFactor.enable({ password: password(e) ?? '' });
+    const { data, error } = await authClient.twoFactor.enable({});
     setPending(false);
     if (onReauth(error)) return close(false);
     if (error || !data || !('totpURI' in data) || !data.totpURI) {
@@ -253,7 +228,6 @@ function EnrolDialog({
         </form>
       ) : (
         <form onSubmit={start} className="space-y-4" aria-label="Confirm it is you">
-          <PasswordField hasPassword={hasPassword} />
           {errorText}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => close(false)}>
@@ -271,11 +245,9 @@ function EnrolDialog({
 
 function TwoFactorCard({
   enabled,
-  hasPassword,
   onReauth,
 }: {
   enabled: boolean;
-  hasPassword: boolean;
   onReauth: (e: AuthError) => boolean;
 }) {
   const queryClient = useQueryClient();
@@ -292,7 +264,7 @@ function TwoFactorCard({
   async function disable(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
-    const { error } = await authClient.twoFactor.disable({ password: password(e) ?? '' });
+    const { error } = await authClient.twoFactor.disable({});
     setPending(false);
     if (onReauth(error)) return close();
     if (error) return setError(error.message ?? 'Could not turn it off');
@@ -305,9 +277,7 @@ function TwoFactorCard({
   async function regenerate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
-    const { data, error } = await authClient.twoFactor.generateBackupCodes({
-      password: password(e) ?? '',
-    });
+    const { data, error } = await authClient.twoFactor.generateBackupCodes({});
     setPending(false);
     if (onReauth(error)) return close();
     if (error || !data) return setError(error?.message ?? 'Could not create new codes');
@@ -329,7 +299,7 @@ function TwoFactorCard({
           <Badge variant={enabled ? 'default' : 'outline'}>{enabled ? 'On' : 'Off'}</Badge>
         </div>
         <CardDescription>
-          Sign-in with a password also asks for a code from your authenticator app.
+          Sign-in with an email code also asks for a code from your authenticator app.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">
@@ -349,17 +319,15 @@ function TwoFactorCard({
       <EnrolDialog
         open={dialog === 'enrol'}
         onOpenChange={(o) => !o && close()}
-        hasPassword={hasPassword}
         onReauth={onReauth}
       />
       <StepDialog
         open={dialog === 'disable'}
         onOpenChange={(o) => !o && close()}
         title="Turn off two-factor authentication?"
-        description="Your account will be protected by the password only. If your organization requires two-factor, you lose access until you set it up again."
+        description="Your account will be protected by email codes only. If your organization requires two-factor, you lose access until you set it up again."
       >
         <form onSubmit={disable} className="space-y-4" aria-label="Turn off two-factor">
-          <PasswordField hasPassword={hasPassword} />
           {errorText}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
@@ -386,7 +354,6 @@ function TwoFactorCard({
           </div>
         ) : (
           <form onSubmit={regenerate} className="space-y-4" aria-label="New backup codes">
-            <PasswordField hasPassword={hasPassword} />
             {errorText}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={close}>
@@ -457,8 +424,8 @@ function PasskeysCard({ onReauth }: { onReauth: (e: AuthError) => boolean }) {
           <KeyRound className="size-4" aria-hidden /> Passkeys
         </CardTitle>
         <CardDescription>
-          Sign in with your fingerprint, face, screen lock or a security key instead of a password
-          and code.
+          Sign in with your fingerprint, face, screen lock or a security key instead of an email
+          code.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -602,14 +569,9 @@ function OrgPolicyCard({ twoFactor }: { twoFactor: boolean }) {
 export function SecurityPage() {
   const { data: session } = authClient.useSession();
   const { data: member } = authClient.useActiveMember();
-  const accounts = useQuery({
-    queryKey: ['accounts'],
-    queryFn: async () => (await authClient.listAccounts()).data ?? [],
-  });
   const policy = useQuery(policyQuery);
   const { check, banner } = useReauth();
   const enabled = session?.user.twoFactorEnabled === true;
-  const hasPassword = accounts.data?.some((a) => a.providerId === 'credential') ?? true;
   // UI hint only; the API enforces the role.
   const isAdmin = member?.role.split(',').some((r) => r === 'admin' || r === 'owner') ?? false;
   const blocked = policy.error?.message === TWO_FACTOR_REQUIRED && !enabled;
@@ -629,7 +591,7 @@ export function SecurityPage() {
         </Alert>
       )}
       {banner}
-      <TwoFactorCard enabled={enabled} hasPassword={hasPassword} onReauth={check} />
+      <TwoFactorCard enabled={enabled} onReauth={check} />
       <PasskeysCard onReauth={check} />
       {isAdmin && <OrgPolicyCard twoFactor={enabled} />}
     </div>

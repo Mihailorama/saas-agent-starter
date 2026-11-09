@@ -28,7 +28,7 @@ import {
   WithReason,
 } from './admin-common.ts';
 
-/** Users: list, detail, revoke sessions, resend verification, view as user (docs/admin.md). */
+/** Users: list, detail, revoke sessions, view as user (docs/admin.md). */
 export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
   const tags = ['admin'];
   const op = { preHandler: requireOperator, schema: { tags, hide: true } };
@@ -247,27 +247,6 @@ export const adminUserRoutes: FastifyPluginAsyncZod = async (app) => {
       // In the audit transaction (no session cache in front of the table: auth.ts).
       await auditUser(req, u.id, 'user.sessions_revoked', req.body.reason, (tx) =>
         tx.delete(session).where(eq(session.userId, u.id)),
-      );
-      return reply.code(204).send(null);
-    },
-  );
-
-  app.post(
-    '/users/:id/resend-verification',
-    {
-      ...op,
-      schema: {
-        ...op.schema,
-        params: Id,
-        body: WithReason,
-        response: { 204: z.null(), 404: ErrorBody, 409: ErrorBody },
-      },
-    },
-    async (req, reply) => {
-      const u = await target(req.params.id);
-      if (u.emailVerified) throw httpError(409, 'the email address is already verified');
-      await auditUser(req, u.id, 'user.verification_resent', req.body.reason, () =>
-        authCall(auth.api.sendVerificationEmail({ body: { email: u.email, callbackURL: '/' } })),
       );
       return reply.code(204).send(null);
     },

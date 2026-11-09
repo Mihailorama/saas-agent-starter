@@ -21,6 +21,7 @@ security problems. We aim to acknowledge reports within a few days.
 
 ## Operator notes
 
-- Set `TRUST_PROXY=true` only behind a reverse proxy you control; otherwise clients could
-  spoof `X-Forwarded-For` and evade per-IP rate limits or pollute audit IPs.
+- Set `TRUST_PROXY` only behind reverse proxies you control, preferably to their number of hops
+  (`compose.prod.yaml`: `2`) rather than `true`; otherwise clients could spoof `X-Forwarded-For`
+  and evade per-IP rate limits or pollute audit IPs.
 - The compose file contains example credentials for local development only.

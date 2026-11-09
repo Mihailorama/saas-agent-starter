@@ -18,18 +18,18 @@
       "pii": false,
       "props": { "variant": "string" }
     },
-    "signup_started": {
-      "description": "The sign-up form was opened on the sign-in page.",
+    "signin_code_requested": {
+      "description": "A sign-in code was mailed from the sign-in page (first step of sign-in and sign-up; resends count too).",
       "pii": false,
       "props": {}
     },
     "signup_completed": {
-      "description": "Account created (email/password).",
+      "description": "Account created by the first sign-in with an email code.",
       "pii": false,
       "props": {}
     },
     "signin_completed": {
-      "description": "Signed in (email/password).",
+      "description": "Signed in with an email code (after the authenticator step when 2FA is on).",
       "pii": false,
       "props": {}
     },
@@ -71,16 +71,6 @@
     },
     "passkey_added": {
       "description": "A passkey was registered on the security page.",
-      "pii": false,
-      "props": {}
-    },
-    "password_reset_requested": {
-      "description": "A password reset link was requested from the sign-in page (mailed only if the account exists).",
-      "pii": false,
-      "props": {}
-    },
-    "password_reset_completed": {
-      "description": "A new password was set from the emailed reset link.",
       "pii": false,
       "props": {}
     },

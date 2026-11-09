@@ -1,13 +1,13 @@
 // Onboarding checklist (docs/onboarding.md): GET /api/onboarding behind the `onboarding` flag,
 // every item derived from existing data, scoped to the active organization.
 import { randomUUID } from 'node:crypto';
-import { member, user } from '@app/db';
-import { eq } from 'drizzle-orm';
+import { member } from '@app/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { closeTemporal } from '../src/temporal.ts';
+import { signUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
@@ -33,16 +33,12 @@ const call = (method: 'GET' | 'POST', url: string, cookie?: string, payload?: ob
   });
 
 async function newOrg() {
-  const credentials = { email: `${randomUUID()}@example.com`, password: 'correct-horse-battery' };
-  await call('POST', '/api/auth/sign-up/email', undefined, { ...credentials, name: 'T' });
-  await db.update(user).set({ emailVerified: true }).where(eq(user.email, credentials.email));
-  const signedIn = await call('POST', '/api/auth/sign-in/email', undefined, credentials);
-  const cookie = signedIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+  const { cookie, id: userId } = await signUp(app);
   const org = await call('POST', '/api/auth/organization/create', cookie, {
     name: 'Org',
     slug: randomUUID(),
   });
-  return { cookie, orgId: org.json().id as string, userId: signedIn.json().user.id as string };
+  return { cookie, orgId: org.json().id as string, userId };
 }
 
 const status = async (cookie: string) => {

@@ -17,10 +17,10 @@ const { db, pool } = await import('../src/db.ts');
 const { allowedOrigins } = await import('../src/env.ts');
 const { closeTemporal } = await import('../src/temporal.ts');
 const { syncOperators } = await import('../src/operator-guard.ts');
+const { signUp: codeSignUp } = await import('./sign-in.ts');
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
-const password = 'correct-horse-battery';
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 
 afterAll(async () => {
@@ -67,16 +67,7 @@ const get = (b: { cookie: string } | null, url: string, headers?: Record<string,
 const post = (b: { cookie: string } | null, url: string, payload: object = {}) =>
   call(b, 'POST', url, payload);
 
-async function signUp(email = `${randomUUID()}@example.com`, verified = true): Promise<Browser> {
-  const res = await post(null, '/api/auth/sign-up/email', { email, password, name: 'T' });
-  expect(res.statusCode).toBe(200);
-  const id: string = res.json().user.id;
-  if (!verified) return { id, email, cookie: '' };
-  await db.update(users).set({ emailVerified: true }).where(eq(users.id, id));
-  const signedIn = await post(null, '/api/auth/sign-in/email', { email, password });
-  expect(signedIn.statusCode).toBe(200);
-  return { id, email, cookie: jar(signedIn) };
-}
+const signUp = (email?: string): Promise<Browser> => codeSignUp(app, email);
 
 async function createOrg(b: Browser) {
   const res = await post(b, '/api/auth/organization/create', { name: 'Acme', slug: randomUUID() });
@@ -86,7 +77,7 @@ async function createOrg(b: Browser) {
 
 /** TOTP on, as the security page does it (the code check itself is covered in mfa.test.ts). */
 async function enrolTotp(b: Browser) {
-  const { totpURI } = (await post(b, '/api/auth/two-factor/enable', { password })).json();
+  const { totpURI } = (await post(b, '/api/auth/two-factor/enable')).json();
   const code = (OTPAuth.URI.parse(totpURI) as OTPAuth.TOTP).generate();
   expect((await post(b, '/api/auth/two-factor/verify-totp', { code })).statusCode).toBe(200);
 }
@@ -107,7 +98,7 @@ beforeAll(async () => {
   op = await signUp(opEmail);
   owner = await signUp();
   org = await createOrg(owner);
-}, 20_000); // sign-ups hash passwords: slow while the other test files run in parallel
+}, 20_000); // slow while the other test files run in parallel
 
 describe('operator access', () => {
   it('needs the listed account, synced role, TOTP and a fresh session', async () => {
@@ -313,11 +304,12 @@ describe('users', () => {
     expect(detail.operatorActions).toMatchObject([{ action: 'operator.user.sessions_revoked' }]);
   });
 
-  it('resends the verification mail; a user without org gets a platform audit row', async () => {
-    const u = await signUp(undefined, false);
-    const send = (reason?: string) =>
-      post(op, `/api/admin/users/${u.id}/resend-verification`, reason ? { reason } : {});
-    expect((await send('user lost the mail')).statusCode).toBe(204);
+  it('a user without org gets a platform audit row', async () => {
+    const u = await signUp();
+    expect(
+      (await post(op, `/api/admin/users/${u.id}/revoke-sessions`, { reason: 'stolen laptop' }))
+        .statusCode,
+    ).toBe(204);
     const rows = await withOperatorRead(db, (tx) =>
       tx
         .select()
@@ -325,10 +317,8 @@ describe('users', () => {
         .where(and(eq(auditLog.target, u.id), like(auditLog.action, 'operator.%'))),
     );
     expect(rows).toMatchObject([
-      { orgId: null, action: 'operator.user.verification_resent', actorId: op.id },
+      { orgId: null, action: 'operator.user.sessions_revoked', actorId: op.id },
     ]);
-    await db.update(users).set({ emailVerified: true }).where(eq(users.id, u.id));
-    expect((await send('again')).statusCode).toBe(409);
     expect((await get(op, `/api/admin/users?q=${u.email}`)).json()).toMatchObject({
       total: 1,
       items: [{ id: u.id, emailVerified: true, orgs: 0 }],
@@ -377,7 +367,7 @@ describe('view as user (impersonation)', () => {
       '/api/auth/update-user',
       '/api/auth/two-factor/disable',
     ]) {
-      const res = await post(browser, url, { data: { name: 'x' }, name: 'x', password });
+      const res = await post(browser, url, { data: { name: 'x' }, name: 'x' });
       expect(res.statusCode, url).toBe(403);
       expect(res.json()).toMatchObject({ code: 'READ_ONLY' });
     }

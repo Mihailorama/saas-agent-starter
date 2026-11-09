@@ -1,5 +1,18 @@
 # Known limitations / backlog
 
+- **No display-name setting** (ADR 0033). A code sign-up names the account after the address's
+  local part (`ada@example.com` -> `ada`), which mails, invitations and the user menu show. Fix:
+  a "Name" field on a profile/settings page calling `authClient.updateUser({ name })`
+  (`databaseHooks.user.update.before` already runs), and optionally ask for it once after sign-up.
+- **Email-verification codes have no screen** (ADR 0033). `overrideDefaultEmailVerification`
+  mails a code wherever Better Auth verifies an address, but no current flow triggers it (a code
+  sign-in verifies the address; email change is off). When email change is turned on, add a code
+  step that calls `authClient.emailOtp.verifyEmail`.
+- **TOTP after a code sign-in relies on reusing the twoFactor plugin's hook** (`auth.ts`,
+  `email-otp-guards`). Better Auth 1.7.18 lists only password/username/phone sign-ins in
+  `signInPaths`. When an upgrade adds `/sign-in/email-otp` there, delete our hook; `mfa.test.ts`
+  ("enrols, challenges at sign-in") fails if the challenge ever goes missing. Worth an upstream
+  issue/PR.
 - **Infra wizard: deferred parts of `pnpm run infra`** (docs/setup.md, ADR 0032). The MVP covers
   tier S (one Debian/Ubuntu VPS) with Postgres, S3, SMTP, analytics, LLM and the vault. Still to
   do, each a separate change:

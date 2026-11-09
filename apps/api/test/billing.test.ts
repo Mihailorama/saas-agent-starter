@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { aiCalls, aiProviders, auditLog, subscriptions, user, withOrg } from '@app/db';
+import { aiCalls, aiProviders, auditLog, subscriptions, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -12,36 +12,14 @@ import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { costCurrency } from '../src/routes/billing.ts';
 import { billingWorkflowId, closeTemporal, temporal } from '../src/temporal.ts';
+import { signUp as codeSignUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 type User = { id: string; cookie: string };
 
-/** Signs up and signs in; the address is marked verified directly (Mailpit flow: api.test.ts). */
-async function signUp(): Promise<User> {
-  const email = `${randomUUID()}@example.com`;
-  const password = 'correct-horse-battery';
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password, name: 'T' },
-  });
-  expect(res.statusCode).toBe(200);
-  const id: string = res.json().user.id;
-  await db.update(user).set({ emailVerified: true }).where(eq(user.id, id));
-  const signIn = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-in/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password },
-  });
-  expect(signIn.statusCode).toBe(200);
-  return { id, cookie: signIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
-}
+const signUp = () => codeSignUp(app);
 const call = (
   user: User,
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',

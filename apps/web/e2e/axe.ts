@@ -15,6 +15,8 @@ export async function expectAccessible(page: Page, name: string) {
   await page.addStyleTag({
     content: '*, *::before, *::after { transition: none !important; animation: none !important; }',
   });
+  // Resting colors: a pointer left over a button from the previous step would show its hover.
+  await page.mouse.move(0, 0);
   const { violations } = await new AxeBuilder({ page }).withTags(WCAG).analyze();
   const describe = (v: (typeof violations)[number]) =>
     `${v.id} (${v.impact}): ${v.help}\n    ${v.nodes

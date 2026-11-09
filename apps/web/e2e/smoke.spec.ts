@@ -1,27 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
-import { mailedLink } from './mail';
+import { requestCode, signIn } from './mail';
 
 async function signUp(page: Page, email: string) {
-  await page.goto('/');
-  await expect(page).toHaveURL(/sign-in/);
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await page.getByLabel('Name').fill('Ada Lovelace');
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill('correct-horse-battery');
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
-  // The confirmation link signs the user in and lands on the app.
-  await page.goto(await mailedLink(email, /Confirm/));
+  await signIn(page, email);
+  await expect(page.getByLabel('Organization name')).toBeVisible();
 }
 
-test('sign-up refuses a disposable email address with a clear message', async ({ page }) => {
+test('sign-in refuses a disposable email address with a clear message', async ({ page }) => {
   await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await page.getByLabel('Name').fill('Ada Lovelace');
   await page.getByLabel('Email').fill(`${randomUUID()}@mailinator.com`);
-  await page.getByLabel('Password').fill('correct-horse-battery');
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Email me a code' }).click();
   await expect(page.getByText('This email address cannot be used')).toBeVisible();
 });
 
@@ -94,28 +83,14 @@ test('booking flag on: "Talk to us" links to the booking page', async ({ page })
   await expect(link).toHaveAttribute('href', 'https://cal.example.com/acme/demo');
 });
 
-test('forgotten password: reset through the mailed link', async ({ page, context }) => {
-  test.slow(); // two mailed links and five page loads on the Vite dev server
-  const email = `${randomUUID()}@example.com`;
-  await signUp(page, email);
-  await expect(page.getByLabel('Organization name')).toBeVisible();
-  await context.clearCookies();
-
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Forgot password?' }).click();
-  await page.getByLabel('Email').fill(email);
-  await page.getByRole('button', { name: 'Send reset link' }).click();
-  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
-
-  await page.goto(await mailedLink(email, /Reset/));
-  await expect(page).toHaveURL(/reset-password\?token=/);
-  await page.getByLabel('New password', { exact: true }).fill('a-brand-new-passphrase');
-  await page.getByRole('button', { name: 'Change password' }).click();
-  await expect(page).toHaveURL(/sign-in/);
-
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill('a-brand-new-passphrase');
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+test('sign-in code: a wrong code shows an error, resend waits for the cooldown', async ({
+  page,
+}) => {
+  const code = await requestCode(page, `${randomUUID()}@example.com`);
+  await expect(page.getByRole('button', { name: /Resend code in \d+ s/ })).toBeDisabled();
+  await page.getByLabel('Code', { exact: true }).fill(code === '000000' ? '111111' : '000000');
+  await expect(page.getByRole('alert')).toHaveText(/not right/);
+  await page.getByLabel('Code', { exact: true }).fill(code);
   await expect(page.getByLabel('Organization name')).toBeVisible();
 });
 

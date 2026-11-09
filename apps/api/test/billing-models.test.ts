@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { aiCalls, auditLog, subscriptions, usageCounters, user, withOrg } from '@app/db';
+import { aiCalls, auditLog, subscriptions, usageCounters, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import * as OTPAuth from 'otpauth';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,6 +14,7 @@ process.env.PLANS_FILE = fileURLToPath(examples);
 const opEmail = `op-${randomUUID()}@example.com`;
 process.env.OPERATOR_EMAILS = opEmail;
 const { buildApp } = await import('../src/app.ts');
+const { signUp: codeSignUp } = await import('./sign-in.ts');
 const { db, pool } = await import('../src/db.ts');
 const { allowedOrigins, env } = await import('../src/env.ts');
 const { closeTemporal, temporal } = await import('../src/temporal.ts');
@@ -25,7 +26,6 @@ const { default: Stripe } = await import('stripe');
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
-const password = 'correct-horse-battery';
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 type User = { id: string; cookie: string };
 
@@ -37,26 +37,7 @@ const call = (u: User, method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, pa
     headers: { origin, cookie: u.cookie },
     ...(payload && { payload }),
   });
-async function signUp(email = `${randomUUID()}@example.com`): Promise<User> {
-  const body = { email, password, name: 'T' };
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: body,
-  });
-  const id: string = res.json().user.id;
-  await db.update(user).set({ emailVerified: true }).where(eq(user.id, id));
-  const signIn = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-in/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password },
-  });
-  return { id, cookie: signIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
-}
+const signUp = (email?: string): Promise<User> => codeSignUp(app, email);
 async function ownerWithOrg() {
   const owner = await signUp();
   const res = await call(owner, 'POST', '/api/auth/organization/create', {
@@ -70,7 +51,7 @@ const started: string[] = [];
 let op: User;
 beforeAll(async () => {
   op = await signUp(opEmail);
-  const { totpURI } = (await call(op, 'POST', '/api/auth/two-factor/enable', { password })).json();
+  const { totpURI } = (await call(op, 'POST', '/api/auth/two-factor/enable', {})).json();
   const code = (OTPAuth.URI.parse(totpURI) as OTPAuth.TOTP).generate();
   const verified = await call(op, 'POST', '/api/auth/two-factor/verify-totp', { code });
   const jar = new Map(op.cookie.split('; ').map((c) => c.split('=', 2) as [string, string]));

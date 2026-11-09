@@ -13,6 +13,7 @@ import { providerFor } from '../src/billing/registry.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins, env } from '../src/env.ts';
 import { closeTemporal, rewardWorkflowId, temporal } from '../src/temporal.ts';
+import { signUp as codeSignUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
@@ -30,27 +31,8 @@ afterAll(async () => {
 });
 
 type User = { id: string; cookie: string };
-async function signUp(referralCode?: string): Promise<User> {
-  const email = `${randomUUID()}@example.com`;
-  const password = 'correct-horse-battery';
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password, name: 'T', ...(referralCode && { referralCode }) },
-  });
-  const id: string = res.json().user.id;
-  await db.update(user).set({ emailVerified: true }).where(eq(user.id, id));
-  const signIn = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-in/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { email, password },
-  });
-  return { id, cookie: signIn.cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
-}
+const signUp = (referralCode?: string): Promise<User> =>
+  codeSignUp(app, undefined, referralCode ? { referralCode } : {});
 const createOrg = async (u: User) =>
   (
     await app.inject({

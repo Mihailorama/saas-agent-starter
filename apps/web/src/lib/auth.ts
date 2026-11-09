@@ -1,6 +1,7 @@
 import { passkeyClient } from '@better-auth/passkey/client';
 import {
   adminClient,
+  emailOTPClient,
   inferAdditionalFields,
   organizationClient,
   twoFactorClient,
@@ -12,6 +13,7 @@ import { createAuthClient } from 'better-auth/react';
  * plugin's endpoints are closed; operator actions go through /api/admin. */
 export const authClient = createAuthClient({
   plugins: [
+    emailOTPClient(),
     organizationClient(),
     twoFactorClient(),
     passkeyClient(),

@@ -18,7 +18,8 @@ key-only SSH), writes the settings encrypted with sops, deploys and checks every
 Re-runs show a plan first and keep what was generated. Needs Node, OpenSSH, `sops` and `age` on
 your machine, no Docker. **Back up the age key it creates**: it decrypts every secret.
 
-- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (orgs, roles, 2FA, passkeys), Drizzle + Postgres
+- **API**: TypeScript, Fastify, Zod, OpenAPI, Better Auth (passwordless sign-in with email
+  one-time codes, orgs, roles, 2FA, passkeys, SSO), Drizzle + Postgres
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode; a UI kit of shadcn/ui
   components and page patterns (app shell, data table, forms, empty/loading/error states,
@@ -237,7 +238,7 @@ Details: [docs/feature-flags.md](docs/feature-flags.md), [docs/releases.md](docs
   authorization code + PKCE S256; on the client: `authClient.signIn.social({ provider: 'oidc' })`).
   Register this redirect URI at the IdP: `${BETTER_AUTH_URL}/api/auth/callback/oidc`.
   First SSO login creates the user; they then create or are invited to an organization like any
-  other user. Accounts are not auto-linked to an existing email/password user unless the IdP
+  other user. Accounts are not auto-linked to an existing email-code user unless the IdP
   sends `email_verified: true`.
 - **SAML** or per-organization IdPs: add Better Auth's `@better-auth/sso` plugin to
   `apps/api/src/auth.ts`, regenerate the auth schema and run `pnpm db:generate`.

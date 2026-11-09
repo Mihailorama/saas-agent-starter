@@ -1,6 +1,6 @@
 // 2FA, backup codes, re-auth, audit and the org 2FA policy (ADR 0017). Passkeys: e2e.
 import { randomUUID } from 'node:crypto';
-import { auditLog, session, user as users, withOrg } from '@app/db';
+import { auditLog, session, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import type { LightMyRequestResponse } from 'fastify';
 import * as OTPAuth from 'otpauth';
@@ -10,10 +10,10 @@ import { auth } from '../src/auth.ts';
 import { db, pool } from '../src/db.ts';
 import { allowedOrigins } from '../src/env.ts';
 import { closeTemporal } from '../src/temporal.ts';
+import { codeSignIn, signUp as codeSignUp } from './sign-in.ts';
 
 const app = await buildApp();
 const origin = allowedOrigins[0]!;
-const password = 'correct-horse-battery';
 const ip = () => `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
 
 afterAll(async () => {
@@ -70,17 +70,7 @@ const put = (user: User, url: string, payload: object) =>
     payload,
   });
 
-async function signUp(): Promise<User> {
-  const email = `${randomUUID()}@example.com`;
-  const res = await post(null, '/api/auth/sign-up/email', { email, password, name: 'T' });
-  expect(res.statusCode).toBe(200);
-  // The confirmation mail is covered in api.test.ts; here the address is simply confirmed.
-  const id: string = res.json().user.id;
-  await db.update(users).set({ emailVerified: true }).where(eq(users.id, id));
-  const signedIn = await post(null, '/api/auth/sign-in/email', { email, password });
-  expect(signedIn.statusCode).toBe(200);
-  return { id, email, cookie: jar(signedIn) };
-}
+const signUp = (): Promise<User> => codeSignUp(app);
 
 async function createOrg(user: User) {
   const res = await post(user, '/api/auth/organization/create', {
@@ -91,9 +81,9 @@ async function createOrg(user: User) {
   return res.json().id as string;
 }
 
-/** Enable TOTP the way the security page does: enable (password) -> scan URI -> verify. */
+/** Enable TOTP the way the security page does: enable -> scan URI -> verify. */
 async function enrol(user: User) {
-  const enabled = await post(user, '/api/auth/two-factor/enable', { password });
+  const enabled = await post(user, '/api/auth/two-factor/enable');
   expect(enabled.statusCode).toBe(200);
   const { totpURI, backupCodes } = enabled.json();
   expect(backupCodes).toHaveLength(10);
@@ -109,12 +99,11 @@ async function enrol(user: User) {
   Object.assign(user, { totp, codes: backupCodes, enrolCode });
 }
 
-/** Password step of sign-in: with 2FA on it returns a challenge cookie, not a session. */
-async function signInPassword(user: User, cookie = '') {
-  const browser = { cookie };
-  const res = await post(browser, '/api/auth/sign-in/email', { email: user.email, password });
+/** Email-code step of sign-in: with 2FA on it returns a challenge cookie, not a session. */
+async function signInCode(user: User, cookie = '') {
+  const res = await codeSignIn(app, user.email, cookie);
   expect(res.statusCode).toBe(200);
-  return { browser, body: res.json() };
+  return { browser: { cookie: jar(res, cookie) }, body: res.json() };
 }
 
 const actions = async (orgId: string, actorId: string) =>
@@ -131,7 +120,7 @@ describe('two-factor (TOTP)', () => {
     await enrol(user);
     expect(await actions(orgId, user.id)).toContain('two_factor.enabled');
 
-    const { browser, body } = await signInPassword(user);
+    const { browser, body } = await signInCode(user);
     expect(body).toMatchObject({ twoFactorRedirect: true, twoFactorMethods: ['totp'] });
     expect(browser.cookie).not.toContain('session_token');
     expect(
@@ -151,7 +140,7 @@ describe('two-factor (TOTP)', () => {
     expect(browser.cookie).toContain('trust_device');
 
     // The trusted device skips the second step; a fresh browser does not.
-    const trusted = await signInPassword(
+    const trusted = await signInCode(
       user,
       browser.cookie
         .split('; ')
@@ -160,7 +149,7 @@ describe('two-factor (TOTP)', () => {
     );
     expect(trusted.body.twoFactorRedirect).toBeUndefined();
     expect(trusted.browser.cookie).toContain('session_token');
-    expect((await signInPassword(user)).body.twoFactorRedirect).toBe(true);
+    expect((await signInCode(user)).body.twoFactorRedirect).toBe(true);
   });
 
   it('accepts each backup code once', async () => {
@@ -168,14 +157,14 @@ describe('two-factor (TOTP)', () => {
     await enrol(user);
     const [first, second] = user.codes!;
 
-    const a = await signInPassword(user);
+    const a = await signInCode(user);
     expect(
       (await post(a.browser, '/api/auth/two-factor/verify-backup-code', { code: first }))
         .statusCode,
     ).toBe(200);
     expect(a.browser.cookie).toContain('session_token');
 
-    const b = await signInPassword(user);
+    const b = await signInCode(user);
     expect(
       (await post(b.browser, '/api/auth/two-factor/verify-backup-code', { code: first }))
         .statusCode,
@@ -186,7 +175,7 @@ describe('two-factor (TOTP)', () => {
     ).toBe(200);
   });
 
-  it('needs a recent sign-in and the password for sensitive changes, and audits them', async () => {
+  it('needs a recent sign-in for sensitive changes, and audits them', async () => {
     const user = await signUp();
     const orgId = await createOrg(user);
     await enrol(user);
@@ -201,7 +190,7 @@ describe('two-factor (TOTP)', () => {
       '/api/auth/two-factor/generate-backup-codes',
       '/api/auth/two-factor/disable',
     ]) {
-      const stale = await post(user, url, { password });
+      const stale = await post(user, url);
       expect(stale.statusCode).toBe(403);
       expect(stale.json().code).toBe('SESSION_NOT_FRESH');
     }
@@ -209,16 +198,10 @@ describe('two-factor (TOTP)', () => {
     expect(stalePasskey.json().code).toBe('SESSION_NOT_FRESH');
 
     await age(1);
-    const regenerated = await post(user, '/api/auth/two-factor/generate-backup-codes', {
-      password,
-    });
+    const regenerated = await post(user, '/api/auth/two-factor/generate-backup-codes');
     expect(regenerated.statusCode).toBe(200);
     expect(regenerated.json().backupCodes).not.toEqual(user.codes);
-    expect(
-      (await post(user, '/api/auth/two-factor/disable', { password: 'wrong-password-123' }))
-        .statusCode,
-    ).toBe(400);
-    expect((await post(user, '/api/auth/two-factor/disable', { password })).statusCode).toBe(200);
+    expect((await post(user, '/api/auth/two-factor/disable')).statusCode).toBe(200);
     expect((await get(user, '/api/auth/get-session')).json().user.twoFactorEnabled).toBe(false);
 
     expect(await actions(orgId, user.id)).toEqual(

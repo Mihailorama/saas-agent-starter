@@ -45,7 +45,8 @@ overrides) > `.env.example` (local defaults, committed, example values only).
 ```
 apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflows.
   src/app.ts          plugins, security hooks, auth routes, health, OpenAPI
-  src/auth.ts         Better Auth: orgs, OIDC, 2FA (TOTP), passkey and API key plugins
+  src/auth.ts         Better Auth: email-code sign-in (no passwords, ADR 0033), orgs, OIDC, 2FA
+                      (TOTP), passkey and API key plugins
   src/signup-guard.ts disposable / allow / deny email domains on every address write (docs/security.md)
   src/mfa.ts          re-auth, audit_log rows, TOTP replay guard, org 2FA policy on org endpoints (ADR 0017)
   src/tenant.ts       requireRole() / access(scope) + withTenant(): RBAC, org 2FA policy, API key

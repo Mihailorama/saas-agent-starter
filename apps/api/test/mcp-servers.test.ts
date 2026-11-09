@@ -1,11 +1,12 @@
 // MCP servers an organization connects (docs/mcp.md "Calling external tools"): flag, admin and
 // API key access, validation, secret at rest, tenancy. Tool calls are tested in the worker.
 import { randomUUID } from 'node:crypto';
-import { auditLog, mcpServers, user, withOrg } from '@app/db';
+import { auditLog, mcpServers, withOrg } from '@app/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const { buildApp } = await import('../src/app.ts');
+const { signUp: codeSignUp } = await import('./sign-in.ts');
 const { auth } = await import('../src/auth.ts');
 const { db, pool } = await import('../src/db.ts');
 const { allowedOrigins, env } = await import('../src/env.ts');
@@ -29,29 +30,7 @@ afterAll(async () => {
 type User = { id: string; cookie: string };
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
-async function signUp(): Promise<User> {
-  const credentials = { email: `${randomUUID()}@example.com`, password: 'correct-horse-battery' };
-  const res = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-up/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: { ...credentials, name: 'T' },
-  });
-  expect(res.statusCode).toBe(200);
-  await db.update(user).set({ emailVerified: true }).where(eq(user.email, credentials.email));
-  const signedIn = await app.inject({
-    method: 'POST',
-    url: '/api/auth/sign-in/email',
-    remoteAddress: ip(),
-    headers: { origin },
-    payload: credentials,
-  });
-  return {
-    id: res.json().user.id,
-    cookie: signedIn.cookies.map((c) => `${c.name}=${c.value}`).join('; '),
-  };
-}
+const signUp = () => codeSignUp(app);
 
 const call = (u: User | null, method: Method, url: string, payload?: object) =>
   app.inject({

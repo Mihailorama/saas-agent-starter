@@ -3,20 +3,13 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 import * as OTPAuth from 'otpauth';
-import { mailedLink } from './mail';
+import { signIn } from './mail';
 
-const password = 'correct-horse-battery';
 test.describe.configure({ timeout: 120_000 });
 
-async function signUp(page: Page, name: string, email: string, org: string) {
-  await page.goto('/sign-in');
-  await page.getByRole('button', { name: 'Create an account' }).click();
-  await page.getByLabel('Name').fill(name);
-  await page.getByLabel('Email').fill(email);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
-  await page.goto(await mailedLink(email, /Confirm/));
+/** Signs up (named after the address's local part) and creates an organization. */
+async function signUp(page: Page, email: string, org: string) {
+  await signIn(page, email);
   await page.getByLabel('Organization name').fill(org);
   await page.getByRole('button', { name: 'Create organization' }).click();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
@@ -27,14 +20,14 @@ test('view as user is read-only with a banner; suspend shows members a notice', 
 }) => {
   const customer = await (await browser.newContext()).newPage();
   const org = `Engines ${randomUUID().slice(0, 8)}`;
-  await signUp(customer, 'Ada Lovelace', `${randomUUID()}@example.com`, org);
+  const ada = `ada-${randomUUID().slice(0, 8)}`;
+  await signUp(customer, `${ada}@example.com`, org);
 
   const page = await (await browser.newContext()).newPage();
-  await signUp(page, 'Olga Operator', process.env.E2E_OPERATOR_EMAIL!, 'Support');
+  await signUp(page, process.env.E2E_OPERATOR_EMAIL!, 'Support');
   // Operators need TOTP.
   await page.goto('/settings/security');
   await page.getByRole('button', { name: 'Set up two-factor' }).click();
-  await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Continue' }).click();
   const secret = (await page.getByTestId('totp-secret').textContent()) ?? '';
   const totp = new OTPAuth.TOTP({ secret: OTPAuth.Secret.fromBase32(secret) });
@@ -50,7 +43,7 @@ test('view as user is read-only with a banner; suspend shows members a notice', 
   await page.getByRole('button', { name: 'View as' }).click();
   await page.getByLabel('Reason (kept in the audit log)').fill('E2E: checking the projects page');
   await page.getByRole('button', { name: 'View as user' }).click();
-  const banner = page.getByRole('status').filter({ hasText: 'Viewing as Ada Lovelace' });
+  const banner = page.getByRole('status').filter({ hasText: `Viewing as ${ada}` });
   await expect(banner).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'New project' }).first().click();
@@ -63,7 +56,7 @@ test('view as user is read-only with a banner; suspend shows members a notice', 
   await expect(banner).toBeVisible();
 
   await banner.getByRole('button', { name: 'Stop viewing' }).click();
-  await expect(page.getByRole('heading', { name: 'Ada Lovelace' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: ada })).toBeVisible();
   await expect(page.getByText('operator.impersonation.started')).toBeVisible();
 
   await page.getByRole('link', { name: org }).click();
