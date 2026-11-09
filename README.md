@@ -23,8 +23,8 @@ your machine, no Docker. **Back up the age key it creates**: it decrypts every s
   Row-Level Security, audit log, Redis-backed rate limits, S3 presigned uploads.
 - **Web**: React, Vite, TanStack Router/Query/Table, shadcn/ui, dark mode; a UI kit of shadcn/ui
   components and page patterns (app shell, data table, forms, empty/loading/error states,
-  command palette), a dev gallery, and CI checks for accessibility, visual regressions and
-  design anti-patterns ([docs/ui.md](docs/ui.md)).
+  command palette), a dev gallery, and automatic checks for accessibility, layout, visual
+  changes and design anti-patterns ([docs/ui.md](docs/ui.md)).
 - **Workflows**: Temporal; Python worker (uv, ruff, pyright, pytest) for AI/data work,
   Rust hot paths via PyO3 with a pure-Python fallback.
 - **AI layer**: one logged gateway for every LLM call (Anthropic, any OpenAI-compatible
@@ -135,10 +135,12 @@ accessibility checks.
 `pnpm dev`, then http://localhost:5173/dev/ui: every component and pattern of the kit in light
 and dark, plus reference screens (list, detail, form, settings, empty, loading, error) in the
 app shell. Build new screens from them; [DESIGN.md](DESIGN.md) has the tokens and rules,
-[docs/ui.md](docs/ui.md) the screen checklist. CI checks every page with axe (WCAG 2.2 AA, light
-and dark), compares screenshots with a baseline from `main` (kept as a workflow artifact, not in
-git; accept an intended change with the `visual-change-approved` label), runs Lighthouse on the
-public pages and the [impeccable](https://github.com/pbakaus/impeccable) design detector.
+[docs/ui.md](docs/ui.md) the screen checklist. Every page is checked with axe (WCAG 2.2 AA, light
+and dark) and layout guards (overflow, clipped text, overlapping controls, console errors, broken
+images); before a push, screenshots are compared with `main` rendered on the same machine, and a
+changed screen passes only if the change declares it in `apps/web/.visual-intent`: no human
+review, no screenshots in git. CI runs Lighthouse on the public pages and the
+[impeccable](https://github.com/pbakaus/impeccable) design detector.
 Agents with the impeccable skill installed read [PRODUCT.md](PRODUCT.md) and DESIGN.md.
 
 ## Deploy

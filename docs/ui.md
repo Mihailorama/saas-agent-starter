@@ -14,8 +14,11 @@ tools: [PRODUCT.md](../PRODUCT.md).
 | `apps/web/src/components/ui/`       | shadcn/ui components, copied source (Radix, Tailwind 4, cva). Edit freely, keep the API.                                                                                                          |
 | `apps/web/src/components/patterns/` | Page building blocks: `AppShell`, `PageHeader`, `DataTable`, `EmptyState`, `ErrorState`, `QueryView`, `ConfirmDialog`, `SettingsSection`, `CommandMenu`, `Combobox`, `DatePicker`, `ThemeToggle`. |
 | `apps/web/src/dev/`                 | The UI gallery and reference screens, development builds only.                                                                                                                                    |
-| `apps/web/e2e/a11y.spec.ts`         | axe accessibility checks of every page and the gallery.                                                                                                                                           |
-| `apps/web/e2e/visual.spec.ts`       | Screenshot comparisons (gallery, reference screens, public pages).                                                                                                                                |
+| `apps/web/e2e/a11y.spec.ts`         | axe accessibility checks and layout guards of every page and the gallery.                                                                                                                         |
+| `apps/web/e2e/layout.ts`            | Layout guards: horizontal overflow, clipped text, overlapping controls, broken images (DOM checks, no pixels).                                                                                    |
+| `apps/web/e2e/layout.spec.ts`       | Layout guards, axe and console errors on the gallery, reference screens and public pages at desktop/mobile × light/dark.                                                                          |
+| `apps/web/e2e/visual.spec.ts`       | Screenshots for the local comparison against main (`scripts/visual.mjs`).                                                                                                                         |
+| `apps/web/.visual-intent`           | The screens a change means to change (committed, plain text).                                                                                                                                     |
 | `apps/web/lighthouserc.cjs`         | Lighthouse CI budgets.                                                                                                                                                                            |
 
 Open the gallery with `pnpm dev` and http://localhost:5173/dev/ui: every component and pattern,
@@ -54,13 +57,14 @@ lighthouse CI job checks that the build contains no gallery code).
 
 ## The checks
 
-| Check                                                                                                                                             | Where                         | Blocks the PR?                                            |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------- |
-| Biome lint, all `a11y` rules as errors                                                                                                            | `pnpm check` (CI `check` job) | yes                                                       |
-| axe-core, WCAG 2.2 A/AA, light + dark, every page and the gallery; serious/critical fail                                                          | `pnpm e2e` (CI `check` job)   | yes                                                       |
-| impeccable detector: source + rendered gallery, screens and public pages, desktop + mobile                                                        | CI `UI / impeccable`          | yes                                                       |
-| Visual regression: 22 screenshots × 4 (desktop/mobile × light/dark)                                                                               | CI `UI / visual`              | yes, unless the PR has the `visual-change-approved` label |
-| Lighthouse CI: accessibility ≥ 0.95, best practices ≥ 0.95, entry JS ≤ 230 kB compressed (performance reported) on `/sign-in`, `/ai-transparency` | CI `UI / lighthouse`          | yes                                                       |
+| Check                                                                                                                                             | Where                         | Blocks the PR?                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------ |
+| Biome lint, all `a11y` rules as errors                                                                                                            | `pnpm check` (CI `check` job) | yes                                  |
+| axe-core, WCAG 2.2 A/AA, light + dark, every page and the gallery; serious/critical fail                                                          | `pnpm e2e` (CI `check` job)   | yes                                  |
+| impeccable detector: source + rendered gallery, screens and public pages, desktop + mobile                                                        | CI `UI / impeccable`          | yes                                  |
+| Layout guards (overflow, clipped text, overlapping controls, console errors, broken images) + axe at desktop/mobile × light/dark                  | `pnpm check` (CI `check` job) | yes                                  |
+| Screenshots vs main rendered on the same machine; changed screens must be in `.visual-intent`                                                     | `pnpm check`, pre-push hook   | yes, locally (CI compares no pixels) |
+| Lighthouse CI: accessibility ≥ 0.95, best practices ≥ 0.95, entry JS ≤ 230 kB compressed (performance reported) on `/sign-in`, `/ai-transparency` | CI `UI / lighthouse`          | yes                                  |
 
 The `UI` workflow (`.github/workflows/ui.yml`) runs on PRs that touch `apps/web`, the AI
 config shown on the transparency page, or the lockfile.
@@ -69,7 +73,7 @@ Locally:
 
 ```sh
 pnpm e2e                         # includes the axe checks (needs the stack, see AGENTS.md Setup)
-pnpm --filter web visual         # screenshots; the first run writes a local baseline
+pnpm --filter web visual         # layout guards + screenshots compared with main (below)
 pnpm --filter web build && pnpm --filter web lhci   # with the API running
 ```
 
@@ -78,29 +82,56 @@ The impeccable detector locally: install the skill (below) and run its engine,
 `... detect http://localhost:5173/dev/ui`. A finding you decide to keep gets an inline
 `impeccable-disable` comment with the reason (see `impeccable detect --help`).
 
-### Visual regression: how it works and how to accept a change
+### Visual checks: decided without a human
 
-Screenshots are never committed (no media in git). Instead:
+Nobody looks at screenshots, and none are committed (no media in git). `pnpm --filter web visual`
+(part of `pnpm check` and the pre-push hook) decides on its own:
 
-1. On every push to `main` that touches the UI (and weekly, so it never expires), the `visual`
-   job takes all screenshots and stores them as the `visual-baseline` workflow artifact
-   (90-day retention).
-2. On a PR, the job downloads the newest `visual-baseline` from `main`, takes the same
-   screenshots on the same runner image and Playwright version, and compares them (tolerance:
-   0.2% of pixels). The job summary lists every screenshot that changed; the `visual-report`
-   artifact has the expected, actual and diff images and the Playwright HTML report.
-3. A change you intended: look at the diffs, then add the **`visual-change-approved`** label to
-   the PR. The job re-runs and passes. After the merge, `main` writes the new baseline.
-4. No baseline yet (new repository, or the artifact expired): the PR job only takes the
-   screenshots and says so with a warning annotation and in the summary; it cannot fail, so
-   nothing is checked. Run the `UI` workflow on `main` (Actions, "Run workflow") to create one.
+1. **Layout guards, always** (`e2e/layout.ts`, also in CI): on every gallery section, reference
+   screen and public page at desktop and mobile, light and dark: no horizontal overflow, no text
+   spilling out of or cut off by its button, link, heading, label, tab, badge or cell (deliberate
+   `truncate` is fine), no overlapping controls, no broken images, no console errors, and axe.
+   The e2e suite runs the same DOM guards wherever it runs axe, so signed-in pages are covered
+   too. `e2e/layout.spec.ts` proves on a deliberately broken page that each guard fires. Text
+   counts as cut off vertically only when its box clips it (`overflow-y` not `visible`); a
+   control fully inside an input (password reveal, clear button) is not an overlap; anything
+   else that overlaps on purpose gets `data-layout-overlap-ok` on a common ancestor.
+2. **Screenshots against main, locally only.** The script takes the merge-base of `HEAD` with
+   `origin/main`, checks it out in a temporary git worktree, renders it with the working tree's
+   `e2e/visual.spec.ts` and caches the result in `apps/web/.visual/main/`, keyed by sha,
+   Playwright version and a hash of the screenshot harness (`visual.spec.ts`, `visual-pages.ts`,
+   `playwright.visual.config.ts`); a render with failures is used once and not cached. Then it
+   screenshots the working tree and compares (tolerance: 0.2% of pixels). Both sides come from
+   the same machine, browser and fonts, so there is no stored baseline to go stale. With no UI
+   change against main (`apps/web`, the config files it imports, `.env.example`, the lockfile)
+   it skips the screenshots. A run where no test executed, or Playwright failed for a reason no
+   test explains, fails. Another remote than `origin`: `VISUAL_BASE=<remote>/main`.
+3. **A changed screen needs a declared intent.** Add its id (from the report) to
+   `apps/web/.visual-intent`, one per line, `*` as a wildcard (`gallery-*`), `#` for a reason:
 
-Locally the first `pnpm --filter web visual` writes `apps/web/.visual/baseline/` (gitignored)
-and later runs compare against it; `pnpm --filter web visual:update` rewrites it. Local
-screenshots differ from CI's (fonts, OS), so never copy them into CI. CI takes them in the
-pinned Playwright image (`mcr.microsoft.com/playwright`, same version as `@playwright/test`,
-by digest): the app uses the system font stack, so the image, not a bundled font, keeps
-browser and fonts identical between main's baseline and every PR.
+   ```text
+   page-sign-in   # one-time code field
+   ```
+
+   The file is read from the working tree (uncommitted lines count) and only the lines your
+   branch adds to it count (`git diff` against the merge-base), so an intent is spent once
+   merged, never hides the next change, and an id can be declared again by adding it again;
+   delete old lines whenever you like. A wildcard that matches every screen, or more than five
+   changed ones, is rejected: list the screens. The report starts with what each line matched;
+   an undeclared changed or new screen fails, and `apps/web/.visual/report.md` lists it with
+   the expected, actual and diff images.
+4. **AI review, optional and advisory:** `pnpm --filter web visual -- --review` sends each
+   declared diff (before, after, diff and the intent) to the `claude` CLI on your subscription
+   (`--model claude-opus-5-5`, read-only tools, no API key) and writes an OK/REGRESSION verdict
+   into the report. It never changes the result, never runs in CI, and is skipped without the
+   CLI.
+
+CI compares no pixels and has no approval label: the deterministic guards run there through
+`pnpm check`. The pixel comparison is skipped by `git push --no-verify`, by `CI=1`, and by any
+push from a machine without the hook (`pnpm install` sets `core.hooksPath` unless another
+hooks path is already configured, and never in CI); such a push still has to pass the guards
+in CI, and `pnpm check` stays the definition of done. The hook does nothing when the UI did not
+change.
 
 ### Bundle size
 

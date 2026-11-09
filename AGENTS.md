@@ -10,8 +10,10 @@ check (`check:api-types`; after changing a route schema run `pnpm api:types`), t
 (`check:events`), the feature-flag check (`check:flags`), `scripts/*.test.mjs`, typecheck with tsrs,
 TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
 pyright (strict), pytest, the license gate for all three ecosystems, the key-free eval
-(`pnpm eval --fake-llm`, needs Docker) and the Playwright smoke.
-It needs the local infra running (see Setup).
+(`pnpm eval --fake-llm`, needs Docker), the Playwright smoke and the visual check
+(`pnpm --filter web visual`: layout guards, and locally screenshots compared with main, see UI rules).
+It needs the local infra running (see Setup). `pnpm install` sets `core.hooksPath` to `.githooks`;
+its pre-push hook runs Biome and the visual check.
 
 Typecheck: day to day it is tsrs (`pnpm typecheck:fast`, Rust port of the TypeScript checker,
 fastest and lightest). Releases are also checked with the official TypeScript 7 compiler (`tsc`,
@@ -84,7 +86,8 @@ apps/web            React + Vite, TanStack Router/Query/Table, shadcn/ui, Tailwi
   src/components/onboarding-checklist.tsx, src/lib/onboarding.ts  setup checklist card and
                       product tour (driver.js, tours as data on `data-tour`), docs/onboarding.md
   src/dev/            UI gallery + reference screens at /dev/ui (dev builds only)
-  e2e/                Playwright smoke, axe a11y on every page; visual.spec.ts (own config)
+  e2e/                Playwright smoke, axe a11y + layout guards (layout.ts) on every page;
+                      layout.spec.ts + visual.spec.ts (own config, scripts/visual.mjs)
 apps/site           Astro static marketing site + blog (docs/marketing.md): reuses web's index.css
                     and analytics.ts; SEO head in src/components/Seo.astro, posts in src/content/blog
 packages/db         Drizzle schema, migrations, RLS policies, withOrg(), withOperatorRead(), migrate script
@@ -185,7 +188,8 @@ activity -> Rust `simhash` -> writes back to Postgres under the same RLS scoping
   Sentry SaaS/self-hosted for bigger installs. Only the DSN differs.
 - React + Vite + TanStack + shadcn/ui: no framework lock-in, static build, owned components.
 - UI kit: shadcn/ui via its CLI + our patterns and a dev-only `/dev/ui` gallery (Storybook and
-  Ladle fail the license gate); axe, visual regression, Lighthouse, impeccable in CI (ADR 0023).
+  Ladle fail the license gate); axe, layout guards, Lighthouse, impeccable in CI; screenshots
+  compared with main locally, decided without a human (ADR 0023).
 - Python worker: where the AI/data ecosystem lives. Rust via PyO3 only for measured hot paths.
 - LiteLLM SDK as the one path to model providers; vendor CLI subscriptions (default mode) in a
   separate llm-cli container; vLLM for multi-user self-hosting, Ollama for dev (ADR 0024,
@@ -538,9 +542,12 @@ Details: docs/ui.md, DESIGN.md, ADR 0023. Look at `/dev/ui` (`pnpm dev`) before 
   and at 390px wide.
 - Copy: sentence case, a verb on every button ("Create project"), say what happened and what to
   do next, no blame, no exclamation marks, no invented facts or customers.
-- `pnpm e2e` runs axe on every page and the gallery; add new pages to `e2e/a11y.spec.ts`. A
-  visual change is accepted with the `visual-change-approved` PR label, never by committing
-  screenshots (docs/ui.md).
+- `pnpm e2e` runs axe and the layout guards on every page and the gallery; add new pages to
+  `e2e/a11y.spec.ts`, new public or gallery pages to `e2e/visual-pages.ts`.
+- No human visual review. `pnpm --filter web visual` compares screenshots with main's, rendered on
+  your machine; declare every screen you mean to change in `apps/web/.visual-intent` (ids from
+  the report), or the check fails. Never commit screenshots; never weaken the guards to pass
+  (docs/ui.md "Visual checks").
 - When the `impeccable` skill is installed (`npx impeccable install`, docs/ui.md), run
   `/impeccable critique` and `/impeccable audit` on the screens you changed and fix what they
   find. Do not vendor the skill into this repository.

@@ -6,11 +6,13 @@ for (const file of ['../../.env', '../../.env.example']) {
   } catch {}
 }
 
-// Visual regression of the dev UI gallery and the public pages (docs/ui.md). Baselines are NOT
-// in git (no media in the repo): CI produces them on main and keeps them as a workflow artifact;
-// PR runs download the latest one into .visual/baseline and compare. Locally the first run
-// writes a baseline, later runs compare against it. Only the web dev server is needed.
-const port = process.env.PLAYWRIGHT_PORT ?? '5173';
+// Layout guards (e2e/layout.spec.ts) and screenshots (e2e/visual.spec.ts) of the dev UI gallery
+// and the public pages at desktop/mobile x light/dark (docs/ui.md). Only the web dev server is
+// needed. scripts/visual.mjs drives the screenshots: it points VISUAL_WEB_DIR at a worktree of
+// the merge-base with main for the expected side, and VISUAL_SNAPSHOT_DIR at its cached shots.
+// Screenshots are never committed (no media in git) and never compared in CI.
+const port = process.env.VISUAL_PORT ?? '5177';
+const out = process.env.VISUAL_OUT ?? '.visual/run';
 const desktop = { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } };
 const mobile = {
   ...devices['Pixel 7'],
@@ -20,16 +22,12 @@ const mobile = {
 
 export default defineConfig({
   testDir: 'e2e',
-  testMatch: 'visual.spec.ts',
-  outputDir: '.visual/results',
-  snapshotPathTemplate: '.visual/baseline/{projectName}/{arg}{ext}',
-  updateSnapshots: process.env.CI ? 'none' : 'missing',
+  testMatch: ['layout.spec.ts', 'visual.spec.ts'],
+  outputDir: `${out}/results`,
+  snapshotPathTemplate: `${process.env.VISUAL_SNAPSHOT_DIR ?? '.visual/snapshots'}/{projectName}/{arg}{ext}`,
+  updateSnapshots: 'none',
   fullyParallel: true,
-  reporter: [
-    ['list'],
-    ['html', { outputFolder: '.visual/report', open: 'never' }],
-    ['json', { outputFile: '.visual/results.json' }],
-  ],
+  reporter: [['list'], ['json', { outputFile: `${out}/results.json` }]],
   expect: {
     toHaveScreenshot: { animations: 'disabled', caret: 'hide', maxDiffPixelRatio: 0.002 },
   },
@@ -42,7 +40,9 @@ export default defineConfig({
   ],
   webServer: {
     command: `pnpm exec vite --port ${port} --strictPort`,
+    cwd: process.env.VISUAL_WEB_DIR,
     url: `http://localhost:${port}`,
-    reuseExistingServer: !process.env.CI,
+    // Never reuse: the expected side must be served from main's worktree, not from `pnpm dev`.
+    reuseExistingServer: false,
   },
 });
