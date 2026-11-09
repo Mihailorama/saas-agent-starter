@@ -21,7 +21,7 @@ if (choices && privacyChoicesLabel) {
   choices.addEventListener('click', showPrivacyChoices);
 }
 
-// Links with data-cta="<id>" (sign-in, start free...) are the site's conversions.
+// Links with data-cta="<id>" (GitHub, sign-in, book a demo...) are the site's conversions.
 document.addEventListener('click', (e) => {
   const cta = (e.target as HTMLElement).closest<HTMLElement>('[data-cta]')?.dataset.cta;
   if (cta) track('site_cta_clicked', { cta });

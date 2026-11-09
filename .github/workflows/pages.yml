@@ -1,10 +1,9 @@
 name: Pages
 
 # The starter's landing page: apps/site built for GitHub Pages (docs/marketing.md "GitHub Pages").
-# Publishes only on a published release (1.0.0 onwards) or by hand; never on push or PR.
+# Runs only by dispatch: release-please.yml dispatches it on main after each release (1.0.0
+# onwards), or by hand. Never on push or PR, and never from another branch (the `if` below).
 on:
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +15,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -39,6 +39,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

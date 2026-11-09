@@ -81,8 +81,7 @@ subdomains). The container's CSP takes the sink origins from `ANALYTICS_ORIGINS`
 Lighthouse CI three times per URL (`/` and `/blog/`; add a post's URL to `lighthouserc.cjs` once one is published) on every PR that touches the
 site, its shared CSS/analytics or the event catalog. It fails when the median score drops below:
 performance 0.90, accessibility 0.95, best practices 0.95, SEO 0.95. Reports are a workflow
-artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measured on this branch:
-0.99 / 1 / 1 / 1. Locally: build with `SITE_URL=http://localhost:4321`, then
+artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measured on the landing page and `/blog/` (2026-11-09, median of 3): 1 / 1 / 1 / 1. Locally: build with `SITE_URL=http://localhost:4321`, then
 `pnpm --filter site lhci` (needs Chrome; `LHCI_PORT` for another port). Lighthouse CI runs through
 `pnpm dlx`, not as a dependency (license note in [LICENSES.md](LICENSES.md)).
 
@@ -96,9 +95,10 @@ groups there, and every external service is listed with its install and connect 
 
 `.github/workflows/pages.yml` builds it with
 `SITE_URL=https://mihailorama.github.io/saas-agent-starter` and deploys it with the official Pages
-actions. It runs only on a published release or by hand: release-please's release workflow
-dispatches it on `main` after each release (a release made with `GITHUB_TOKEN` starts no other
-workflow, and the `github-pages` environment accepts the default branch only). Before the first
+actions. It runs only by dispatch on `main` (both jobs check `github.ref`, so a dispatch from
+another branch deploys nothing): release-please's release workflow dispatches it after each
+release (a release made with `GITHUB_TOKEN` starts no other workflow, and the `github-pages`
+environment accepts the default branch only), or run it by hand on `main`. Before the first
 release, enable Pages with source "GitHub Actions" in the repository settings. Custom domain: set
 the repository variable `PAGES_SITE_URL` (e.g. `https://starter.example.com`) and add the domain
 in the Pages settings; nothing else changes.
@@ -228,7 +228,7 @@ goes to `dist/geo/<date>.md` (`--out <dir>` to keep a history elsewhere).
   CLI's environment so it never bills an API key; log in to Claude Code once instead.
   `--dry-run` (or no `claude` on the PATH) prints the commands.
 - Write questions as buyers ask them, without your product name; keep them stable so reports
-  compare over time. A generic product name (like the template's "Workspace") needs a distinctive
+  compare over time. A generic product name needs a distinctive
   alias or it will never count.
 - It measures one assistant (Claude) at one point in time; answers vary run to run. Treat it as
   a trend, and fix the inputs it reflects: clear pages, FAQ answers, `llms.txt`, third-party

@@ -71,6 +71,7 @@ const groups = [
       ['Onboarding checklist and tour', 'A setup card derived from existing data, never a stored flag, and a short product tour declared on the page elements.'],
       ['Analytics and surveys', 'A typed event catalog and journeys as code for PostHog or Umami; NPS and CSAT surveys as config, synced to PostHog or shown by Formbricks.'],
       ['Feature flags and releases', 'PostHog flags with the catalog in the repo; release-please turns Conventional PR titles into changelogs and tags.'],
+      ['Marketing tools', 'Postiz for social posting and SerpBear for rank tracking in the marketing profile; scripts for IndexNow, a Search Console report and a GEO check of AI answers.'],
     ],
   },
   {
@@ -82,7 +83,7 @@ const groups = [
       ['Prompts and evals', 'One immutable file per prompt version with pinned hashes, a Promptfoo golden set and judge for every purpose; CI runs the evals without an API key.'],
       ['External MCP tools', "An organization connects remote MCP servers; a purpose may call their allowed tools in a bounded loop inside the gateway, behind an SSRF pin."],
       ['Audit record', 'An append-only ai_calls row per call, content in object storage, for the EU AI Act. Stored AI output stays marked as generated until a person confirms it.'],
-      ['LLM ops and PII redaction', 'Generations, feedback and judge scores go to PostHog or self-hosted Langfuse. Presidio redacts personal data from triage output and feedback before it leaves.'],
+      ['LLM ops and PII redaction', 'Generations, feedback and judge scores go to PostHog or self-hosted Langfuse. Presidio (with the pii sidecar) redacts personal data from triage output and feedback before it leaves.'],
     ],
   },
   {
@@ -100,7 +101,7 @@ const groups = [
     id: 'operations',
     title: 'Operations',
     items: [
-      ['One-command setup', 'pnpm run infra asks a few questions, prepares a fresh VPS, writes the encrypted settings, deploys and verifies every component. Re-runs show what would change.'],
+      ['One-command setup', 'pnpm run infra prepares a fresh VPS, writes the encrypted settings, then deploys and verifies the core and the components it supports. The rest connect by env settings. Re-runs show what would change.'],
       ['Deploy', 'Images by digest, Caddy with automatic TLS, SOPS-encrypted env files, deploy and rollback over SSH; Coolify, Kubernetes and on-prem are documented options.'],
       ['Backups', 'pgBackRest WAL archiving for point-in-time recovery, copies of the app buckets, and a scheduled automatic restore check.'],
       ['Operator console', 'An internal panel for support staff: organizations and users, audited actions with a reason, suspension and a read-only "view as user".'],
@@ -119,6 +120,7 @@ const path = [
 ];
 
 // [service, install with the template, connect your own]; '' where the template has no such path.
+// pnpm run infra covers only the components with `available` in config/components.json.
 const services = [
   ['Postgres and S3', 'compose services; SeaweedFS for S3', 'any managed Postgres or S3 by URL (AWS, R2, MinIO)'],
   ['Product analytics', 'Umami in the analytics profile', 'PostHog Cloud, or GA4 behind consent'],
@@ -133,6 +135,9 @@ const services = [
   ['Billing', 'stripe-mock for development', 'Stripe, Dub Partners, or manual contracts'],
   ['Tracker', '', 'Plane Cloud or self-hosted Plane, or GitHub Issues'],
   ['Email', 'Mailpit in development', 'any SMTP provider'],
+  ['Observability', 'OTel Collector, Prometheus, Loki, Jaeger and Grafana in the observability profile', 'any OTLP endpoint via API_OTEL_ENDPOINT and WORKER_OTEL_ENDPOINT'],
+  ['PII redaction', 'the Presidio sidecar in the pii profile', ''],
+  ['Marketing', 'Postiz and SerpBear in the marketing profile', ''],
 ];
 
 const quickstart = `docker compose up -d --wait postgres redis s3 temporal-ui mailpit
@@ -142,7 +147,7 @@ pnpm i && pnpm db:migrate
 pnpm dev        # API :3000 + web :5173
 pnpm worker     # Python Temporal worker (also delivers mail)
 
-pnpm run infra  # later: a fresh VPS to the running, verified stack`;
+pnpm run infra  # later: a fresh VPS to the running, verified core stack`;
 
 const faq = [
   {
@@ -188,7 +193,7 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
   <section class="mx-auto max-w-5xl px-6 pt-20 pb-16 sm:pt-28">
     <p class="text-sm font-medium text-primary">Open source, MIT-0</p>
     <h1 class="mt-3 max-w-3xl text-4xl font-bold tracking-tight text-balance sm:text-5xl">
-      A production-ready SaaS starter that coding agents build on rails
+      A SaaS starter that coding agents build on rails
     </h1>
     <p class="mt-6 max-w-2xl text-lg text-muted-foreground">
       Multi-tenant TypeScript, Python and Rust, with the rules, recipes and checks that keep Claude
@@ -248,8 +253,8 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
     <div class="mx-auto max-w-5xl px-6 pt-16">
       <h2 id="features" class="text-2xl font-semibold tracking-tight sm:text-3xl">What ships in the template</h2>
       <p class="mt-3 max-w-2xl text-muted-foreground">
-        Working code with tests and docs, not stubs. Most optional parts sit behind feature flags that
-        are off by default, so you turn on what your product needs.
+        Working code with tests and docs, not stubs. Optional parts stay off until you turn them on: an
+        env setting, a compose profile, or a feature flag that is off by default.
       </p>
       <nav aria-label="Feature groups" class="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm">
         {
@@ -285,7 +290,8 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
       <h2 id="services" class="text-2xl font-semibold tracking-tight sm:text-3xl">Install with the template, or connect your own</h2>
       <p class="mt-3 max-w-2xl text-muted-foreground">
         Each external service either runs from a compose profile or connects to an instance you
-        already have, by environment variables. pnpm run infra asks which one per component. A
+        already have, by environment variables. pnpm run infra asks install, connect or skip for the
+        components it supports. A
         permissive-license twin of the stack swaps out the copyleft containers.
       </p>
       <div class="mt-10 overflow-x-auto rounded-lg border bg-background">
@@ -305,7 +311,7 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
                     {name}
                   </th>
                   <td class="p-4 text-muted-foreground">{install || 'Not shipped'}</td>
-                  <td class="p-4 text-muted-foreground">{connect}</td>
+                  <td class="p-4 text-muted-foreground">{connect || 'Install only'}</td>
                 </tr>
               ))
             }
@@ -365,7 +371,7 @@ const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover
     </p>
     <div class="mt-8 flex flex-wrap gap-3">
       <a href={site.repo} data-cta="footer_github" class={primary}>Get the code</a>
-      <a href={file('LICENSE')} class={secondary}>Read the license</a>
+      <a href={file('LICENSE')} data-cta="license" class={secondary}>Read the license</a>
     </div>
   </section>
 

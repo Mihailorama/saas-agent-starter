@@ -522,6 +522,8 @@ Details: docs/marketing.md, ADR 0021.
 - Every page renders `<Base>` (it carries the SEO head); add JSON-LD through its `jsonLd` prop.
   CTAs are links with `data-cta="<id>"` (event `site_cta_clicked`); no other tracking code.
 - No media in git: images by absolute URL. Keep the Lighthouse budgets green; do not lower them.
+- A PR that adds or removes a user-facing feature updates the feature groups (and the install/connect
+  table) on the landing page, `apps/site/src/pages/index.astro`.
 - `pnpm geo:check` is manual and uses the claude CLI on a subscription with the model from
   `config/geo.json`; never add an API key or a CI job for it.
 
