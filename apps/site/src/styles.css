@@ -43,3 +43,68 @@
   background: none;
   padding: 0;
 }
+
+/* Browser surfaces in the design tokens: text selection and keyboard focus. */
+::selection {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Hero graphic (index.astro): the pieces fold into the box once, on load. Reduced motion: static. */
+@media (prefers-reduced-motion: no-preference) {
+  .fold > li {
+    animation: fold-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+  .fold > li:nth-child(1) {
+    animation-delay: 45ms;
+  }
+  .fold > li:nth-child(2) {
+    animation-delay: 90ms;
+  }
+  .fold > li:nth-child(3) {
+    animation-delay: 135ms;
+  }
+  .fold > li:nth-child(4) {
+    animation-delay: 180ms;
+  }
+  .fold > li:nth-child(5) {
+    animation-delay: 225ms;
+  }
+  .fold > li:nth-child(6) {
+    animation-delay: 270ms;
+  }
+  .fold > li:nth-child(7) {
+    animation-delay: 315ms;
+  }
+  .fold > li:nth-child(8) {
+    animation-delay: 360ms;
+  }
+  .fold > li:nth-child(9) {
+    animation-delay: 405ms;
+  }
+  .fold > li:nth-child(10) {
+    animation-delay: 450ms;
+  }
+  .fold > li:nth-child(11) {
+    animation-delay: 495ms;
+  }
+  .fold > li:nth-child(12) {
+    animation-delay: 540ms;
+  }
+  .fold > li:nth-child(13) {
+    animation-delay: 585ms;
+  }
+  .fold > li:nth-child(14) {
+    animation-delay: 630ms;
+  }
+}
+@keyframes fold-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.75rem) rotate(-4deg) scale(0.96);
+  }
+}

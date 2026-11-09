@@ -35,7 +35,9 @@ the rest of the repo needs; CI and the `node:22-alpine` image already use the la
   `https://owner.github.io/repo`, becomes Astro's `base`, so build links with `path()`/`abs()` from
   `src/site.ts`, never as bare `/...`), `SITE_APP_URL` (adds the "Sign in" link to the app; none
   without it), `SITE_OG_IMAGE` (absolute URL of a 1200x630 share image
-  hosted outside git), `SITE_TWITTER`, `SITE_NOINDEX=true` for staging.
+  hosted outside git), `SITE_TWITTER`, `SITE_CONTACT_URL` (the landing's "Talk to us about setup"
+  target, a `mailto:` or booking URL), `SITE_NOINDEX=true` for staging. Dark mode follows the OS
+  through `public/theme.js` (a file, because the CSP allows `script-src 'self'` only).
 - **Blog**: one `.md` or `.mdx` file per post in `src/content/blog/`; the file name is the URL.
   Front matter: `title` (max 60), `description` (50-160), `pubDate`, `author`, optional
   `updatedDate`, `draft`, `faq`. The build fails when a field breaks the limits.
@@ -87,11 +89,14 @@ artifact (`lighthouse-reports`), nothing is uploaded to a public server. Measure
 
 ### The starter's own landing page (GitHub Pages)
 
-The home page of `apps/site` is this repository's landing page (owner decision, 2026-11-07):
+The home page of `apps/site` is this repository's landing page (owner decision, 2026-11-07),
+branded **Orgfold** (2026-11-09; the repository and packages keep their names until the rename):
 products built on the template replace `src/pages/index.astro` and the texts in `src/site.ts`.
-Every claim on it must hold for the code on `main` (sources: AGENTS.md's architecture map and
-component picks, `docs/*.md`): a PR that adds or removes a user-facing feature updates the feature
-groups there, and every external service is listed with its install and connect paths.
+It is short on purpose: one promise, a before/after graphic, two offers (open source, and managed
+set-up behind `site.contact`, no price on the page), how it works, proof that links to files, FAQ.
+The full component and service list lives in the README, not on the page. Every claim on it must
+hold for the code on `main` (sources: AGENTS.md's architecture map and component picks,
+`docs/*.md`); the recipe and decision-record counts are read from the repository at build time.
 
 `.github/workflows/pages.yml` builds it with
 `SITE_URL=https://mihailorama.github.io/saas-agent-starter` and deploys it with the official Pages
@@ -100,8 +105,10 @@ another branch deploys nothing): release-please's release workflow dispatches it
 release (a release made with `GITHUB_TOKEN` starts no other workflow, and the `github-pages`
 environment accepts the default branch only), or run it by hand on `main`. Before the first
 release, enable Pages with source "GitHub Actions" in the repository settings. Custom domain: set
-the repository variable `PAGES_SITE_URL` (e.g. `https://starter.example.com`) and add the domain
-in the Pages settings; nothing else changes.
+the repository variable `PAGES_SITE_URL` (e.g. `https://orgfold.com`; a URL without a path makes
+the base `/`) and add the domain in the Pages settings; nothing else changes. Optional variables:
+`PAGES_OG_IMAGE` (share image; default GitHub's generated repository card) and
+`PAGES_CONTACT_URL` (the managed offer's contact; unset, it opens a GitHub issue).
 
 ## SEO checklist per release
 
