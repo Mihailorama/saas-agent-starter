@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Navigate, useNavigate, useSearch } from '@tanstack/react-router';
+import { Link, Navigate, useNavigate, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -74,10 +74,10 @@ export function AcceptTermsPage() {
 
   return (
     <AuthLayout
-      title={s.firstTime ? 'Before you start' : 'We updated our terms'}
+      title={s.firstTime ? 'Before you continue' : 'We updated our terms'}
       description={
         s.firstTime
-          ? 'Accept the terms to finish creating your account.'
+          ? 'Accept the terms of service and the privacy policy to use your account.'
           : 'Review the new versions and accept them to continue.'
       }
     >
@@ -147,6 +147,12 @@ export function AcceptTermsPage() {
       >
         Sign out
       </Button>
+      <p className="mt-3 text-center text-sm text-muted-foreground">
+        Do not want to accept?{' '}
+        <Link to="/settings/privacy" className="underline underline-offset-4">
+          Download or delete your data
+        </Link>
+      </p>
     </AuthLayout>
   );
 }

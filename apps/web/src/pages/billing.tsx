@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
 import { client, formatDate, ok } from '@/lib/api';
+import { billingTerms } from '@/lib/billing-terms';
 import { legalUrl, taxNote } from '@/lib/legal';
 import { cn } from '@/lib/utils';
 
@@ -320,8 +321,7 @@ export function BillingPage() {
       </div>
       {/* No hidden fees (docs/ui.md "Dark patterns"): taxes and renewal terms next to the prices. */}
       <p className="text-sm text-muted-foreground">
-        {taxNote} Paid plans renew automatically at the end of each billing period until you cancel.
-        Cancel any time on this page: the plan stays active until the period ends.{' '}
+        {billingTerms(b, taxNote).join(' ')}{' '}
         <a href={legalUrl('refunds')} target="_blank" rel="noopener" className="underline">
           Refund and cancellation policy
         </a>

@@ -40,6 +40,8 @@ export const user = pgTable('user', {
    * unaffected. The unsubscribe link and List-Unsubscribe header set it to false. */
   marketingOptIn: boolean('marketing_opt_in').notNull().default(false),
   marketingOptInAt: timestamp('marketing_opt_in_at'),
+  /** Mail language (en/ru), from the browser when the user accepted the terms; null = English. */
+  locale: text('locale'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

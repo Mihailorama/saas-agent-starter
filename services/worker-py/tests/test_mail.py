@@ -4,6 +4,7 @@ import asyncio
 import os
 import uuid
 
+import asyncpg
 import httpx2
 import pytest
 from temporalio.client import Client
@@ -75,3 +76,34 @@ async def test_workflow_delivers_html_and_text() -> None:
     assert message["Text"].strip() == "Hello"
     assert "<p>Hello</p>" in message["HTML"]
     assert message["MessageID"] in message_id
+
+
+async def test_marketing_mail_rechecks_the_opt_in(pool: asyncpg.Pool) -> None:
+    """An unsubscribe between the API's check and a (retried) attempt still wins."""
+    uid = f"mail-{uuid.uuid4()}"
+    async with pool.acquire() as conn:
+        await conn.execute(
+            'insert into "user" (id, name, email, email_verified, marketing_opt_in)'
+            " values ($1, 'T', $2, true, false)",
+            uid,
+            f"{uid}@example.com",
+        )
+        mail = SendEmail("product-update", f"{uid}@example.com", "S", "<p>x</p>", "x", userId=uid)
+        queue = f"test-mail-{uuid.uuid4()}"
+        client = await Client.connect(
+            settings.TEMPORAL_ADDRESS, namespace=settings.TEMPORAL_NAMESPACE
+        )
+        async with Worker(
+            client, task_queue=queue, workflows=[SendEmailWorkflow], activities=[send_email]
+        ):
+            run = SendEmailWorkflow.run
+            assert (
+                await client.execute_workflow(run, mail, id=f"t-{uuid.uuid4()}", task_queue=queue)
+                == ""
+            )
+            await conn.execute('update "user" set marketing_opt_in = true where id = $1', uid)
+            sent = await client.execute_workflow(
+                run, mail, id=f"t-{uuid.uuid4()}", task_queue=queue
+            )
+            assert sent.startswith("<")
+        await conn.execute('delete from "user" where id = $1', uid)

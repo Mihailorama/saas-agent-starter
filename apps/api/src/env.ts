@@ -47,6 +47,9 @@ const schema = z
       .default('false')
       .transform((v) => (/^\d+$/.test(v) ? Number(v) : v === 'true')),
     BETTER_AUTH_SECRET: z.string().min(32),
+    /** The previous BETTER_AUTH_SECRET while rotating it: unsubscribe links signed with it still
+     * work (docs/legal.md). Remove it once old marketing mails no longer matter. */
+    BETTER_AUTH_PREVIOUS_SECRET: z.string().min(32).optional(),
     /** Public origin users reach the app on (web origin; /api is proxied there). */
     BETTER_AUTH_URL: z.url(),
     /** Extra browser origins allowed to call the API with credentials. */

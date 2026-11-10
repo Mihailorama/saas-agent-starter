@@ -14,6 +14,7 @@
   "governingLaw": "the laws of Example Country",
   "jurisdiction": "the courts of Example City",
   "age": { "minimum": 16, "b2bOnly": false },
+  "sessionDays": 7,
   "documents": {
     "privacy": { "title": "Privacy policy", "version": "2026-11-10", "effective": "2026-11-10" },
     "terms": { "title": "Terms of service", "version": "2026-11-10", "effective": "2026-11-10" },
@@ -44,7 +45,22 @@
         {
           "name": "better-auth.session_token",
           "purpose": "Keeps you signed in (\"__Secure-\" prefix on HTTPS).",
-          "duration": "7 days"
+          "duration": "{sessionDays} days"
+        },
+        {
+          "name": "better-auth.state",
+          "purpose": "Protects a single sign-on (SSO) sign-in against forgery.",
+          "duration": "5 minutes"
+        },
+        {
+          "name": "better-auth.better-auth-passkey",
+          "purpose": "Holds the challenge while you register or use a passkey.",
+          "duration": "5 minutes"
+        },
+        {
+          "name": "better-auth.admin_session",
+          "purpose": "Support staff only: keeps their own session while they view the app as a user.",
+          "duration": "while viewing"
         },
         {
           "name": "better-auth.two_factor",
@@ -61,6 +77,23 @@
       "category": "service",
       "purpose": "Runs the application, its database and its job queue.",
       "data": "All account and workspace data."
+    },
+    {
+      "id": "database",
+      "component": "postgres",
+      "modes": ["connect"],
+      "name": "Example Database Ltd (managed database)",
+      "category": "service",
+      "purpose": "Hosts the application database when it is not on our own server.",
+      "data": "All account and workspace data."
+    },
+    {
+      "id": "backups",
+      "component": "backups",
+      "name": "Example Backup Storage Ltd (off-site backups)",
+      "category": "service",
+      "purpose": "Keeps encrypted copies of the database and files for disaster recovery.",
+      "data": "All account and workspace data, encrypted."
     },
     {
       "id": "storage",
@@ -87,11 +120,20 @@
       "data": "The text sent to the model and its answer."
     },
     {
+      "id": "llm-cli",
+      "component": "llm-cli",
+      "name": "AI vendor subscriptions (the model vendors of our CLI subscriptions)",
+      "category": "service",
+      "purpose": "Generates AI features' output through vendor subscriptions.",
+      "data": "The text sent to the model and its answer."
+    },
+    {
       "id": "posthog",
       "component": "analytics",
       "name": "PostHog",
       "category": "analytics",
       "env": ["VITE_POSTHOG_KEY"],
+      "modes": ["connect"],
       "purpose": "Product analytics, session replay, surveys and feature flags, after your consent.",
       "data": "Pseudonymous user and organization ids, usage events, survey answers.",
       "cookies": [
@@ -108,6 +150,7 @@
       "name": "Umami (self-hosted, cookieless)",
       "category": "analytics",
       "env": ["VITE_UMAMI_SCRIPT_URL", "VITE_UMAMI_WEBSITE_ID"],
+      "modes": ["install"],
       "purpose": "Counts page views and events without cookies or personal identifiers.",
       "data": "Page path, referrer, browser type; no cookies."
     },
@@ -158,6 +201,7 @@
       "name": "Langfuse",
       "category": "service",
       "env": ["VITE_LANGFUSE_PUBLIC_KEY", "VITE_LANGFUSE_HOST"],
+      "modes": ["install", "connect"],
       "purpose": "Monitors the quality of AI answers, including your thumbs up or down.",
       "data": "AI call metadata (no content), feedback scores."
     },
@@ -167,6 +211,7 @@
       "name": "Sentry or GlitchTip (error tracking)",
       "category": "service",
       "env": ["VITE_SENTRY_DSN"],
+      "modes": ["connect"],
       "purpose": "Reports application errors so they can be fixed.",
       "data": "Error details, scrubbed of user, request and extra data."
     },
@@ -176,6 +221,7 @@
       "name": "Chatwoot (service desk)",
       "category": "functional",
       "env": ["VITE_CHATWOOT_BASE_URL", "VITE_CHATWOOT_WEBSITE_TOKEN"],
+      "modes": ["install", "connect"],
       "purpose": "Answers your questions and problem reports.",
       "data": "Name, email, user id, conversation messages.",
       "cookies": [
@@ -196,6 +242,14 @@
       "data": "Telegram user id, messages you send the bot."
     },
     {
+      "id": "tracker",
+      "component": "support",
+      "name": "Plane or GitHub Issues (product tracker)",
+      "category": "service",
+      "purpose": "Turns support requests, feedback and alerts into work items.",
+      "data": "The request's text with personal data redacted, a link back to the conversation."
+    },
+    {
       "id": "twenty",
       "component": "crm",
       "name": "Twenty (customer records)",
@@ -209,6 +263,7 @@
       "name": "Cal.diy or Cal.com (booking calendar)",
       "category": "functional",
       "env": ["VITE_BOOKING_ORIGIN", "VITE_BOOKING_LINK"],
+      "modes": ["install", "connect"],
       "purpose": "Books a call with the team, after your consent to load it.",
       "data": "Name, email, the answers you give when booking."
     },

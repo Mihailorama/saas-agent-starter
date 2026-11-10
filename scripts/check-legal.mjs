@@ -16,7 +16,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DOC_IDS, inUse, legalDocs, legalPath } from '../apps/site/src/legal.ts';
+import { DOC_IDS, inUse, legalDocs, legalPath, versionedText } from '../apps/site/src/legal.ts';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');
@@ -35,6 +35,8 @@ const SETTINGS = new Set([
   'VITE_YM_WEBVISOR',
 ]);
 const EXAMPLE = /example/i;
+/** Placeholder ids: XX000000000, 00000000. */
+const PLACEHOLDER = /X{2}|0{6}/;
 
 /** 1. Completeness; example values only while the file is marked as a template. */
 export function configErrors(config, components) {
@@ -63,6 +65,11 @@ export function configErrors(config, components) {
     if (typeof v !== 'string' || !v.trim()) errors.push(`${k}: empty`);
     else if (!config.template && EXAMPLE.test(v)) errors.push(`${k}: still an example value`);
   }
+  for (const k of ['vatId', 'registration'])
+    if (!config.template && PLACEHOLDER.test(config.company?.[k] ?? ''))
+      errors.push(`company.${k}: still a placeholder`);
+  if (!Number.isInteger(config.sessionDays) || config.sessionDays < 1)
+    errors.push('sessionDays: whole days (the session lifetime, apps/api/src/auth.ts)');
   const age = config.age ?? {};
   if (!Number.isInteger(age.minimum) || age.minimum < 13 || age.minimum > 21)
     errors.push('age.minimum: 13 to 21 (16 = GDPR default, 13 = COPPA)');
@@ -89,6 +96,12 @@ export function configErrors(config, components) {
       if (!c.name || !c.purpose || !c.duration)
         errors.push(`${at}: cookies need name, purpose, duration`);
   }
+  // Every component either sends personal data somewhere (a processor) or says it does not.
+  for (const c of components)
+    if (c.processor !== false && !(config.processors ?? []).some((p) => p.component === c.id))
+      errors.push(
+        `component ${c.id}: add a processor in config/legal.json, or "processor": false in config/components.json`,
+      );
   return errors;
 }
 
@@ -96,6 +109,16 @@ export function configErrors(config, components) {
 export function coverageErrors(config, { viteKeys, clearedCookies, privacyTools }) {
   const processors = config.processors ?? [];
   const errors = [];
+  // An empty list means the extraction broke (a renamed heading, other spacing), not "nothing".
+  if (!viteKeys.length) errors.push('no VITE_* keys found in apps/web/src: fix the extraction');
+  if (!clearedCookies.length)
+    errors.push(
+      'no cookies found in the consent banner (apps/web/src/lib/analytics.ts): fix the extraction',
+    );
+  if (!privacyTools.length)
+    errors.push(
+      'no tools found in the docs/privacy.md "Per-tool support" table: fix the extraction',
+    );
   const envKeys = new Set(processors.flatMap((p) => p.env ?? []));
   for (const k of viteKeys)
     if (!envKeys.has(k) && !SETTINGS.has(k))
@@ -112,7 +135,10 @@ export function coverageErrors(config, { viteKeys, clearedCookies, privacyTools 
   return errors;
 }
 
-const sha = (doc) => createHash('sha256').update(JSON.stringify(doc.sections)).digest('hex');
+const sha = (doc) =>
+  createHash('sha256')
+    .update(JSON.stringify(versionedText(doc)))
+    .digest('hex');
 
 /** 3. Each document's text hash, pinned per version. */
 export function lockErrors(docs, lock) {
@@ -174,7 +200,9 @@ function pageErrors(config, docs, env) {
     }
     const cookies = join(out, legalPath('cookies'), 'index.html');
     if (existsSync(cookies)) {
-      const text = html(cookies).replaceAll('&amp;', '&').replaceAll('&quot;', '"');
+      // One pass, so "&amp;quot;" stays "&quot;" (no double unescaping).
+      const entities = { amp: '&', quot: '"', '#39': "'" };
+      const text = html(cookies).replace(/&(amp|quot|#39);/g, (_, e) => entities[e]);
       for (const p of config.processors.filter(
         (x) => ['analytics', 'marketing', 'functional'].includes(x.category) && x.env?.length,
       ))
@@ -186,7 +214,10 @@ function pageErrors(config, docs, env) {
   }
 }
 
-/** 4 (web app): footers and sign-up link the pages; checked at runtime by e2e/legal.spec.ts. */
+/**
+ * 4 (web app): footers and sign-up link the pages. Substring checks, a cheap early signal only:
+ * e2e/legal.spec.ts checks the rendered links and their targets at runtime.
+ */
 export function webErrors(files) {
   const errors = [];
   for (const id of DOC_IDS)
@@ -200,6 +231,17 @@ export function webErrors(files) {
   if (!files['pages/shell.tsx'].includes('<LegalLinks'))
     errors.push('apps/web/src/pages/shell.tsx: the app footer has no <LegalLinks />');
   return errors;
+}
+
+/**
+ * The site and the web are separate builds: each place that builds one must pass every browser
+ * tool's env key, or the cookie policy and the running app list different tools.
+ */
+export function buildArgErrors(config, files) {
+  const keys = [...new Set((config.processors ?? []).flatMap((p) => p.env ?? []))];
+  return Object.entries(files).flatMap(([file, text]) =>
+    keys.filter((k) => !text.includes(k)).map((k) => `${file}: does not pass ${k} (docs/legal.md)`),
+  );
 }
 
 /** 5. Marketing mail always carries the unsubscribe link and RFC 8058 headers. */
@@ -235,9 +277,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     readdirSync(join(ROOT, d)).flatMap((f) =>
       statSync(join(ROOT, d, f)).isDirectory() ? walk(join(d, f)) : [join(d, f)],
     );
-  const viteKeys = new Set(
-    walk('apps/web/src').flatMap((f) => read(f).match(/VITE_[A-Z0-9_]+/g) ?? []),
-  );
+  const viteKeys = [
+    ...new Set(walk('apps/web/src').flatMap((f) => read(f).match(/VITE_[A-Z0-9_]+/g) ?? [])),
+  ];
   const clearedCookies = [...web('lib/analytics.ts').matchAll(/\{ name: \/\^(\w+)\/ \}/g)].map(
     (m) => m[1],
   );
@@ -251,12 +293,23 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     .filter((t) => t !== 'Tool')
     .flatMap((t) => t.replace(/\(.*\)/, '').split('/'))
     .map((t) => t.trim());
+  const compose = read('docker-compose.yml');
+  const webAt = compose.indexOf('dockerfile: apps/web/Dockerfile');
+  const siteAt = compose.indexOf('dockerfile: apps/site/Dockerfile');
   const { env, used } = everything(config, components);
   const docs = legalDocs(config, used, plans);
   const errors = [
     ...configErrors(config, components),
     ...coverageErrors(config, { viteKeys, clearedCookies, privacyTools }),
     ...lockErrors(docs, lock),
+    ...buildArgErrors(config, {
+      'apps/web/Dockerfile': read('apps/web/Dockerfile'),
+      'apps/site/Dockerfile': read('apps/site/Dockerfile'),
+      '.github/workflows/release.yml': read('.github/workflows/release.yml'),
+      '.github/workflows/pages.yml': read('.github/workflows/pages.yml'),
+      'docker-compose.yml (web build)': compose.slice(webAt, siteAt),
+      'docker-compose.yml (site build)': compose.slice(siteAt),
+    }),
     ...webErrors({
       'lib/legal.ts': web('lib/legal.ts'),
       'pages/sign-in.tsx': web('pages/sign-in.tsx'),

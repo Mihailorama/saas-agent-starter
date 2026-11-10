@@ -12,7 +12,8 @@ import { AuthLayout } from '@/pages/sign-in';
 export function UnsubscribePage() {
   const { token } = useSearch({ from: '/unsubscribe' });
   const unsubscribe = useMutation({
-    mutationFn: () => ok(client.POST('/api/unsubscribe/', { body: { token } })),
+    mutationFn: () =>
+      ok(client.POST('/api/unsubscribe/', { params: { query: { token } }, body: {} })),
     onSuccess: () => track('marketing_unsubscribed'),
   });
 
@@ -35,7 +36,11 @@ export function UnsubscribePage() {
     >
       {unsubscribe.isError && (
         <p role="alert" className="mb-4 text-sm text-destructive">
-          {unsubscribe.error.message}
+          {unsubscribe.error.message} Sign in and switch off product news in{' '}
+          <Link to="/settings/privacy" className="underline underline-offset-4">
+            Settings, Privacy
+          </Link>
+          .
         </p>
       )}
       <Button

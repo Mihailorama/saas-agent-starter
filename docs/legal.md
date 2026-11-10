@@ -44,22 +44,37 @@ lawyer must review them for every country the product is sold in.
 ## What is generated
 
 Nothing in the policies lists tools by hand. The catalog of what the stack _can_ use is
-`processors` in `config/legal.json` (one entry per tool: component, purpose, data, cookies, and
-for browser tools the `env` keys that turn them on). A page lists a processor when:
+`processors` in `config/legal.json` (one entry per tool: component, purpose, data, cookies, the
+`env` keys that turn a browser tool on, and the component `modes` in which the server uses it).
+A page lists a processor when:
 
-- a browser tool (`env` set): all its `env` keys are set in the site build (the same `VITE_*` the
-  web is built with; the tool only loads then);
-- anything else: its component is installed or connected in
-  `deploy/setup/<SITE_DEPLOY_ENV>.answers.json` (the `pnpm run infra` answers, no secrets), or,
-  without that file, the component is `core`.
+- in the browser: all its `env` keys are set in the site build (the same `VITE_*` the web is
+  built with; the tool only loads then);
+- on the server: its component's mode in `deploy/setup/<SITE_DEPLOY_ENV>.answers.json` (the
+  `pnpm run infra` answers, no secrets) is one of its `modes` (any mode but `skip` for a tool
+  without `env`). PostHog, for example, is listed for the worker's AI events when `analytics` is
+  connected even if the web has no PostHog key. Without an answers file only `core` counts.
 
 The refund policy has a section per pricing model in `config/plans.json` (subscriptions, usage,
 prepaid credits, contracts; docs/billing.md), plus the consumer withdrawal note unless `b2bOnly`.
+The billing page builds its taxes, renewal and cancellation sentence the same way, from the
+organization's provider, plan models and whether the viewer can cancel (`lib/billing-terms.ts`).
+
+The lists of tools in use (the privacy policy's providers table, the cookie table and the consent
+list) follow the deployment and are **not part of the accepted version**: turning a tool on or off
+changes them without asking users again, and `config/legal.lock.json` hashes the rest of the text
+only. If your law or your contracts require notice of a new subprocessor, bump the privacy
+version when you add one.
 
 `pnpm check:legal` keeps the catalog honest: every `VITE_*` key the web reads is a processor's
-`env` or a known setting, every cookie the consent banner clears is in a processor's `cookies`,
-and every tool of the docs/privacy.md per-tool table has a processor. Adding a tracker without
-its catalog entry fails the check.
+`env` or a known setting; every cookie the consent banner clears is in a processor's `cookies`;
+every tool of the docs/privacy.md per-tool table has a processor; every component of
+`config/components.json` has a processor or says `"processor": false` (vault, ops, pii); and every
+place that builds the web or the site (both Dockerfiles, docker-compose.yml, release.yml,
+pages.yml) passes every browser tool's env key, so the site's pages list what the app runs. An
+empty extraction (a renamed heading, a reformatted file) fails too. e2e/legal.spec.ts collects the
+cookies a sign-up sets and fails on one the catalog does not list, and checks the session cookie
+lasts `sessionDays` (which auth.ts uses as the session lifetime).
 
 ## Acceptance
 
@@ -67,14 +82,18 @@ Every path that creates a user (email code, SSO, a sign-up from an invitation li
 `/accept-terms`: the terms and privacy policy (one required checkbox with links), the age (a
 required checkbox unless `b2bOnly`) and product news (optional, unticked). The API stores
 `terms_version`, `privacy_version`, `legal_accepted_at`, `age_confirmed_at`,
-`marketing_opt_in` and `marketing_opt_in_at` on the user (migration 0015, expand only).
+`marketing_opt_in`, `marketing_opt_in_at` and `locale` (mail language, from the browser) on the
+user (migration 0015, expand only). Users from before the migration see the same neutral first
+step ("Before you continue").
 
 Until the stored versions equal the config's, tenant routes answer 403 `legal acceptance
 required` and Better Auth's organization endpoints 403 `LEGAL_ACCEPTANCE_REQUIRED`; the web
-sends the user to `/accept-terms`. A new `version` of the terms or the privacy policy therefore
-asks every user again on their next visit (the marketing choice is kept). Exempt: data-subject
-rights (export, deletion, leaving an organization), API keys (machine credentials whose
-organization accepted through a person), and an operator viewing as a user (read-only).
+sends the user to `/accept-terms`, both on navigation and from any API call that gets this 403
+(a version published while a tab is open). A new `version` of the terms or the privacy policy
+therefore asks every user again (the marketing choice is kept). Exempt: data-subject rights (the
+`/accept-terms` page links Settings, Privacy, which stays open to export and delete; leaving an
+organization), API keys (machine credentials whose organization accepted through a person), and
+an operator viewing as a user (read-only).
 
 The account row exists before acceptance (Better Auth creates it with the first code or the SSO
 callback) but cannot be used until then; accounts that never accept are ordinary users for the
@@ -84,13 +103,22 @@ privacy deletion flow.
 
 `MARKETING_KINDS` in `apps/api/src/email.ts` lists the non-transactional templates
 (`product-update` is the example). Send them only with `sendMarketingEmail(userId, kind, url,
-campaign)` (`apps/api/src/legal.ts`): it sends nothing unless the user opted in, adds the
-unsubscribe link and the RFC 8058 headers, and the worker passes only those two extra headers.
+campaign)` (`apps/api/src/legal.ts`): it sends nothing unless the user opted in and has a verified
+address, writes in the user's language, adds the unsubscribe link and the RFC 8058 headers, and
+the worker checks the opt-in again right before each delivery attempt (an unsubscribe between
+the two wins, retries included) and passes only those two extra headers.
+
 The link opens `/unsubscribe` in the web (one button, no sign-in); mail clients post to
-`/api/unsubscribe` directly. Both flip `marketing_opt_in` off. The token is the user id with an
-HMAC under `BETTER_AUTH_SECRET`, so rotating that secret invalidates old links (they then answer
-400; users can still switch it off in Settings, Privacy). Transactional mail (sign-in codes,
+`/api/unsubscribe` directly. Both flip `marketing_opt_in` off. The endpoint is rate-limited per
+token, not per IP: one-click POSTs arrive from the mail providers' shared addresses. The token
+is the user id with an HMAC under a key derived (HKDF) from `BETTER_AUTH_SECRET`. When you rotate
+that secret, set `BETTER_AUTH_PREVIOUS_SECRET` to the old one until old mails no longer matter;
+an invalid link says so and points to Settings, Privacy. Transactional mail (sign-in codes,
 invitations, export notices) is never affected.
+
+One-click unsubscribe also needs the DKIM signature to cover `List-Unsubscribe` and
+`List-Unsubscribe-Post` (RFC 8058 section 4). Whether it does depends on your mail provider's
+signing (docs/email.md): check a received message's `DKIM-Signature: h=` list.
 
 ## What a lawyer must still review
 

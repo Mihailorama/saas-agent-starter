@@ -6,6 +6,7 @@ import type { FastifyPluginAsyncZod } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { auth } from '../auth.ts';
 import { db } from '../db.ts';
+import { pickLocale } from '../email.ts';
 import { hasAccepted, LEGAL, verifyUnsubscribe } from '../legal.ts';
 import { READ_ONLY } from '../operator-guard.ts';
 import { bearerToken, httpError } from '../tenant.ts';
@@ -109,6 +110,7 @@ export const legalRoutes: FastifyPluginAsyncZod = async (app) => {
           termsVersion: b.terms,
           privacyVersion: b.privacy,
           legalAcceptedAt: now,
+          locale: pickLocale(req.headers['accept-language']),
           ...(!LEGAL.b2bOnly && { ageConfirmedAt: now }),
           ...(b.marketingOptIn !== undefined && {
             marketingOptIn: b.marketingOptIn,
@@ -159,7 +161,15 @@ export const unsubscribeRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     '/',
     {
-      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+      // Per token, not per IP: one-click POSTs come from the mail providers' shared addresses.
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+          keyGenerator: (req: FastifyRequest) =>
+            `unsubscribe:${(req.query as { token?: string }).token ?? req.ip}`,
+        },
+      },
       schema: {
         tags: ['legal'],
         querystring: z.object({ token: z.string().max(200).optional() }),

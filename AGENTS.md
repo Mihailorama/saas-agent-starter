@@ -511,7 +511,8 @@ Details: docs/legal.md. Templates for a lawyer to review: never claim compliance
   document `version` + its `config/legal.lock.json` line (`pnpm check:legal` prints it). A new terms
   or privacy version makes every user accept again; never edit a hash without the version.
 - A new tracker, SDK or service that receives personal data gets a `processors` entry (browser tools
-  with their `env` keys); the pages list it only where it is in use. Never hand-write tool lists.
+  with their `env` keys and server `modes`); a new component gets one or `"processor": false`. The
+  pages list it only where it is in use. Never hand-write tool lists.
 - Every path that creates a user ends in `/accept-terms`; never let a tenant route skip
   `requireRole`'s acceptance check (data-subject rights are the only exemption).
 - Non-transactional mail is a `MARKETING_KINDS` template sent with `sendMarketingEmail` (opt-in,

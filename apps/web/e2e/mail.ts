@@ -46,7 +46,7 @@ export async function signIn(page: Page, email: string) {
 
 /** Sign-up's last step (docs/legal.md): accept the terms and confirm the age. */
 export async function acceptTerms(page: Page) {
-  await expect(page.getByRole('heading', { name: 'Before you start' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Before you continue' })).toBeVisible();
   await page.getByRole('checkbox', { name: /I agree to the Terms of service/ }).check();
   await page.getByRole('checkbox', { name: /years old/ }).check();
   await page.getByRole('button', { name: 'Accept and continue' }).click();

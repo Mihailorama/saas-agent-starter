@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { inUse, legalDocs, pricingModels } from '../apps/site/src/legal.ts';
-import { configErrors, coverageErrors, lockErrors, webErrors } from './check-legal.mjs';
+import { billingTerms } from '../apps/web/src/lib/billing-terms.ts';
+import {
+  buildArgErrors,
+  configErrors,
+  coverageErrors,
+  lockErrors,
+  webErrors,
+} from './check-legal.mjs';
 
 const json = (f) => JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
 const config = json('config/legal.json');
@@ -17,6 +24,25 @@ test('the committed config is complete; example values only while it is a templa
   assert.ok(real.some((e) => e.startsWith('company.email: still an example value')));
   const broken = { ...config, processors: [{ ...posthog, component: 'nope' }] };
   assert.match(configErrors(broken, components).join(), /component nope/);
+  const placeholder = {
+    ...config,
+    template: false,
+    company: { ...config.company, vatId: 'XX000000000' },
+  };
+  assert.ok(configErrors(placeholder, components).includes('company.vatId: still a placeholder'));
+  // A component without a processor must say it has none.
+  const uncovered = [...components, { id: 'newthing', tier: 'optional' }];
+  assert.match(configErrors(config, uncovered).join(), /component newthing: add a processor/);
+  assert.deepEqual(configErrors(config, [...components, { id: 'newthing', processor: false }]), []);
+});
+
+test('every place that builds the site or the web passes every browser tool', () => {
+  const all = config.processors.flatMap((p) => p.env ?? []).join(' ');
+  assert.deepEqual(buildArgErrors(config, { a: all }), []);
+  assert.match(
+    buildArgErrors(config, { 'pages.yml': all.replace('VITE_GA4_ID', '') }).join(),
+    /pages.yml: does not pass VITE_GA4_ID/,
+  );
 });
 
 test('a tool the web reads from env, a cleared cookie or a data-map tool must be catalogued', () => {
@@ -32,11 +58,23 @@ test('a tool the web reads from env, a cleared cookie or a data-map tool must be
     privacyTools: ['Hotjar'],
   });
   assert.equal(errors.length, 3);
+  // A broken extraction is an error, never "nothing to check".
+  assert.equal(
+    coverageErrors(config, { viteKeys: [], clearedCookies: [], privacyTools: [] }).length,
+    3,
+  );
 });
 
 test('a browser tool is in use with its env; a server tool with its component', () => {
   assert.equal(inUse(posthog, components, {}), false);
   assert.equal(inUse(posthog, components, { VITE_POSTHOG_KEY: 'phc_x' }), true);
+  // Server-side use counts too: the worker's PostHog events with analytics connected.
+  const connected = { components: { analytics: { mode: 'connect' } } };
+  assert.equal(inUse(posthog, components, {}, connected), true);
+  const umami = config.processors.find((p) => p.id === 'umami');
+  assert.equal(inUse(umami, components, {}, connected), false);
+  const ga4 = config.processors.find((p) => p.id === 'ga4');
+  assert.equal(inUse(ga4, components, {}, connected), false); // browser only
   assert.equal(inUse(twenty, components, {}), false); // optional, no answers file
   assert.equal(inUse(twenty, components, {}, { components: { crm: { mode: 'connect' } } }), true);
   assert.equal(inUse(twenty, components, {}, { components: { crm: { mode: 'skip' } } }), false);
@@ -79,4 +117,30 @@ test('the web footers and sign-up must link the legal pages', () => {
   };
   assert.deepEqual(webErrors(files), []);
   assert.equal(webErrors({ ...files, 'pages/shell.tsx': '' }).length, 1);
+});
+
+test('the billing page states only the terms that apply to this organization', () => {
+  const free = {
+    provider: 'stripe',
+    planId: 'free',
+    status: null,
+    canManage: true,
+    selfService: { portal: true, cancel: true },
+    plans: [
+      { id: 'free', models: [], checkout: false },
+      { id: 'pro', models: ['flat'], checkout: true },
+    ],
+  };
+  const tax = 'TAX';
+  assert.deepEqual(billingTerms(free, tax), [
+    tax,
+    'Paid plans renew automatically at the end of each billing period until cancelled.',
+    'After you subscribe, you can cancel any time on this page.',
+  ]);
+  const member = { ...free, planId: 'pro', status: 'active', canManage: false };
+  assert.match(billingTerms(member, tax).join(), /An organization admin can cancel/);
+  const contract = { ...free, provider: 'manual', planId: 'pro', status: 'active' };
+  const terms = billingTerms(contract, tax).join();
+  assert.match(terms, /follows your contract/);
+  assert.doesNotMatch(terms, /TAX|renew automatically|Cancel any time/);
 });

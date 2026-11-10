@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 from urllib.parse import parse_qs, unquote, urlsplit
 
+import asyncpg
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -34,6 +35,8 @@ class SendEmail:
     text: str
     # Marketing mail: List-Unsubscribe and List-Unsubscribe-Post (RFC 8058, docs/legal.md).
     headers: dict[str, str] = field(default_factory=dict[str, str])
+    # Marketing mail: the recipient's user id; their opt-in is checked again before delivery.
+    userId: str = ""
 
 
 # The only extra headers the API may set; anything else is dropped.
@@ -102,12 +105,31 @@ def deliver(smtp: Smtp, msg: EmailMessage) -> None:
         client.send_message(msg)
 
 
+async def marketing_allowed(user_id: str) -> bool:
+    """The user still opts in to marketing mail and has a verified address (docs/legal.md)."""
+    # ponytail: one connection per marketing mail; a shared pool if campaigns get large.
+    conn = await asyncpg.connect(settings.DATABASE_URL)
+    try:
+        row = await conn.fetchrow(
+            'select marketing_opt_in, email_verified from "user" where id = $1', user_id
+        )
+    finally:
+        await conn.close()
+    return bool(row and row["marketing_opt_in"] and row["email_verified"])
+
+
 @activity.defn(name="send_email")
 async def send_email(email: SendEmail) -> str:
-    """One delivery attempt. Returns the Message-ID. A retry after a lost reply can send twice."""
+    """One delivery attempt. Returns the Message-ID, or "" for a marketing mail the user no
+    longer wants. A retry after a lost reply can send twice."""
     info = activity.info()
     if not settings.SMTP_URL or not settings.MAIL_FROM:
         raise ApplicationError("SMTP_URL and MAIL_FROM must be set", non_retryable=True)
+    if email.userId and not await marketing_allowed(email.userId):
+        log.info(
+            "email skipped, no marketing opt-in: kind=%s workflow=%s", email.kind, info.workflow_id
+        )
+        return ""
     msg = build_message(email, settings.MAIL_FROM)
     try:
         await asyncio.to_thread(deliver, parse_smtp_url(settings.SMTP_URL), msg)

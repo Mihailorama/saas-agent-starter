@@ -7,8 +7,14 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.ts';
 import { db, pool } from '../src/db.ts';
 import { MARKETING_KINDS, renderEmail, TRANSACTIONAL_KINDS } from '../src/email.ts';
-import { allowedOrigins } from '../src/env.ts';
-import { LEGAL, sendMarketingEmail, unsubscribeLinks, unsubscribeToken } from '../src/legal.ts';
+import { allowedOrigins, env } from '../src/env.ts';
+import {
+  LEGAL,
+  sendMarketingEmail,
+  unsubscribeLinks,
+  unsubscribeToken,
+  verifyUnsubscribe,
+} from '../src/legal.ts';
 import { closeTemporal } from '../src/temporal.ts';
 import { acceptLegal, signUp } from './sign-in.ts';
 
@@ -67,11 +73,26 @@ describe('acceptance at sign-up', () => {
     expect((await accept(cookie, {})).statusCode).toBe(400);
     expect((await row(id)).termsVersion).toBeNull();
 
-    const ok = await accept(cookie, { ageConfirmed: true, marketingOptIn: true });
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/api/legal/accept',
+      remoteAddress: ip(),
+      headers: { origin, cookie, 'accept-language': 'ru-RU,ru;q=0.9' },
+      payload: {
+        terms: LEGAL.terms,
+        privacy: LEGAL.privacy,
+        ageConfirmed: true,
+        marketingOptIn: true,
+      },
+    });
     expect(ok.statusCode, ok.body).toBe(200);
     expect(ok.json()).toMatchObject({ required: false, firstTime: false, marketingOptIn: true });
     const r = await row(id);
-    expect(r).toMatchObject({ termsVersion: LEGAL.terms, privacyVersion: LEGAL.privacy });
+    expect(r).toMatchObject({
+      termsVersion: LEGAL.terms,
+      privacyVersion: LEGAL.privacy,
+      locale: 'ru',
+    });
     expect(r.legalAcceptedAt).toBeInstanceOf(Date);
     expect(r.ageConfirmedAt).toBeInstanceOf(Date);
     expect(r.marketingOptInAt).toBeInstanceOf(Date);
@@ -149,11 +170,48 @@ describe('marketing consent', () => {
     expect((await call('POST', '/api/unsubscribe', undefined, {})).statusCode).toBe(400);
   });
 
+  it('limits unsubscribe per token, not per IP; a rotated secret still verifies', async () => {
+    const one = unsubscribeToken((await signUp(app)).id);
+    const two = unsubscribeToken((await signUp(app)).id);
+    const post = (token: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/unsubscribe?token=${encodeURIComponent(token)}`,
+        remoteAddress: '10.9.9.9', // one shared mail-provider address
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        payload: 'List-Unsubscribe=One-Click',
+      });
+    const codes = [];
+    for (let i = 0; i < 11; i++) codes.push((await post(one)).statusCode);
+    expect(codes.slice(0, 10).every((c) => c === 200)).toBe(true);
+    expect(codes[10]).toBe(429);
+    expect((await post(two)).statusCode).toBe(200);
+
+    // Rotation: links signed before BETTER_AUTH_SECRET changed still work with the previous one.
+    const before = env.BETTER_AUTH_SECRET;
+    const old = unsubscribeToken((await signUp(app)).id);
+    try {
+      env.BETTER_AUTH_SECRET = 'x'.repeat(40);
+      expect(verifyUnsubscribe(old)).toBeUndefined();
+      env.BETTER_AUTH_PREVIOUS_SECRET = before;
+      expect(verifyUnsubscribe(old)).toBe(old.split('.')[0]);
+    } finally {
+      env.BETTER_AUTH_SECRET = before;
+      env.BETTER_AUTH_PREVIOUS_SECRET = undefined;
+    }
+  });
+
   it('marketing mail goes only to opted-in users, with the unsubscribe link and headers', async () => {
     const out = await signUp(app);
     expect(await sendMarketingEmail(out.id, 'product-update', 'https://example.com', 'c1')).toBe(
       false,
     );
+    const unverified = await signUp(app);
+    await acceptLegal(app, unverified.cookie, true);
+    await db.update(user).set({ emailVerified: false }).where(eq(user.id, unverified.id));
+    expect(
+      await sendMarketingEmail(unverified.id, 'product-update', 'https://example.com', 'c1'),
+    ).toBe(false);
     const inn = await signUp(app);
     await acceptLegal(app, inn.cookie, true);
     expect(await sendMarketingEmail(inn.id, 'product-update', 'https://example.com', 'c1')).toBe(
@@ -191,7 +249,7 @@ describe('email templates', () => {
       await expect(renderEmail(kind, 'en', 'https://example.com')).rejects.toThrow();
       for (const locale of ['en', 'ru'] as const) {
         const mail = await renderEmail(kind, locale, 'https://example.com', {}, links);
-        expect(mail.html).toContain(links.page.replace('&', '&amp;'));
+        expect(mail.html).toContain(links.page.replaceAll('&', '&amp;'));
         expect(mail.text).toContain(links.page);
         expect(mail.headers).toEqual({
           'List-Unsubscribe': `<${links.oneClick}>`,

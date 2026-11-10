@@ -52,7 +52,7 @@ test('signed-in pages', async ({ page }) => {
   await expectAccessible(page, '/sign-in (wrong code)');
   await page.getByLabel('Code', { exact: true }).fill(code);
 
-  await expect(page.getByRole('heading', { name: 'Before you start' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Before you continue' })).toBeVisible();
   await expectAccessibleInBothThemes(page, '/accept-terms');
   await acceptTerms(page);
 

@@ -128,3 +128,8 @@ the `List-Unsubscribe` / `List-Unsubscribe-Post` headers (RFC 8058, one-click), 
 Yahoo require from bulk senders. Send it only through `sendMarketingEmail` in
 `apps/api/src/legal.ts`; `pnpm check:legal` fails if a marketing template lacks any of it. Details:
 docs/legal.md.
+
+The one-click POST only counts when the message's DKIM signature covers both headers (RFC 8058
+section 4). We do not sign: the SMTP provider does. Check that its signing includes
+`List-Unsubscribe` and `List-Unsubscribe-Post` (the `h=` list of `DKIM-Signature` on a received
+message); most providers that advertise RFC 8058 support do, some need a setting.

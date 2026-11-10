@@ -16,8 +16,10 @@ export type Processor = {
   category: 'necessary' | 'service' | 'functional' | 'analytics' | 'marketing';
   purpose: string;
   data: string;
-  /** Build env keys that turn the tool on in the browser (all must be set); none = by component. */
+  /** Build env keys that turn the tool on in the browser (all must be set). */
   env?: string[];
+  /** Component modes (deploy answers) in which the server uses it too; without `env`: any but skip. */
+  modes?: string[];
   cookies?: Cookie[];
 };
 export type LegalConfig = {
@@ -36,6 +38,8 @@ export type LegalConfig = {
   governingLaw: string;
   jurisdiction: string;
   age: { minimum: number; b2bOnly: boolean };
+  /** Session lifetime in days (the API's auth config reads it too). */
+  sessionDays: number;
   documents: Record<DocId, { title: string; version: string; effective: string }>;
   refunds: { withdrawalDays: number; creditsRefundDays: number };
   billing: { taxNote: string };
@@ -50,6 +54,8 @@ export type Section = {
   paragraphs?: string[];
   items?: string[];
   table?: { columns: string[]; rows: string[][] };
+  /** Follows the tools in use, outside the accepted version (not in config/legal.lock.json). */
+  generated?: boolean;
 };
 export type LegalDoc = {
   id: DocId;
@@ -64,8 +70,8 @@ export const legalPath = (id: DocId) => `/legal/${id}/`;
 
 /**
  * Whether a processor is in use: a browser tool when its env keys are set at build time (it only
- * loads then); anything else when its component is installed or connected in the deployment's
- * answers file, or, without one, when the component is core.
+ * loads then); on the server when its component's mode in the deployment's answers file is one of
+ * `modes` (any but skip when it has no `env`), or, without an answers file, when it is core.
  */
 export function inUse(
   p: Processor,
@@ -73,12 +79,18 @@ export function inUse(
   env: Record<string, string | undefined>,
   answers?: Answers,
 ): boolean {
-  if (p.env?.length) return p.env.every((k) => Boolean(env[k]));
+  if (p.env?.length && p.env.every((k) => Boolean(env[k]))) return true;
   const c = components.find((x) => x.id === p.component);
   if (!c) return false;
   const mode = answers?.components?.[c.id]?.mode;
-  return mode ? mode !== 'skip' : c.tier === 'core';
+  if (p.env?.length && !p.modes) return false; // browser only
+  if (!mode) return c.tier === 'core' && !p.modes;
+  return p.modes ? p.modes.includes(mode) : mode !== 'skip';
 }
+
+/** The text a lock hash covers: everything but the generated lists of tools in use. */
+export const versionedText = (d: LegalDoc) =>
+  d.sections.map((s) => (s.generated ? { ...s, table: undefined, items: undefined } : s));
 
 /** Pricing models the plans use (docs/billing.md): a price without `model` is flat. */
 export function pricingModels(plans: Plans): Set<string> {
@@ -142,8 +154,9 @@ export function legalDocs(
     {
       heading: 'Who processes your data',
       paragraphs: [
-        'The service providers below process personal data on our behalf. This list is generated from the tools this deployment actually uses.',
+        'The service providers below process personal data on our behalf. This list follows the tools this deployment uses and can change without a new version of this policy.',
       ],
+      generated: true,
       table: {
         columns: ['Provider', 'Purpose', 'Data'],
         rows: processors
@@ -307,8 +320,9 @@ export function legalDocs(
       heading: 'What we use',
       paragraphs: [
         'Cookies and similar storage are small pieces of data a site keeps in your browser. Strictly necessary ones run always. Everything else runs only after you agree, and you can change your choice any time with Cookie settings at the bottom of the page.',
-        'This list is generated from the tools this deployment actually uses.',
+        'This list follows the tools this deployment uses and can change without a new version of this policy.',
       ],
+      generated: true,
       table: {
         columns: ['Tool', 'Cookie', 'Purpose', 'Duration', 'Needs consent'],
         rows: cookieTools.flatMap((p) =>
@@ -316,7 +330,7 @@ export function legalDocs(
             p.name,
             k.name,
             k.purpose,
-            k.duration,
+            k.duration.replace('{sessionDays}', String(config.sessionDays)),
             p.category === 'necessary' ? 'No' : 'Yes',
           ]),
         ),
@@ -329,6 +343,7 @@ export function legalDocs(
           ? 'These tools load only after you agree, or not at all where they are cookieless and the law allows it:'
           : 'This deployment uses no analytics, marketing or third-party tools that need consent.',
       ],
+      generated: true,
       items: consentTools.map((p) => `${p.name}: ${p.purpose}`),
     },
   ]);
