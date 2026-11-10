@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { expectAccessible, expectAccessibleInBothThemes } from './axe';
-import { requestCode } from './mail';
+import { acceptTerms, requestCode } from './mail';
 
 // Every page is scanned in two themes on a dev server: far beyond the 30s default.
 test.describe.configure({ timeout: 240_000 });
@@ -36,7 +36,7 @@ test('UI gallery and reference screens', async ({ page }) => {
 });
 
 test('public pages', async ({ page }) => {
-  for (const path of ['/sign-in', '/ai-transparency']) {
+  for (const path of ['/sign-in', '/ai-transparency', '/unsubscribe']) {
     await page.goto(path);
     await expect(page.getByRole('heading').first()).toBeVisible();
     await expectAccessibleInBothThemes(page, path);
@@ -51,6 +51,10 @@ test('signed-in pages', async ({ page }) => {
   await expect(page.getByRole('alert')).toBeVisible();
   await expectAccessible(page, '/sign-in (wrong code)');
   await page.getByLabel('Code', { exact: true }).fill(code);
+
+  await expect(page.getByRole('heading', { name: 'Before you start' })).toBeVisible();
+  await expectAccessibleInBothThemes(page, '/accept-terms');
+  await acceptTerms(page);
 
   await expect(page.getByLabel('Organization name')).toBeVisible();
   await expectAccessibleInBothThemes(page, 'create organization');

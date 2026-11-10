@@ -18,12 +18,15 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { devRoutes } from '@/dev/routes';
 import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
+import { legalQuery } from '@/lib/legal';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
+import { AcceptTermsPage } from '@/pages/accept-terms';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
 import { SignInPage, safeRedirect } from '@/pages/sign-in';
 import { TwoFactorPage } from '@/pages/two-factor';
+import { UnsubscribePage } from '@/pages/unsubscribe';
 
 // App pages load on first visit (own chunks: data table, forms, zod); the bundle budget in
 // lighthouserc.cjs keeps the entry chunk from regrowing.
@@ -59,10 +62,42 @@ const twoFactorRoute = createRoute({
 });
 
 /** Session required; signed-out visitors come back here after signing in. */
-const requireSession = async ({ location }: { location: { href: string } }) => {
+const requireSignedIn = async ({ location }: { location: { href: string } }) => {
   const { data } = await authClient.getSession();
   if (!data) throw redirect({ to: '/sign-in', search: { redirect: location.href } });
+  return data;
 };
+
+/** Session and the current terms accepted (docs/legal.md): new and re-asked users accept first.
+ * The API enforces it too; if the check cannot load, the page loads and the API decides. */
+const requireSession = async ({ location }: { location: { href: string } }) => {
+  const session = await requireSignedIn({ location });
+  const legal = await queryClient
+    .ensureQueryData(legalQuery(session.user.id))
+    .catch(() => undefined);
+  if (legal?.required) throw redirect({ to: '/accept-terms', search: { redirect: location.href } });
+};
+
+// Sign-up's acceptance step and re-acceptance of new versions.
+const acceptTermsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/accept-terms',
+  validateSearch: (s: Record<string, unknown>): { redirect?: string } => ({
+    redirect: safeRedirect(s.redirect),
+  }),
+  beforeLoad: requireSignedIn,
+  component: AcceptTermsPage,
+});
+
+// Public: the unsubscribe link of marketing mail carries its own token.
+const unsubscribeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/unsubscribe',
+  validateSearch: (s: Record<string, unknown>): { token?: string } => ({
+    token: typeof s.token === 'string' ? s.token : undefined,
+  }),
+  component: UnsubscribePage,
+});
 
 // Outside the shell: an invitee without an organization of their own must see it too.
 const acceptInvitationRoute = createRoute({
@@ -203,6 +238,8 @@ const router = createRouter({
     signInRoute,
     twoFactorRoute,
     acceptInvitationRoute,
+    acceptTermsRoute,
+    unsubscribeRoute,
     aiTransparencyRoute,
     adminRoute.addChildren([adminOrgsRoute, adminOrgRoute, adminUsersRoute, adminUserRoute]),
     appRoute.addChildren([

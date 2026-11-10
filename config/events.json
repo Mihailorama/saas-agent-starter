@@ -217,6 +217,21 @@
       "props": {
         "kind": "string"
       }
+    },
+    "legal_accepted": {
+      "description": "The user accepted the current terms of service and privacy policy (sign-up's last step, or a new version). `reaccept` is true for a new version, `marketing` whether they opted in to product news (docs/legal.md).",
+      "pii": false,
+      "props": { "reaccept": "boolean", "marketing": "boolean" }
+    },
+    "marketing_consent_set": {
+      "description": "The user switched product news by email on or off in Settings, Privacy (docs/legal.md).",
+      "pii": false,
+      "props": { "opt_in": "boolean" }
+    },
+    "marketing_unsubscribed": {
+      "description": "Someone unsubscribed from product news with the link in a marketing email (docs/legal.md).",
+      "pii": false,
+      "props": {}
     }
   }
 }

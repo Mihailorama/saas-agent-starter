@@ -20,6 +20,8 @@ ARG VITE_CHATWOOT_BASE_URL= VITE_CHATWOOT_WEBSITE_TOKEN=
 ARG VITE_TELEGRAM_SUPPORT_BOT=
 # "Talk to us" booking link (Cal.diy / Cal.com, docs/crm.md); empty = no entry; flag `booking`.
 ARG VITE_BOOKING_ORIGIN= VITE_BOOKING_LINK=
+# Public site with the legal pages (apps/site, docs/legal.md), linked from sign-up and the app.
+ARG VITE_SITE_URL=
 # Feature flag overrides (docs/feature-flags.md), comma-separated names.
 ARG VITE_FLAGS_ON= VITE_FLAGS_OFF=
 RUN pnpm --filter web build

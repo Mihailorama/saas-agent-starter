@@ -30,6 +30,9 @@ docker compose up -d site     # nginx container on :8090 (SITE_PORT)
 Astro 7 refuses to run on Node older than 22.23.4 (a check in its CLI), newer than the 22.18
 the rest of the repo needs; CI and the `node:22-alpine` image already use the latest 22.x.
 
+- **Legal pages** `/legal/{privacy,terms,refunds,cookies,imprint}/`, generated from
+  `config/legal.json` and what the deployment uses, linked from every page's footer (docs/legal.md).
+  Not hand-written: change the config, not the page.
 - **Settings** in `src/site.ts`: name, tagline, description, repository, organization data for
   schema.org. URLs come from env at build time: `SITE_URL` (canonical URL; a path in it, such as
   `https://owner.github.io/repo`, becomes Astro's `base`, so build links with `path()`/`abs()` from

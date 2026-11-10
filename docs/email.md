@@ -111,10 +111,20 @@ going live.
 
 ## Templates and languages
 
-`apps/api/src/email.ts`: one layout, three mails, strings per locale in a small map (`en`,
+`apps/api/src/email.ts`: one layout, four account mails and one marketing example, strings per locale in a small map (`en`,
 `ru`). The locale is the best match of the request's `Accept-Language` (the browser sends it),
 English otherwise. Add a language by adding its block to `COPY`. These strings move to
 i18next when the web gets an i18n framework. Templates are `createElement` calls, not JSX: the
 API runs `.ts` files through Node's type stripping, which has no JSX transform. Rendering uses
 `@react-email/render` only; the components packages of React Email are deprecated and the
 `react-email` package brings its preview CLI along.
+
+## Marketing mail
+
+Everything above is account (transactional) mail and goes to every user. Non-transactional mail
+(product news, offers) is separate: its templates are listed in `MARKETING_KINDS`, it goes only to
+users who opted in (`user.marketing_opt_in`), and every message carries an unsubscribe link plus
+the `List-Unsubscribe` / `List-Unsubscribe-Post` headers (RFC 8058, one-click), which Gmail and
+Yahoo require from bulk senders. Send it only through `sendMarketingEmail` in
+`apps/api/src/legal.ts`; `pnpm check:legal` fails if a marketing template lacks any of it. Details:
+docs/legal.md.

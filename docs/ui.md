@@ -55,6 +55,20 @@ lighthouse CI job checks that the build contains no gallery code).
 5. **Run the checks** below; with the `impeccable` skill installed, run
    `/impeccable critique <screen>` and `/impeccable audit <screen>` on new or changed screens.
 
+## Dark patterns
+
+Never trick or pressure people. In particular:
+
+- No hidden fees: price, billing period, taxes and the renewal date are on screen before paying
+  (billing page; the taxes note is `billing.taxNote` in `config/legal.json`).
+- Cancelling takes no more steps than subscribing, and its button is as visible as the ones next
+  to it. The confirmation states the facts (until when the plan runs) and offers "Keep plan" and
+  "Cancel plan": no confirm-shaming ("No, I like paying more"), no guilt, no fake urgency.
+- Consent is never pre-ticked or bundled: terms, age and product news are separate checkboxes,
+  product news is optional, and saying no has the same weight as saying yes (cookie banner too).
+- No fake scarcity, countdowns, reviews or social proof, no disguised ads, no "trick questions"
+  with double negatives, no making account deletion or data export harder than sign-up.
+
 ## The checks
 
 | Check                                                                                                                                             | Where                         | Blocks the PR?                       |

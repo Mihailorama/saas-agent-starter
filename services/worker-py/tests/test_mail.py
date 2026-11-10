@@ -10,7 +10,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from worker import settings
-from worker.mail import SendEmail, Smtp, parse_smtp_url, send_email
+from worker.mail import SendEmail, Smtp, build_message, parse_smtp_url, send_email
 from worker.workflows import SendEmailWorkflow
 
 MAILPIT_URL = os.environ.get("MAILPIT_URL", "http://localhost:8025")
@@ -25,6 +25,27 @@ def test_smtp_url_schemes() -> None:
     assert parse_smtp_url("smtp://mailpit:1025?tls=none") == Smtp("mailpit", 1025, "none", "", "")
     with pytest.raises(ValueError):
         parse_smtp_url("http://mail.example.com")
+
+
+def test_only_unsubscribe_headers_pass() -> None:
+    token = "u1." + "x" * 43  # as long as a real token
+    url = f"<https://app.example.com/api/unsubscribe?token={token}>"
+    headers = {
+        "List-Unsubscribe": url,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        "Bcc": "someone@example.com",  # not ours to set
+    }
+    msg = build_message(
+        SendEmail("product-update", "a@example.com", "S", "<p>x</p>", "x", headers), "n@example.com"
+    )
+    assert msg["List-Unsubscribe"] == url
+    assert f"List-Unsubscribe: {url}\n" in msg.as_string()  # one line, not RFC 2047 words
+    assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    assert msg["Bcc"] is None
+    plain = build_message(
+        SendEmail("invitation", "a@example.com", "S", "<p>x</p>", "x"), "n@example.com"
+    )
+    assert plain["List-Unsubscribe"] is None
 
 
 async def test_workflow_delivers_html_and_text() -> None:

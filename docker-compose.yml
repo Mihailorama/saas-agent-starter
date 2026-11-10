@@ -464,6 +464,8 @@ services:
         # "Talk to us" booking (Cal.diy / Cal.com, flag `booking`); empty = no entry (docs/crm.md)
         VITE_BOOKING_ORIGIN: ${VITE_BOOKING_ORIGIN:-}
         VITE_BOOKING_LINK: ${VITE_BOOKING_LINK:-}
+        # the public site with the legal pages (docs/legal.md)
+        VITE_SITE_URL: ${VITE_SITE_URL:-http://localhost:${SITE_PORT:-8090}}
     environment:
       S3_PUBLIC_ORIGIN: "http://localhost:${S3_PORT:-8333}"
       SENTRY_PUBLIC_ORIGIN: ${WEB_SENTRY_ORIGIN:-} # CSP connect-src, e.g. http://localhost:8000
@@ -639,6 +641,17 @@ services:
         VITE_UMAMI_SCRIPT_URL: ${VITE_UMAMI_SCRIPT_URL:-}
         VITE_UMAMI_WEBSITE_ID: ${VITE_UMAMI_WEBSITE_ID:-}
         VITE_GA4_ID: ${VITE_GA4_ID:-}
+        # the web's other tools: the legal pages list what they turn on (docs/legal.md)
+        VITE_YM_ID: ${VITE_YM_ID:-}
+        VITE_LANGFUSE_PUBLIC_KEY: ${VITE_LANGFUSE_PUBLIC_KEY:-}
+        VITE_LANGFUSE_HOST: ${VITE_LANGFUSE_HOST:-}
+        VITE_FORMBRICKS_WORKSPACE_ID: ${VITE_FORMBRICKS_WORKSPACE_ID:-}
+        VITE_FORMBRICKS_API_HOST: ${VITE_FORMBRICKS_API_HOST:-}
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_CHATWOOT_BASE_URL: ${VITE_CHATWOOT_BASE_URL:-}
+        VITE_CHATWOOT_WEBSITE_TOKEN: ${VITE_CHATWOOT_WEBSITE_TOKEN:-}
+        VITE_TELEGRAM_SUPPORT_BOT: ${VITE_TELEGRAM_SUPPORT_BOT:-}
+        SITE_DEPLOY_ENV: ${SITE_DEPLOY_ENV:-production}
         VITE_BOOKING_ORIGIN: ${VITE_BOOKING_ORIGIN:-}
         VITE_BOOKING_LINK: ${VITE_BOOKING_LINK:-}
         VITE_FLAGS_ON: ${VITE_FLAGS_ON:-} # the site decides flags at build time

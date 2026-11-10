@@ -10,12 +10,19 @@ COPY apps/web/src/index.css apps/web/src/
 COPY apps/web/src/lib/analytics.ts apps/web/src/lib/booking.ts apps/web/src/lib/
 COPY apps/site apps/site
 COPY config config
+# The deployment's component choices (no secrets): which processors the legal pages list.
+COPY deploy/setup deploy/setup
 ENV ASTRO_TELEMETRY_DISABLED=1
 # Canonical origin, app link and optional share image / IndexNow key (docs/marketing.md).
 ARG SITE_URL= SITE_APP_URL= SITE_OG_IMAGE= SITE_TWITTER= SITE_NOINDEX= INDEXNOW_KEY=
-# Same analytics sinks as the web app; all empty = no analytics requests.
+# Same analytics sinks as the web app; all empty = no analytics requests. Pass the web's values:
+# the cookie and privacy pages list the tools these turn on (docs/legal.md).
 ARG VITE_RELEASE=dev VITE_POSTHOG_KEY= VITE_POSTHOG_HOST= VITE_UMAMI_SCRIPT_URL= \
-    VITE_UMAMI_WEBSITE_ID= VITE_GA4_ID=
+    VITE_UMAMI_WEBSITE_ID= VITE_GA4_ID= VITE_YM_ID= VITE_LANGFUSE_PUBLIC_KEY= VITE_LANGFUSE_HOST= \
+    VITE_FORMBRICKS_WORKSPACE_ID= VITE_FORMBRICKS_API_HOST= VITE_SENTRY_DSN= \
+    VITE_CHATWOOT_BASE_URL= VITE_CHATWOOT_WEBSITE_TOKEN= VITE_TELEGRAM_SUPPORT_BOT=
+# deploy/setup/<SITE_DEPLOY_ENV>.answers.json: installed/connected components (docs/legal.md).
+ARG SITE_DEPLOY_ENV=production
 # "Book a demo" (Cal.diy / Cal.com, docs/crm.md): shown with both set and the `booking` flag on
 # (VITE_FLAGS_ON=booking; the site decides flags at build time, apps/site/src/flags.ts).
 ARG VITE_BOOKING_ORIGIN= VITE_BOOKING_LINK= VITE_FLAGS_ON= VITE_FLAGS_OFF=

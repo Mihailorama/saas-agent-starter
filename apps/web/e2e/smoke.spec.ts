@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
-import { requestCode, signIn } from './mail';
+import { acceptTerms, requestCode, signIn } from './mail';
 
 async function signUp(page: Page, email: string) {
   await signIn(page, email);
+  await acceptTerms(page);
   await expect(page.getByLabel('Organization name')).toBeVisible();
 }
 
@@ -91,6 +92,7 @@ test('sign-in code: a wrong code shows an error, resend waits for the cooldown',
   await page.getByLabel('Code', { exact: true }).fill(code === '000000' ? '111111' : '000000');
   await expect(page.getByRole('alert')).toHaveText(/not right/);
   await page.getByLabel('Code', { exact: true }).fill(code);
+  await acceptTerms(page);
   await expect(page.getByLabel('Organization name')).toBeVisible();
 });
 

@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
 import { client, formatDate, ok } from '@/lib/api';
+import { legalUrl, taxNote } from '@/lib/legal';
 import { cn } from '@/lib/utils';
 
 const money = (amount: number | string, currency: string) =>
@@ -211,7 +212,7 @@ export function BillingPage() {
                 </Button>
               )}
               {b.selfService.cancel && !b.cancelAtPeriodEnd && (
-                <Button variant="ghost" onClick={() => setConfirmCancel(true)}>
+                <Button variant="outline" onClick={() => setConfirmCancel(true)}>
                   Cancel plan
                 </Button>
               )}
@@ -317,6 +318,14 @@ export function BillingPage() {
           </Card>
         ))}
       </div>
+      {/* No hidden fees (docs/ui.md "Dark patterns"): taxes and renewal terms next to the prices. */}
+      <p className="text-sm text-muted-foreground">
+        {taxNote} Paid plans renew automatically at the end of each billing period until you cancel.
+        Cancel any time on this page: the plan stays active until the period ends.{' '}
+        <a href={legalUrl('refunds')} target="_blank" rel="noopener" className="underline">
+          Refund and cancellation policy
+        </a>
+      </p>
 
       <Dialog open={confirmCancel} onOpenChange={setConfirmCancel}>
         <DialogContent>

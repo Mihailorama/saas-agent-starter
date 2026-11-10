@@ -298,6 +298,9 @@ async def test_user_export_zip(
     assert twenty == {"people": [{"id": "tp-1"}], "notes": [TWENTY_NOTES["tn-1"]]}
     user = json.loads(z.read("db/user.json"))
     assert user[0]["email"] == f"{p['uid']}@example.com"
+    # Legal acceptance and marketing consent are part of the export (docs/legal.md).
+    assert user[0]["marketing_opt_in"] is False
+    assert {"terms_version", "legal_accepted_at", "marketing_opt_in_at"} <= user[0].keys()
     # Secrets never leave the database, not even towards their owner.
     assert "password" not in json.loads(z.read("db/account.json"))[0]
     assert "token" not in json.loads(z.read("db/session.json"))[0]

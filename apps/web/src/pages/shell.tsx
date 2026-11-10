@@ -39,6 +39,7 @@ import {
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { AppShell, type NavGroup } from '@/components/patterns/app-shell';
+import { LegalLinks } from '@/components/patterns/legal-links';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -499,6 +500,9 @@ export function Shell() {
           </SidebarMenuItem>
           <SidebarMenuItem data-tour="user-menu">
             <UserMenu />
+          </SidebarMenuItem>
+          <SidebarMenuItem className="px-2 pt-1">
+            <LegalLinks align="start" />
           </SidebarMenuItem>
         </SidebarMenu>
       }

@@ -29,6 +29,17 @@ export const user = pgTable('user', {
   /** Referral the user signed up with (docs/growth.md): an org's referral code, or Dub's click id
    * with DUB_API_KEY. Read once when they create an organization. */
   referralCode: text('referral_code'),
+  /** Legal acceptance (docs/legal.md): the terms and privacy versions of config/legal.json the
+   * user accepted, and when. Null until the first acceptance; the API asks again on a new version. */
+  termsVersion: text('terms_version'),
+  privacyVersion: text('privacy_version'),
+  legalAcceptedAt: timestamp('legal_accepted_at'),
+  /** When the user confirmed the minimum age of config/legal.json (null when not asked: B2B-only). */
+  ageConfirmedAt: timestamp('age_confirmed_at'),
+  /** Opt-in to non-transactional (marketing) email, and when it last changed. Account mail is
+   * unaffected. The unsubscribe link and List-Unsubscribe header set it to false. */
+  marketingOptIn: boolean('marketing_opt_in').notNull().default(false),
+  marketingOptInAt: timestamp('marketing_opt_in_at'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
