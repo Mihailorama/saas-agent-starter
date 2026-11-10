@@ -52,7 +52,8 @@ export const site = {
   /** X/Twitter handle for twitter:site, e.g. @example. */
   twitter: env.SITE_TWITTER || undefined,
   organization: {
-    name: 'The saas-agent-starter authors',
+    /** Publisher shown in the footer and schema.org; set SITE_ORG_NAME for your product. */
+    name: env.SITE_ORG_NAME || 'Orgfold',
     /** Profiles that identify the publisher (LinkedIn, GitHub, X...): schema.org sameAs. */
     sameAs: ['https://github.com/Mihailorama/saas-agent-starter'] as string[],
   },
