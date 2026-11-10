@@ -1,11 +1,14 @@
 ---
 import type { ComponentProps } from 'astro/types';
 import Seo from '../components/Seo.astro';
+import { posts } from '../posts.ts';
 import { path, site } from '../site.ts';
 import '../styles.css';
 
 type Props = ComponentProps<typeof Seo>;
 const lang = Astro.currentLocale ?? 'en';
+// Blog and RSS links only once a post is published: an empty blog is a dead end.
+const hasPosts = (await posts()).length > 0;
 ---
 
 <!doctype html>
@@ -23,7 +26,7 @@ const lang = Astro.currentLocale ?? 'en';
     <header class="border-b">
       <nav aria-label="Main" class="mx-auto flex max-w-5xl items-center gap-6 px-6 py-2">
         <a href={path('/')} class="py-2 font-semibold">{site.name}</a>
-        <a href={path('/blog/')} class="py-2 text-sm text-muted-foreground hover:text-foreground">Blog</a>
+        {hasPosts && <a href={path('/blog/')} class="py-2 text-sm text-muted-foreground hover:text-foreground">Blog</a>}
         <a href={`${path('/')}#offers`} class="py-2 text-sm text-muted-foreground hover:text-foreground">Managed</a>
         <span class="ml-auto flex items-center gap-4">
           <a
@@ -50,8 +53,10 @@ const lang = Astro.currentLocale ?? 'en';
     <footer class="border-t">
       <div class="mx-auto flex max-w-5xl flex-wrap gap-4 px-6 py-6 text-sm text-muted-foreground">
         <span>© {new Date().getFullYear()} {site.organization.name}</span>
-        <a href={path('/blog/')} class="hover:text-foreground">Blog</a>
-        <a href={path('/rss.xml')} class="hover:text-foreground">RSS</a>
+        {hasPosts && <a href={path('/blog/')} class="hover:text-foreground">Blog</a>}
+        {hasPosts && <a href={path('/rss.xml')} class="hover:text-foreground">RSS</a>}
+        <a href={site.contact} data-cta="footer_contact" class="hover:text-foreground">Contact</a>
+        <a href={site.repo} class="hover:text-foreground">GitHub</a>
         <a href={`${site.repo}/blob/main/LICENSE`} class="hover:text-foreground">License (MIT-0)</a>
         <button type="button" id="privacy-choices" hidden class="hover:text-foreground"></button>
       </div>

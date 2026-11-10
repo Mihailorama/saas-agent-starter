@@ -1,6 +1,7 @@
 ---
 // Every page's <head> SEO: title, description, canonical, hreflang, Open Graph, Twitter card,
 // schema.org JSON-LD. The checklist it implements: docs/marketing.md.
+import { posts } from '../posts.ts';
 import { abs, path, site } from '../site.ts';
 
 interface Props {
@@ -50,7 +51,7 @@ const ld = JSON.stringify(graph).replace(/</g, '\\u003c');
 {noindex && <meta name="robots" content="noindex" />}
 {hreflang.map((a) => <link rel="alternate" hreflang={a.lang} href={a.href} />)}
 <link rel="alternate" hreflang="x-default" href={canonical} />
-<link rel="alternate" type="application/rss+xml" title={`${site.name} blog`} href={abs('/rss.xml')} />
+{(await posts()).length > 0 && <link rel="alternate" type="application/rss+xml" title={`${site.name} blog`} href={abs('/rss.xml')} />}
 <link rel="sitemap" href={path('/sitemap-index.xml')} />
 
 <meta property="og:type" content={type} />
