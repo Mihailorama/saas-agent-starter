@@ -55,7 +55,13 @@ const hasPosts = (await posts()).length > 0;
         <span>© {new Date().getFullYear()} {site.organization.name}</span>
         {hasPosts && <a href={path('/blog/')} class="hover:text-foreground">Blog</a>}
         {hasPosts && <a href={path('/rss.xml')} class="hover:text-foreground">RSS</a>}
-        <a href={site.contact} data-cta="footer_contact" class="hover:text-foreground">Contact</a>
+        {
+          site.channels.length > 0
+            ? site.channels.map((c) => (
+                <a href={c.href} data-cta={`footer_${c.id}`} class="hover:text-foreground">{c.label}</a>
+              ))
+            : <a href={site.contact} data-cta="footer_contact" class="hover:text-foreground">Contact</a>
+        }
         <a href={site.repo} class="hover:text-foreground">GitHub</a>
         <a href={`${site.repo}/blob/main/LICENSE`} class="hover:text-foreground">License (MIT-0)</a>
         <button type="button" id="privacy-choices" hidden class="hover:text-foreground"></button>
