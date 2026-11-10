@@ -28,6 +28,9 @@ jobs:
       SITE_OG_IMAGE: ${{ vars.PAGES_OG_IMAGE || 'https://opengraph.githubassets.com/1/Mihailorama/saas-agent-starter' }}
       # "Talk to us" (managed offer): a mailto: or booking URL; unset = a GitHub issue (site.ts).
       SITE_CONTACT_URL: ${{ vars.PAGES_CONTACT_URL }}
+      SITE_CONTACT_EMAIL: ${{ vars.PAGES_CONTACT_EMAIL }}
+      SITE_TELEGRAM_URL: ${{ vars.PAGES_TELEGRAM_URL }}
+      SITE_WHATSAPP_URL: ${{ vars.PAGES_WHATSAPP_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1

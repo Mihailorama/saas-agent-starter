@@ -43,6 +43,20 @@ export const site = {
     env.SITE_CONTACT_URL ||
     booking ||
     `${repo}/issues/new?title=${encodeURIComponent('Managed Orgfold')}`,
+  /**
+   * Contact channels shown next to "Talk to us" (email, Telegram, WhatsApp). Only channels with a
+   * value appear: SITE_CONTACT_EMAIL, SITE_TELEGRAM_URL (e.g. https://t.me/<bot>), SITE_WHATSAPP_URL
+   * (e.g. https://wa.me/<number>). Add a messenger only once someone answers it.
+   */
+  channels: [
+    {
+      id: 'email',
+      label: 'Email',
+      href: env.SITE_CONTACT_EMAIL ? `mailto:${env.SITE_CONTACT_EMAIL}` : '',
+    },
+    { id: 'telegram', label: 'Telegram', href: env.SITE_TELEGRAM_URL || '' },
+    { id: 'whatsapp', label: 'WhatsApp', href: env.SITE_WHATSAPP_URL || '' },
+  ].filter((c) => c.href),
   /** Where "Sign in" points (the web app); no link without SITE_APP_URL. */
   appUrl: env.SITE_APP_URL || undefined,
   /** Absolute URL of a 1200x630 share image hosted outside the repo (no media in git). */
