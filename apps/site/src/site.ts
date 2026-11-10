@@ -15,24 +15,40 @@ const siteUrl = new URL(env.SITE_URL || 'http://localhost:4321');
 /** Path the site is served under: "/" on its own host, "/repo/" on GitHub Pages. */
 export const base = siteUrl.pathname.replace(/\/?$/, '/');
 
+const repo = 'https://github.com/Mihailorama/saas-agent-starter';
+/** "Booking a demo" page (same env as the app, docs/crm.md), behind the `booking` flag. */
+const booking =
+  isEnabled('booking') && env.VITE_BOOKING_ORIGIN && env.VITE_BOOKING_LINK
+    ? `${env.VITE_BOOKING_ORIGIN.replace(/\/+$/, '')}/${env.VITE_BOOKING_LINK}`
+    : undefined;
+
 export const site = {
-  name: 'saas-agent-starter',
-  tagline: 'The SaaS starter coding agents build on rails.',
+  /** Brand on the page. The repository and packages keep their names until the rename. */
+  name: 'Orgfold',
+  /** The repository's current name, for schema.org alternateName and llms.txt. */
+  repoName: 'saas-agent-starter',
+  tagline: 'an agentic organization in a box',
   description:
-    'Open-source, production-ready multi-tenant SaaS starter for Claude Code and Codex: AGENTS.md rules, recipes, one pnpm check, a license gate and evals.',
+    'Orgfold is an open-source agentic organization in a box: sign-in, billing, CRM, support, analytics, an AI gateway and deploys, built for coding agents.',
   /** Canonical origin of the site (no path; the path is `base`). */
   url: siteUrl.origin,
   /** The source repository: the landing page's main call to action. */
-  repo: 'https://github.com/Mihailorama/saas-agent-starter',
+  repo,
+  /**
+   * "Talk to us" target of the managed offer: ONE value, a mailto: or a booking page.
+   * PLACEHOLDER until orgfold.com has a mailbox (SAASSTARTER-90): set SITE_CONTACT_URL (or turn
+   * on the booking flag); without either the button opens a GitHub issue "Managed Orgfold".
+   */
+  contact:
+    env.SITE_CONTACT_URL ||
+    booking ||
+    `${repo}/issues/new?title=${encodeURIComponent('Managed Orgfold')}`,
   /** Where "Sign in" points (the web app); no link without SITE_APP_URL. */
   appUrl: env.SITE_APP_URL || undefined,
   /** Absolute URL of a 1200x630 share image hosted outside the repo (no media in git). */
   ogImage: env.SITE_OG_IMAGE || undefined,
-  /** "Book a demo" target: the booking page (same env as the app, docs/crm.md); flag `booking`. */
-  booking:
-    isEnabled('booking') && env.VITE_BOOKING_ORIGIN && env.VITE_BOOKING_LINK
-      ? `${env.VITE_BOOKING_ORIGIN.replace(/\/+$/, '')}/${env.VITE_BOOKING_LINK}`
-      : undefined,
+  /** "Book a demo" target (flag `booking`); the landing uses it through `contact`. */
+  booking,
   /** X/Twitter handle for twitter:site, e.g. @example. */
   twitter: env.SITE_TWITTER || undefined,
   organization: {

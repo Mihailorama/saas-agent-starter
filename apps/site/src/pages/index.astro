@@ -1,379 +1,328 @@
 ---
-// The starter's own landing page (dogfooding apps/site). Every claim here must hold for the code
-// on main: source of truth is AGENTS.md (architecture map, component picks) and docs/*.md.
+// The landing page (brand: Orgfold; the repository keeps its name until the rename). Every claim
+// here must hold for the code on main: source of truth is AGENTS.md and docs/*.md.
+// Positioning: a founder who builds a software company with coding agents and needs the whole
+// company's infrastructure, not just an app. Job: have it all on day one, safe, without lock-in.
+// Two offers: open source (free) and managed (we host and set it up; no price on the page).
+// The full feature list lives in the README; the page links to it instead of repeating it.
+import { readdirSync, readFileSync } from 'node:fs';
 import Faq from '../components/Faq.astro';
 import { faqLd } from '../faq.ts';
 import Base from '../layouts/Base.astro';
 import { abs, site } from '../site.ts';
 
 const file = (p: string) => `${site.repo}/blob/main/${p}`;
-const agentsMd = file('AGENTS.md');
+const tree = (p: string) => `${site.repo}/tree/main/${p}`;
+// Counted from the repository at build time, so the proof strip cannot drift from the files.
+// Builds run in apps/site (pnpm --filter site build); import.meta.url points into the bundle.
+const root = new URL('../../', `file://${process.cwd()}/`);
+// The site's Docker build copies only apps/site: there a missing count drops its item.
+const count = (f: () => number) => {
+  try {
+    return f();
+  } catch {
+    return 0;
+  }
+};
+const adrs = count(() => readdirSync(new URL('docs/adr/', root)).filter((f) => /^\d{4}-.+\.md$/.test(f)).length);
+const recipes = count(() => readFileSync(new URL('AGENTS.md', root), 'utf8').match(/^## Recipe/gm)?.length ?? 0);
 
-const rails = [
-  {
-    title: 'AGENTS.md is the rulebook',
-    text: 'One file for Claude Code, Codex and humans: architecture map, where code goes, security, AI, analytics, UI and release rules. CLAUDE.md only imports it.',
-  },
-  {
-    title: 'Recipes instead of guesses',
-    text: 'Step-by-step recipes for a tenant resource, an API key scope or webhook event, an MCP tool, an onboarding item, a background workflow, an AI purpose and a prompt version. /add-resource runs the first one in Claude Code.',
-  },
-  {
-    title: 'One definition of done',
-    text: 'pnpm check runs Biome, the API types, event and flag checks, typecheck, TS, Python and Rust tests, the license gate, the key-free eval, a Playwright smoke and the visual check. Red means not done.',
-  },
-  {
-    title: 'Visual checks without a reviewer',
-    text: 'Layout guards on every page at desktop and mobile, light and dark: overflow, clipped text, overlapping controls, axe. Screenshots are compared with main on your machine, and every changed screen must be declared.',
-  },
-  {
-    title: 'A secrets vault agents can use',
-    text: 'A wrapper over the official bw CLI hands values to commands through pipes, never into chat, .env files or git. Vaultwarden in a compose profile, or any Bitwarden you connect.',
-  },
-  {
-    title: 'Validate the idea first',
-    text: '/validate-idea runs an opt-in founder-skill plugin in Claude Code: simulated critique and buyers, then a plan for real signals such as a waitlist page, a price survey and interviews.',
-  },
-];
-
-const stack = [
-  ['API', 'TypeScript and Fastify, Zod at every boundary, OpenAPI generated from the same schemas and typed web clients generated from it.'],
-  ['Web', 'React, Vite, TanStack Router, Query and Table, shadcn/ui components and patterns you own, with a /dev/ui gallery.'],
-  ['Data and tenancy', 'Postgres and Drizzle. Row-Level Security isolates organizations even when a query forgets its filter; migrations are checked for expand/contract.'],
-  ['Workflows', 'Temporal: durable background work with retries and timeouts, typed SDKs for TypeScript and Python.'],
-  ['Worker', 'Python for AI and data work: uv, ruff, strict pyright, pytest.'],
-  ['Hot paths', 'Rust via PyO3 only where measured, each with a pure-Python twin and a parity test.'],
-  ['Observability', 'OpenTelemetry in every service; Grafana, Prometheus, Loki and Jaeger with dashboards and alert rules as files.'],
-  ['Errors', 'The Sentry protocol: Sentry SDKs with GlitchTip or Sentry behind them; only the DSN changes.'],
-  ['Marketing site', 'Astro, static: SEO head and JSON-LD on every page, sitemap, RSS, llms.txt, Lighthouse budgets in CI. You are reading it.'],
-];
-
+// The hero graphic: what a company has to assemble, then the same pieces folded into one box.
+// Each piece exists on main (README, AGENTS.md architecture map).
 const groups = [
+  { name: 'Run', items: ['Sign-in and SSO', 'Billing', 'CRM', 'Support desk', 'Admin console'] },
+  { name: 'Grow', items: ['Marketing site', 'Analytics', 'Email'] },
+  { name: 'Build', items: ['AI gateway', 'API and webhooks', 'Agent rules'] },
+  { name: 'Trust', items: ['Deploy', 'Backups', 'Secrets vault', 'Monitoring'] },
+];
+// The "before" pile: the same pieces, shuffled and tilted (fixed Tailwind classes, no inline
+// styles; small angles so every label stays readable at 390px).
+const pile = [
+  'Billing', 'Deploy', 'CRM', 'Agent rules', 'Analytics', 'Sign-in and SSO', 'Backups', 'Email',
+  'Support desk', 'AI gateway', 'Secrets vault', 'Marketing site', 'Admin console', 'Monitoring',
+  'API and webhooks',
+];
+const tilt = ['-rotate-3', 'rotate-2', 'rotate-3 translate-y-1', '-rotate-2 -translate-y-1', 'rotate-1', '-rotate-6'];
+
+// The terminal in "How it works": real commands from AGENTS.md "Setup" and /add-resource.
+const session = [
+  ['$', `git clone ${site.repo}`],
+  ['$', 'docker compose up -d --wait postgres redis s3 temporal-ui mailpit'],
+  ['$', 'pnpm i && pnpm db:migrate && pnpm dev'],
+  ['$', 'pnpm worker'],
+  ['#', 'then ask your agent, e.g. in Claude Code:'],
+  ['>', '/add-resource invoices'],
+  ['$', 'pnpm check'],
+];
+
+const steps = [
   {
-    id: 'access',
-    title: 'Sign-in, organizations and access',
-    items: [
-      ['Passwordless sign-in', 'One-time codes by email, no passwords. TOTP two-factor, passkeys and OIDC single sign-on through Better Auth on your own tables.'],
-      ['Organizations and roles', 'Owners, admins and members, invitations, an optional organization-wide 2FA policy and an audit log.'],
-      ['Disposable email blocking', 'Temporary mailbox domains are refused wherever an address enters: code requests, first sign-in, SSO, invitations.'],
-      ['Public API and webhooks', 'Organization API keys with scopes, outbound events signed per Standard Webhooks, retried by Temporal, with an attempt log and replay.'],
-      ['MCP server at /mcp', "Customers' AI agents use the product over the Model Context Protocol with an organization API key. Each tool wraps a REST route, so the same scopes apply."],
-    ],
+    title: 'Get the box running',
+    text: 'Clone it and start it on your machine, or let your coding agent run the setup. pnpm run infra puts it on your own server.',
   },
   {
-    id: 'billing',
-    title: 'Billing and growth',
-    items: [
-      ['Any pricing model', 'Flat, per seat, usage-based pay as you go, base plus overage, prepaid credit packs and enterprise contracts, all described in config/plans.json.'],
-      ['One provider interface', 'Stripe and manual contracts invoiced outside any provider sit behind one interface; the provider does the rating, taxes and invoices.'],
-      ['Entitlements and AI spend', 'Plan limits checked on the server, usage reported to provider meters, and a per-organization LLM spend limit enforced in the AI gateway.'],
-      ['Rewards and referrals', 'Reward rules as code, triggered by server-side events only, with holds and caps. Referral links with Stripe promotion codes, or Dub Partners connected by key.'],
-      ['Onboarding checklist and tour', 'A setup card derived from existing data, never a stored flag, and a short product tour declared on the page elements.'],
-      ['Analytics and surveys', 'A typed event catalog and journeys as code for PostHog or Umami; NPS and CSAT surveys as config, synced to PostHog or shown by Formbricks.'],
-      ['Feature flags and releases', 'PostHog flags with the catalog in the repo; release-please turns Conventional PR titles into changelogs and tags.'],
-      ['Marketing tools', 'Postiz for social posting and SerpBear for rank tracking in the marketing profile; scripts for IndexNow, a Search Console report and a GEO check of AI answers.'],
-    ],
+    title: 'Describe a feature to your agent',
+    text: 'AGENTS.md tells Claude Code or Codex where code goes, with step-by-step recipes for each kind of change.',
   },
   {
-    id: 'ai',
-    title: 'An AI layer you can audit',
-    items: [
-      ['One gateway, any provider', 'Every LLM call goes through Gateway.call_llm on LiteLLM: vendor keys, OpenRouter, OpenAI-compatible endpoints, vLLM or Ollama, CLI subscriptions, and keys an organization brings.'],
-      ['Explicit models', 'No default model in code or config. A model not listed in config/ai-models.json for the deployment is refused.'],
-      ['Prompts and evals', 'One immutable file per prompt version with pinned hashes, a Promptfoo golden set and judge for every purpose; CI runs the evals without an API key.'],
-      ['External MCP tools', "An organization connects remote MCP servers; a purpose may call their allowed tools in a bounded loop inside the gateway, behind an SSRF pin."],
-      ['Audit record', 'An append-only ai_calls row per call, content in object storage, for the EU AI Act. Stored AI output stays marked as generated until a person confirms it.'],
-      ['LLM ops and PII redaction', 'Generations, feedback and judge scores go to PostHog or self-hosted Langfuse. Presidio (with the pii sidecar) redacts personal data from triage output and feedback before it leaves.'],
-    ],
-  },
-  {
-    id: 'support',
-    title: 'Support and customers',
-    items: [
-      ['Service desk', 'Chatwoot CE behind one Help menu, with email and Telegram channels. AI triage writes a private note and files or upvotes backlog items.'],
-      ['Lite Telegram support', 'Without Chatwoot: a bot gives each user a topic in your team\'s Telegram forum group and relays replies both ways; /bug and /feature file tracker items.'],
-      ['Plane or GitHub tracker', 'Alerts, feedback and triage land in Plane by default or in GitHub Issues, and each release comments "Released in vX.Y.Z" on the items it fixes.'],
-      ['CRM and booking', 'Twenty CRM kept in sync with sign-ups, organizations, billing and support. Self-hosted Cal.diy ships in the booking profile; Cal.com Cloud connects the same way.'],
-      ['Transactional email', 'React Email templates in English and Russian, delivered by a Temporal activity over any SMTP provider.'],
-    ],
-  },
-  {
-    id: 'operations',
-    title: 'Operations',
-    items: [
-      ['One-command setup', 'pnpm run infra prepares a fresh VPS, writes the encrypted settings, then deploys and verifies the core and the components it supports. The rest connect by env settings. Re-runs show what would change.'],
-      ['Deploy', 'Images by digest, Caddy with automatic TLS, SOPS-encrypted env files, deploy and rollback over SSH; Coolify, Kubernetes and on-prem are documented options.'],
-      ['Backups', 'pgBackRest WAL archiving for point-in-time recovery, copies of the app buckets, and a scheduled automatic restore check.'],
-      ['Operator console', 'An internal panel for support staff: organizations and users, audited actions with a reason, suspension and a read-only "view as user".'],
-      ['Privacy requests', 'User and organization data export and deletion across the database, object storage and each connected tool, with retention enforced on a schedule.'],
-    ],
+    title: 'Let one command decide',
+    text: 'pnpm check runs lint, types, tests and every gate. Green means done. Red means the agent keeps going.',
   },
 ];
 
-const path = [
-  ['Browser', 'web app, same-origin /api'],
-  ['Fastify', 'requireRole: session, organization, role'],
-  ['withTenant', 'transaction with app.org_id, RLS, audit row'],
-  ['Temporal', 'workflow started after commit'],
-  ['Python worker', 'activity, Rust hot path via PyO3'],
-  ['Postgres', 'result written back under the same RLS scope'],
+const benefits = [
+  {
+    title: 'Run the company',
+    text: 'Sign-in with SSO and 2FA, organizations and roles, billing for any pricing model, a CRM, a support desk and an admin console.',
+  },
+  {
+    title: 'Grow it',
+    text: 'A marketing site with a blog, product analytics and funnels, in-app surveys, referral rewards and tools for social posting and search rankings.',
+  },
+  {
+    title: 'Build it with agents',
+    text: 'Rules in AGENTS.md, ready agent commands, and one check that tells an agent when its work is done. You review outcomes, not every line.',
+  },
+  {
+    title: 'Trust it with customers',
+    text: "Each customer's data is isolated by the database itself. Audit log, secrets vault, backups with restore checks and a record of every AI call.",
+  },
 ];
 
-// [service, install with the template, connect your own]; '' where the template has no such path.
-// pnpm run infra covers only the components with `available` in config/components.json.
-const services = [
-  ['Postgres and S3', 'compose services; SeaweedFS for S3', 'any managed Postgres or S3 by URL (AWS, R2, MinIO)'],
-  ['Product analytics', 'Umami in the analytics profile', 'PostHog Cloud, or GA4 behind consent'],
-  ['Errors', 'GlitchTip in the glitchtip profile', 'Sentry, by DSN'],
-  ['LLM ops', 'Langfuse in the llmops profile', 'PostHog, or your Langfuse'],
-  ['LLM providers', 'llm-cli for CLI subscriptions; vLLM and Ollama in the local-llm profile', 'any API key, aggregator or OpenAI-compatible endpoint'],
-  ['Secrets vault', 'Vaultwarden in the vault profile', 'Bitwarden Cloud or your own server'],
-  ['Service desk', 'Chatwoot in the support profile, or lite Telegram', 'your Chatwoot by URL'],
-  ['CRM', 'Twenty in the crm profile', 'your Twenty or Twenty Cloud'],
-  ['Booking', 'Cal.diy in the booking profile', 'your Cal.diy, or Cal.com Cloud'],
-  ['Surveys', '', 'PostHog Surveys, or Formbricks'],
-  ['Billing', 'stripe-mock for development', 'Stripe, Dub Partners, or manual contracts'],
-  ['Tracker', '', 'Plane Cloud or self-hosted Plane, or GitHub Issues'],
-  ['Email', 'Mailpit in development', 'any SMTP provider'],
-  ['Observability', 'OTel Collector, Prometheus, Loki, Jaeger and Grafana in the observability profile', 'any OTLP endpoint via API_OTEL_ENDPOINT and WORKER_OTEL_ENDPOINT'],
-  ['PII redaction', 'the Presidio sidecar in the pii profile', ''],
-  ['Marketing', 'Postiz and SerpBear in the marketing profile', ''],
-];
-
-const quickstart = `docker compose up -d --wait postgres redis s3 temporal-ui mailpit
-docker compose --profile billing up -d stripe-mock   # Stripe API mock
-docker compose --profile mcp up -d mcp-server        # reference MCP server
-pnpm i && pnpm db:migrate
-pnpm dev        # API :3000 + web :5173
-pnpm worker     # Python Temporal worker (also delivers mail)
-
-pnpm run infra  # later: a fresh VPS to the running, verified core stack`;
+// Repo facts a visitor can open and check; no customers, stars or testimonials are claimed.
+const proof = [
+  { fact: `${recipes} recipes`, text: 'step by step, for the changes agents make most', href: file('AGENTS.md') },
+  { fact: `${adrs} decision records`, text: 'one per component pick, with the reason', href: tree('docs/adr') },
+  { fact: '3 languages, 1 gate', text: 'TypeScript, Python and Rust behind pnpm check', href: file('package.json') },
+  { fact: '~612 MiB', text: 'RAM for the default stack, measured', href: file('docs/STACK.md') },
+].filter((p) => !p.fact.startsWith('0 '));
 
 const faq = [
   {
+    q: 'What is Orgfold?',
+    a: 'Orgfold is an open-source agentic organization in a box: the software a SaaS company runs on (sign-in, billing, CRM, support, analytics, an AI gateway, deploys and backups) plus the rules and checks that let coding agents such as Claude Code and Codex build the product on top.',
+  },
+  {
+    q: 'Do I need to be a developer?',
+    a: 'You need to be comfortable letting a coding agent run commands and reading what it reports. If you would rather not run servers at all, the managed option sets everything up for you.',
+  },
+  {
+    q: 'Is it really free?',
+    a: 'Yes. The code is licensed MIT No Attribution (MIT-0): use, change and sell it without keeping a notice. There are no license fees. Every code dependency is permissive or MPL-2.0, enforced in CI.',
+  },
+  {
+    q: 'Can I keep the services I already use?',
+    a: 'Yes. Each external service either runs from the box or connects to one you have: managed Postgres or S3, Stripe, PostHog, your own Chatwoot or Twenty, any SMTP provider or LLM provider.',
+  },
+  {
+    q: 'What does the managed option include?',
+    a: 'We host Orgfold for you and set it up: servers and domain, the services you already use connected, updates and support. Talk to us for the details and a price.',
+  },
+  {
     q: 'Which coding agents does it work with?',
-    a: 'Any agent that reads AGENTS.md, such as Codex. Claude Code reads CLAUDE.md, which imports AGENTS.md, and gets the /add-resource and /validate-idea commands. The rules are plain Markdown, so humans follow the same ones.',
-  },
-  {
-    q: 'Can I use it for a commercial product?',
-    a: 'Yes. The code is licensed MIT No Attribution (MIT-0): use, change and sell it without keeping a notice. Code dependencies are permissive or MPL-2.0, enforced by the license gate.',
-  },
-  {
-    q: 'Do I need to run every service?',
-    a: 'No. The default stack is Postgres, Redis, S3, Temporal, Mailpit, the API, the worker and the web app; everything else is an opt-in compose profile or a service you connect by URL. In the measured snapshot in docs/STACK.md the default stack used about 612 MiB of RAM.',
-  },
-  {
-    q: 'Which pricing model does billing assume?',
-    a: 'None. A plan price is one or more components: flat, per seat, metered, prepaid credits or a contract. Stripe sells them through checkout; contracts can also be invoiced by hand and recorded in the operator console.',
-  },
-  {
-    q: 'Does CI need an LLM API key?',
-    a: 'No. CI runs the evals with recorded outputs and a fake judge. Real-model evals run locally through your Claude subscription.',
+    a: 'Any agent that reads AGENTS.md, such as Codex. Claude Code reads CLAUDE.md, which imports AGENTS.md, and adds ready commands such as /add-resource.',
   },
 ];
 
 const source = {
   '@type': 'SoftwareSourceCode',
+  '@id': abs('/#software'),
   name: site.name,
+  alternateName: site.repoName,
   description: site.description,
   url: abs('/'),
   codeRepository: site.repo,
   programmingLanguage: ['TypeScript', 'Python', 'Rust'],
   runtimePlatform: ['Node.js', 'Python', 'Docker'],
   license: 'https://spdx.org/licenses/MIT-0.html',
+  isAccessibleForFree: true,
+  keywords: 'agentic organization, open-source SaaS starter, multi-tenant, AGENTS.md, Claude Code, Codex',
   author: { '@id': abs('/#organization') },
 };
 
-const primary =
-  'rounded-md bg-primary px-5 py-2.5 font-medium text-primary-foreground hover:opacity-90';
-const secondary = 'rounded-md border bg-background px-5 py-2.5 font-medium hover:bg-secondary';
+const button = 'inline-flex w-full items-center justify-center rounded-md px-5 py-2.5 font-medium sm:w-auto';
+const primary = `${button} bg-primary text-primary-foreground hover:bg-primary/90`;
+const secondary = `${button} border bg-background hover:bg-secondary`;
+const link = 'font-medium text-primary underline-offset-4 hover:underline';
+const external = site.contact.startsWith('http') ? { target: '_blank', rel: 'noopener' } : {};
 ---
 
-<Base title={site.name} description={site.description} jsonLd={[source, faqLd(faq)]}>
-  <section class="mx-auto max-w-5xl px-6 pt-20 pb-16 sm:pt-28">
-    <p class="text-sm font-medium text-primary">Open source, MIT-0</p>
-    <h1 class="mt-3 max-w-3xl text-4xl font-bold tracking-tight text-balance sm:text-5xl">
-      A SaaS starter that coding agents build on rails
+<Base title={`${site.name}: ${site.tagline}`} description={site.description} jsonLd={[source, faqLd(faq)]}>
+  <section class="mx-auto max-w-5xl px-6 pt-16 pb-12 sm:pt-20">
+    <h1 class="max-w-3xl text-4xl font-bold tracking-tight text-balance sm:text-5xl">
+      A whole SaaS company in a box. Your AI agents build the product.
     </h1>
-    <p class="mt-6 max-w-2xl text-lg text-muted-foreground">
-      Multi-tenant TypeScript, Python and Rust, with the rules, recipes and checks that keep Claude
-      Code and Codex from improvising: AGENTS.md, one <code>pnpm check</code> as the definition of
-      done, a license gate and evals.
+    <p class="mt-6 max-w-2xl text-lg text-pretty text-muted-foreground">
+      {site.name} gives you the software a company runs on, already built and tested: accounts and
+      sign-in, payments, customer records, support, analytics, deploys and backups. AI coding agents
+      build your product on top, guided by rules and checked by tests.
     </p>
-    <div class="mt-10 flex flex-wrap gap-3">
-      <a href={site.repo} data-cta="hero_github" class={primary}>View on GitHub</a>
-      <a href={agentsMd} data-cta="hero_agents_md" class={secondary}>Read AGENTS.md</a>
-      <a href="#quickstart" class="px-2 py-2.5 font-medium text-primary hover:underline">Quickstart</a>
-      {
-        site.booking && (
-          <a href={site.booking} target="_blank" rel="noopener" data-cta="book_demo" data-booking class={secondary}>
-            Book a demo
-          </a>
-        )
-      }
+    <div class="mt-8 flex flex-wrap items-center gap-3">
+      <a href={site.repo} data-cta="hero_github" class={primary}>Get the code on GitHub</a>
+      <a href={site.contact} {...external} data-cta="hero_contact" class={secondary}>Talk to us about setup</a>
     </div>
+    <p class="mt-4 text-sm text-muted-foreground">Free and open source (MIT-0). No license fees, no lock-in.</p>
   </section>
 
-  <section aria-labelledby="rails" class="border-y bg-secondary/40">
-    <div class="mx-auto max-w-5xl px-6 py-16">
-      <h2 id="rails" class="text-2xl font-semibold tracking-tight sm:text-3xl">Rails for coding agents</h2>
-      <p class="mt-3 max-w-2xl text-muted-foreground">
-        An agent does well when the repo answers its questions before it asks them. This one says where
-        code goes, how to add each kind of thing, and what "done" means.
-      </p>
-      <ul class="mt-10 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
-        {
-          rails.map((r) => (
-            <li>
-              <h3 class="font-semibold">{r.title}</h3>
-              <p class="mt-2 text-muted-foreground">{r.text}</p>
-            </li>
-          ))
-        }
-      </ul>
-    </div>
-  </section>
-
-  <section aria-labelledby="quickstart" class="mx-auto max-w-5xl px-6 py-16">
-    <h2 id="quickstart" class="text-2xl font-semibold tracking-tight sm:text-3xl">Quickstart</h2>
-    <p class="mt-3 max-w-2xl text-muted-foreground">
-      Needs Node 22.18+, pnpm, Docker, uv and Rust. These are the Setup commands from AGENTS.md;
-      then run <code>pnpm check</code>.
-    </p>
-    <pre
-      class="mt-6 overflow-x-auto rounded-lg bg-foreground p-5 text-sm leading-relaxed text-background"><code>{quickstart}</code></pre>
-    <p class="mt-4">
-      <a href={agentsMd} data-cta="quickstart_agents_md" class="font-medium text-primary hover:underline"
-        >Read AGENTS.md for the full setup and rules</a
+  <section aria-labelledby="fold" class="mx-auto max-w-5xl px-6 pb-20">
+    <h2 id="fold" class="sr-only">What {site.name} replaces</h2>
+    <div class="flex flex-col items-stretch gap-6 lg:flex-row lg:items-center">
+      <figure class="rounded-xl border border-dashed p-6 lg:flex-1">
+        <ul class="flex flex-wrap justify-center gap-3 py-2" aria-label="Pieces a company assembles">
+          {
+            pile.map((p, i) => (
+              <li class:list={['rounded-md border bg-card px-3 py-1.5 text-sm text-muted-foreground shadow-sm', tilt[i % tilt.length]]}>
+                {p}
+              </li>
+            ))
+          }
+        </ul>
+        <figcaption class="mt-6 text-center text-sm text-muted-foreground">
+          Without it: tools to pick, connect, secure and keep running
+        </figcaption>
+      </figure>
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        class="mx-auto size-8 shrink-0 rotate-90 text-muted-foreground lg:rotate-0"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg
       >
-    </p>
-  </section>
-
-  <section aria-labelledby="features" class="border-t">
-    <div class="mx-auto max-w-5xl px-6 pt-16">
-      <h2 id="features" class="text-2xl font-semibold tracking-tight sm:text-3xl">What ships in the template</h2>
-      <p class="mt-3 max-w-2xl text-muted-foreground">
-        Working code with tests and docs, not stubs. Optional parts stay off until you turn them on: an
-        env setting, a compose profile, or a feature flag that is off by default.
-      </p>
-      <nav aria-label="Feature groups" class="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm">
-        {
-          groups.map((g) => (
-            <a href={`#${g.id}`} class="font-medium text-primary hover:underline">
-              {g.title}
-            </a>
-          ))
-        }
-      </nav>
-    </div>
-    {
-      groups.map((g) => (
-        <div class="mx-auto max-w-5xl px-6 py-12">
-          <h3 id={g.id} class="text-xl font-semibold tracking-tight">
-            {g.title}
-          </h3>
-          <dl class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {g.items.map(([name, text]) => (
-              <div class="rounded-lg border bg-background p-5">
-                <dt class="font-semibold">{name}</dt>
-                <dd class="mt-1 text-muted-foreground">{text}</dd>
+      <figure class="rounded-xl border border-primary/40 bg-card p-6 shadow-sm lg:flex-1">
+        <p class="font-semibold">{site.name}</p>
+        <div class="mt-4 grid grid-cols-2 gap-x-4 gap-y-4">
+          {
+            groups.map((g) => (
+              <div>
+                <p class="text-xs font-medium text-muted-foreground">{g.name}</p>
+                <ul class="fold mt-1.5 space-y-1.5">
+                  {g.items.map((p) => <li class="rounded-md bg-primary/10 px-3 py-1 text-sm font-medium">{p}</li>)}
+                </ul>
               </div>
-            ))}
-          </dl>
+            ))
+          }
         </div>
-      ))
-    }
+        <figcaption class="mt-4 border-t pt-4 text-sm text-muted-foreground">
+          One stack, connected and checked. Guarded by AGENTS.md and <code>pnpm check</code>.
+        </figcaption>
+      </figure>
+    </div>
   </section>
 
-  <section aria-labelledby="services" class="border-y bg-secondary/40">
+  <section id="offers" aria-labelledby="offers-title" class="border-y bg-muted/40">
     <div class="mx-auto max-w-5xl px-6 py-16">
-      <h2 id="services" class="text-2xl font-semibold tracking-tight sm:text-3xl">Install with the template, or connect your own</h2>
-      <p class="mt-3 max-w-2xl text-muted-foreground">
-        Each external service either runs from a compose profile or connects to an instance you
-        already have, by environment variables. pnpm run infra asks install, connect or skip for the
-        components it supports. A
-        permissive-license twin of the stack swaps out the copyleft containers.
-      </p>
-      <div class="mt-10 overflow-x-auto rounded-lg border bg-background">
-        <table class="w-full text-left">
-          <thead class="border-b">
-            <tr>
-              <th scope="col" class="p-4 font-semibold">Service</th>
-              <th scope="col" class="p-4 font-semibold">Install</th>
-              <th scope="col" class="p-4 font-semibold">Connect</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y">
-            {
-              services.map(([name, install, connect]) => (
-                <tr>
-                  <th scope="row" class="p-4 font-semibold">
-                    {name}
-                  </th>
-                  <td class="p-4 text-muted-foreground">{install || 'Not shipped'}</td>
-                  <td class="p-4 text-muted-foreground">{connect || 'Install only'}</td>
-                </tr>
-              ))
-            }
-          </tbody>
-        </table>
+      <h2 id="offers-title" class="text-2xl font-semibold tracking-tight sm:text-3xl">Two ways to run {site.name}</h2>
+      <div class="mt-8 grid gap-6 md:grid-cols-2">
+        <div class="flex flex-col rounded-xl border bg-card p-6 shadow-sm">
+          <h3 class="text-lg font-semibold">Open source</h3>
+          <p class="mt-1 text-sm text-muted-foreground">Free. For you if you, or your agent, can run commands.</p>
+          <p class="mt-4 flex-1 text-muted-foreground">
+            Clone it, run it on your machine or your own server, change anything, use it for client
+            projects. Connect the services you already pay for, or run them from the box.
+          </p>
+          <a href={site.repo} data-cta="offer_github" class:list={[primary, 'mt-6 self-start']}>Get the code on GitHub</a>
+        </div>
+        <div class="flex flex-col rounded-xl border bg-card p-6 shadow-sm">
+          <h3 class="text-lg font-semibold">Managed</h3>
+          <p class="mt-1 text-sm text-muted-foreground">We host it and set it up. For you if you'd rather not run servers.</p>
+          <p class="mt-4 flex-1 text-muted-foreground">
+            Servers and domain, your existing services connected, updates and support. It runs the
+            same open-source code.
+          </p>
+          <a href={site.contact} {...external} data-cta="offer_contact" class:list={[secondary, 'mt-6 self-start']}>Talk to us about setup</a>
+        </div>
       </div>
     </div>
   </section>
 
-  <section aria-labelledby="stack">
+  <section aria-labelledby="why">
     <div class="mx-auto max-w-5xl px-6 py-16">
-      <h2 id="stack" class="text-2xl font-semibold tracking-tight sm:text-3xl">Mainstream stack, one reason each</h2>
-      <p class="mt-3 max-w-2xl text-muted-foreground">
-        Boring, well-documented tools that agents already know. The reasons live in docs/adr, one
-        record per decision.
-      </p>
-      <dl class="mt-10 grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2">
+      <h2 id="why" class="max-w-2xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+        Everything a software company needs, before you write a feature
+      </h2>
+      <div class="mt-10 grid gap-x-12 gap-y-10 sm:grid-cols-2">
         {
-          stack.map(([name, text]) => (
-            <div class="bg-background p-5">
-              <dt class="font-semibold">{name}</dt>
-              <dd class="mt-1 text-muted-foreground">{text}</dd>
+          benefits.map((b) => (
+            <div>
+              <h3 class="text-lg font-semibold">{b.title}</h3>
+              <p class="mt-2 max-w-prose text-muted-foreground">{b.text}</p>
             </div>
           ))
         }
-      </dl>
+      </div>
     </div>
   </section>
 
-  <section aria-labelledby="request" class="border-y bg-secondary/40">
-    <div class="mx-auto max-w-5xl px-6 py-16">
-      <h2 id="request" class="text-2xl font-semibold tracking-tight sm:text-3xl">One request, end to end</h2>
-      <p class="mt-3 max-w-2xl text-muted-foreground">
-        Creating a project touches every layer, and the tenant boundary holds the whole way.
-      </p>
-      <ol class="mt-10 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {
-          path.map(([step, text], i) => (
-            <li class="relative rounded-lg border bg-background p-4">
-              <span class="sr-only">Step {i + 1}: </span>
-              <span class="font-semibold">{step}</span>
-              <p class="mt-1 text-sm text-muted-foreground">{text}</p>
-            </li>
-          ))
-        }
+  <section id="how" aria-labelledby="how-title" class="border-y bg-muted/40">
+    <div class="mx-auto max-w-5xl px-6 py-20">
+      <h2 id="how-title" class="text-2xl font-semibold tracking-tight sm:text-3xl">How it works</h2>
+      <ol class="mt-8 grid gap-8 sm:grid-cols-3">
+          {
+            steps.map((s) => (
+              <li>
+                <h3 class="font-semibold">{s.title}</h3>
+                <p class="mt-2 max-w-prose text-muted-foreground">{s.text}</p>
+              </li>
+            ))
+          }
       </ol>
+      <p class="mt-10 text-sm text-muted-foreground">For developers, the commands behind these steps:</p>
+      <div class="mt-3 max-w-3xl rounded-xl border bg-card shadow-sm">
+          <pre class="overflow-x-auto p-5 text-sm leading-7"><code>{
+            session.map(([prompt, text]) =>
+              prompt === '#' ? (
+                <span class="block text-muted-foreground"># {text}</span>
+              ) : (
+                <span class="block"><span aria-hidden="true" class="text-muted-foreground select-none">{prompt} </span>{text}</span>
+              ),
+            )
+          }</code></pre>
+      </div>
+      <p class="mt-8 text-sm text-muted-foreground">
+        Needs Docker, Node 22.18+ with pnpm, uv and Rust.{' '}
+        <a href={`${site.repo}#5-minute-quickstart`} data-cta="quickstart" class={link}>Full quickstart</a>
+      </p>
     </div>
   </section>
 
-  <section aria-labelledby="license" class="mx-auto max-w-5xl px-6 py-16">
-    <h2 id="license" class="text-2xl font-semibold tracking-tight sm:text-3xl">MIT No Attribution</h2>
-    <p class="mt-3 max-w-2xl text-muted-foreground">
-      The starter is licensed MIT-0: no attribution, no obligations. Every code dependency is
-      permissive or MPL-2.0 and used unmodified, checked in CI across npm, PyPI and crates.io.
-      Containers run unmodified are listed with their licenses in docs/LICENSES.md, and every release tag gets CycloneDX
-      SBOMs for each image.
+
+  <section aria-labelledby="proof" class="mx-auto max-w-5xl px-6 py-16">
+    <h2 id="proof" class="text-2xl font-semibold tracking-tight sm:text-3xl">Check the claims yourself</h2>
+    <p class="mt-3 max-w-xl text-muted-foreground">No customer logos or star counts here, only files you can open.</p>
+    <dl class="mt-8 grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
+      {
+        proof.map((p) => (
+          <div>
+            <dt>
+              <a href={p.href} class="text-xl font-semibold text-primary underline-offset-4 hover:underline">
+                {p.fact}
+              </a>
+            </dt>
+            <dd class="mt-1 text-sm text-muted-foreground">{p.text}</dd>
+          </div>
+        ))
+      }
+    </dl>
+    <p class="mt-8 text-sm">
+      <a href={`${site.repo}#readme`} data-cta="readme" class={link}>See the full component list in the README</a>
     </p>
-    <div class="mt-8 flex flex-wrap gap-3">
-      <a href={site.repo} data-cta="footer_github" class={primary}>Get the code</a>
-      <a href={file('LICENSE')} data-cta="license" class={secondary}>Read the license</a>
-    </div>
   </section>
 
-  <Faq items={faq} />
+  <Faq items={faq} width="max-w-5xl" />
+
+  <section aria-labelledby="start" class="border-t">
+    <div class="mx-auto flex max-w-5xl flex-col items-start gap-6 px-6 py-16 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h2 id="start" class="text-2xl font-semibold tracking-tight sm:text-3xl">Start with the whole company in place</h2>
+        <p class="mt-2 text-muted-foreground">Open source and free, or hosted and set up by us.</p>
+      </div>
+      <div class="flex w-full flex-wrap gap-3 md:w-auto">
+        <a href={site.repo} data-cta="footer_github" class={primary}>Get the code on GitHub</a>
+        <a href={site.contact} {...external} data-cta="footer_contact" class={secondary}>Talk to us about setup</a>
+      </div>
+    </div>
+  </section>
 </Base>

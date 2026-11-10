@@ -23,6 +23,11 @@ jobs:
       # Canonical URL; its path becomes Astro's base. Custom domain: set the repo variable
       # PAGES_SITE_URL (e.g. https://starter.example.com) and add the domain in Pages settings.
       SITE_URL: ${{ vars.PAGES_SITE_URL || 'https://mihailorama.github.io/saas-agent-starter' }}
+      # Share image by absolute URL (no media in git): GitHub's generated repository card unless the
+      # repo variable PAGES_OG_IMAGE points to your own 1200x630 image.
+      SITE_OG_IMAGE: ${{ vars.PAGES_OG_IMAGE || 'https://opengraph.githubassets.com/1/Mihailorama/saas-agent-starter' }}
+      # "Talk to us" (managed offer): a mailto: or booking URL; unset = a GitHub issue (site.ts).
+      SITE_CONTACT_URL: ${{ vars.PAGES_CONTACT_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
