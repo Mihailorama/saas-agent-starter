@@ -4,7 +4,7 @@ import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { APIError, createAuthMiddleware } from 'better-auth/api';
+import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
 import { admin, emailOTP, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
 import { z } from 'zod';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
@@ -14,6 +14,7 @@ import { triggerRewards } from './billing/rewards.ts';
 import { db } from './db.ts';
 import { type EmailKind, pickLocale, renderEmail } from './email.ts';
 import { allowedOrigins, env } from './env.ts';
+import { ACCEPTANCE_REQUIRED, hasAccepted, LEGAL } from './legal.ts';
 import { mfaGuard } from './mfa.ts';
 import { operatorGuard } from './operator-guard.ts';
 import { assertAllowedEmail } from './signup-guard.ts';
@@ -65,6 +66,14 @@ const oidc =
     : [];
 export const ssoEnabled = oidc.length > 0;
 
+/** Organization endpoints a user may call before accepting the terms (see legal-guard below). */
+const LEGAL_OPEN = new Set([
+  '/organization/leave',
+  '/organization/reject-invitation',
+  '/organization/set-active',
+  '/organization/check-slug',
+]);
+
 /**
  * The only keys an organization's `metadata` may hold (onboarding company details,
  * docs/onboarding.md). Checked on create and update; anything else is a 400.
@@ -93,10 +102,25 @@ export const auth = betterAuth({
   secret: env.BETTER_AUTH_SECRET,
   trustedOrigins: allowedOrigins,
   database: drizzleAdapter(db, { provider: 'pg', schema }),
+  // Lifetime from config/legal.json: the cookie policy states the same duration (docs/legal.md).
+  session: { expiresIn: LEGAL.sessionDays * 24 * 60 * 60 },
   // The CRM person is synced once the email is verified (here, or below for SSO users the IdP
   // vouches for): an unverified sign-up must not claim a CRM person who has that email.
   // Referral the sign-up came with (docs/growth.md); only a well-formed code is stored.
-  user: { additionalFields: { referralCode: { type: 'string', required: false, input: true } } },
+  // Legal acceptance and marketing consent (docs/legal.md): read-only here (input: false), set
+  // only through /api/legal and /api/unsubscribe; on the session so requireRole can check them.
+  user: {
+    additionalFields: {
+      referralCode: { type: 'string', required: false, input: true },
+      termsVersion: { type: 'string', required: false, input: false },
+      privacyVersion: { type: 'string', required: false, input: false },
+      legalAcceptedAt: { type: 'date', required: false, input: false },
+      ageConfirmedAt: { type: 'date', required: false, input: false },
+      marketingOptIn: { type: 'boolean', required: false, input: false, defaultValue: false },
+      marketingOptInAt: { type: 'date', required: false, input: false },
+      locale: { type: 'string', required: false, input: false },
+    },
+  },
   // Disposable addresses (signup-guard.ts) are refused on every user write: email sign-up, SSO,
   // operator-created users and an email change. Invitations are checked in organizationHooks.
   databaseHooks: {
@@ -218,6 +242,33 @@ export const auth = betterAuth({
           {
             matcher: (c) => c.path === '/sign-in/email-otp',
             handler: totp.hooks.after[0]!.handler,
+          },
+        ],
+      },
+    },
+    // Legal acceptance (docs/legal.md): every path that creates a user (email code, SSO, an
+    // invitation's sign-up) ends in the web's acceptance step; until then organization changes
+    // are refused here and tenant routes in requireRole. Leaving, declining an invitation and
+    // switching the active organization stay open (data-subject rights need them).
+    {
+      id: 'legal-guard',
+      hooks: {
+        before: [
+          {
+            matcher: (c) =>
+              c.request?.method === 'POST' &&
+              (c.path ?? '').startsWith('/organization/') &&
+              !LEGAL_OPEN.has(c.path ?? ''),
+            handler: createAuthMiddleware(async (ctx) => {
+              const session = await getSessionFromCtx(ctx);
+              if (!session || session.session.impersonatedBy) return;
+              if (!hasAccepted(session.user as Parameters<typeof hasAccepted>[0])) {
+                throw new APIError('FORBIDDEN', {
+                  message: ACCEPTANCE_REQUIRED,
+                  code: 'LEGAL_ACCEPTANCE_REQUIRED',
+                });
+              }
+            }),
           },
         ],
       },

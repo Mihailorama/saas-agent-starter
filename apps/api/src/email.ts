@@ -1,11 +1,24 @@
-// Transactional email templates (docs/email.md). Rendered here with React Email's renderer and
-// handed to the worker's SendEmailWorkflow, which delivers over SMTP with retries.
+// Email templates (docs/email.md). Rendered here with React Email's renderer and handed to the
+// worker's SendEmailWorkflow, which delivers over SMTP with retries. Transactional kinds go to
+// every user; marketing kinds only to users who opted in, always with an unsubscribe link and
+// the RFC 8058 List-Unsubscribe headers (docs/legal.md, `pnpm check:legal`).
 // Plain createElement calls: Node runs our .ts files by type stripping, which has no JSX.
 import { plainTextSelectors, render } from '@react-email/render';
 import { createElement as h, type ReactNode } from 'react';
 
 export type Locale = 'en' | 'ru';
-export type EmailKind = 'sign-in-code' | 'verify-email' | 'invitation' | 'data-export-ready';
+/** Account mail: part of the service, sent regardless of the marketing opt-in. */
+export const TRANSACTIONAL_KINDS = [
+  'sign-in-code',
+  'verify-email',
+  'invitation',
+  'data-export-ready',
+] as const;
+/** Non-transactional mail: opted-in users only (sendMarketingEmail), unsubscribe required. */
+export const MARKETING_KINDS = ['product-update'] as const;
+export type EmailKind = (typeof TRANSACTIONAL_KINDS)[number] | (typeof MARKETING_KINDS)[number];
+export const isMarketing = (kind: EmailKind) =>
+  (MARKETING_KINDS as readonly EmailKind[]).includes(kind);
 type Vars = { name: string; org: string; inviter: string };
 /** Code mails show the one-time code where link mails have the button. */
 const CODE_KINDS: EmailKind[] = ['sign-in-code', 'verify-email'];
@@ -18,7 +31,7 @@ type Copy = {
 };
 
 // TODO: move these strings to i18next when the web gets an i18n framework.
-const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
+const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string; unsubscribe: string }> = {
   en: {
     'sign-in-code': {
       subject: () => 'Your sign-in code',
@@ -53,7 +66,16 @@ const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
       footer:
         'The file is kept for a few days, then deleted. If you did not ask for it, contact support.',
     },
+    // Example marketing mail: copy it for your own campaigns (docs/email.md).
+    'product-update': {
+      subject: () => 'What is new this month',
+      heading: () => 'What is new this month',
+      body: (v) => `Hi ${v.name}, here is what changed in the product since our last update.`,
+      button: 'See what is new',
+      footer: 'You get this email because you opted in to product news.',
+    },
     fallback: 'Or open this link:',
+    unsubscribe: 'Unsubscribe from product news',
   },
   ru: {
     'sign-in-code': {
@@ -87,7 +109,15 @@ const COPY: Record<Locale, Record<EmailKind, Copy> & { fallback: string }> = {
       footer:
         'Файл хранится несколько дней, затем удаляется. Если вы её не запрашивали, напишите в поддержку.',
     },
+    'product-update': {
+      subject: () => 'Что нового за месяц',
+      heading: () => 'Что нового за месяц',
+      body: (v) => `${v.name}, вот что изменилось в продукте с прошлого письма.`,
+      button: 'Посмотреть новое',
+      footer: 'Вы получаете это письмо, потому что подписались на новости продукта.',
+    },
     fallback: 'Или откройте ссылку:',
+    unsubscribe: 'Отписаться от новостей продукта',
   },
 };
 
@@ -142,18 +172,28 @@ function layout(locale: Locale, preview: string, children: ReactNode[]) {
   );
 }
 
-export type RenderedEmail = { subject: string; html: string; text: string };
+export type RenderedEmail = {
+  subject: string;
+  html: string;
+  text: string;
+  /** Marketing kinds: List-Unsubscribe and List-Unsubscribe-Post (RFC 8058). */
+  headers?: Record<string, string>;
+};
+/** Where a marketing mail unsubscribes: `page` for the body link, `oneClick` for the header. */
+export type Unsubscribe = { page: string; oneClick: string };
 
 /**
  * Subject, HTML and plain-text parts of one email. `action` is the button's link, or the code for
- * code mails. User-supplied names are escaped by React.
+ * code mails. User-supplied names are escaped by React. Marketing kinds need `unsubscribe`.
  */
 export async function renderEmail(
   kind: EmailKind,
   locale: Locale,
   action: string,
   vars: Partial<Vars> = {},
+  unsubscribe?: Unsubscribe,
 ): Promise<RenderedEmail> {
+  if (isMarketing(kind) && !unsubscribe) throw new Error(`${kind} needs an unsubscribe link`);
   const copy = COPY[locale];
   const t = copy[kind];
   // No CR/LF in names: they end up in the Subject header.
@@ -198,8 +238,17 @@ export async function renderEmail(
           h('p', { key: 'f', style: muted }, `${copy.fallback} `, h('a', { href: action }, action)),
         ]),
     h('p', { key: 'n', style: muted }, t.footer),
+    ...(unsubscribe
+      ? [h('p', { key: 'u', style: muted }, h('a', { href: unsubscribe.page }, copy.unsubscribe))]
+      : []),
   ]);
   return {
+    ...(unsubscribe && {
+      headers: {
+        'List-Unsubscribe': `<${unsubscribe.oneClick}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    }),
     subject: t.subject(v),
     html: await render(element),
     text: await render(element, {

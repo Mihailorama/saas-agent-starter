@@ -231,6 +231,7 @@
     },
     {
       "id": "vault",
+      "processor": false,
       "tier": "optional",
       "description": "Secrets vault for humans and agents (Vaultwarden; docs/secrets.md)",
       "modes": ["install", "connect", "skip"],
@@ -295,6 +296,7 @@
     },
     {
       "id": "ops",
+      "processor": false,
       "tier": "optional",
       "description": "Temporal Web UI on the server's loopback",
       "modes": ["install", "skip"],
@@ -306,6 +308,7 @@
     },
     {
       "id": "pii",
+      "processor": false,
       "tier": "optional",
       "description": "Presidio PII redaction sidecar (docs/support.md)",
       "modes": ["install", "skip"],

@@ -39,6 +39,7 @@ import {
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { AppShell, type NavGroup } from '@/components/patterns/app-shell';
+import { LegalLinks } from '@/components/patterns/legal-links';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -65,6 +66,7 @@ import { identify, privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/
 import { authClient } from '@/lib/auth';
 import { bookingUrl, onBookingClick } from '@/lib/booking';
 import { useFlag } from '@/lib/flags';
+import { PRIVACY_PATH } from '@/lib/legal';
 import { startTour, stored, tourKey } from '@/lib/onboarding';
 import {
   openSupport,
@@ -366,6 +368,8 @@ export function Shell() {
     if (userId && !viewedBy) identify(userId, orgId);
   }, [userId, orgId, viewedBy]);
   const onSecurity = useLocation({ select: (l) => l.pathname === '/settings/security' });
+  // Data-subject rights need no organization (and no accepted terms, docs/legal.md).
+  const onPrivacy = useLocation({ select: (l) => l.pathname === PRIVACY_PATH });
   // Breadcrumbs are declared per route (`staticData.crumbs` in main.tsx).
   const crumbs = useMatches().at(-1)?.staticData.crumbs ?? [];
   // Org requires 2FA and this user has none: the API refuses tenant data, so enrol first.
@@ -409,7 +413,7 @@ export function Shell() {
 
   if (mustEnrol && !onSecurity) return <Navigate to="/settings/security" />;
 
-  if (!orgs?.length) {
+  if (!orgs?.length && !onPrivacy) {
     return (
       <>
         {banner}
@@ -499,6 +503,9 @@ export function Shell() {
           </SidebarMenuItem>
           <SidebarMenuItem data-tour="user-menu">
             <UserMenu />
+          </SidebarMenuItem>
+          <SidebarMenuItem className="px-2 pt-1">
+            <LegalLinks align="start" />
           </SidebarMenuItem>
         </SidebarMenu>
       }

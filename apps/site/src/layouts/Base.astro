@@ -1,6 +1,7 @@
 ---
 import type { ComponentProps } from 'astro/types';
 import Seo from '../components/Seo.astro';
+import { legalLinks } from '../legal-build.ts';
 import { posts } from '../posts.ts';
 import { path, site } from '../site.ts';
 import '../styles.css';
@@ -64,6 +65,7 @@ const hasPosts = (await posts()).length > 0;
         }
         <a href={site.repo} class="hover:text-foreground">GitHub</a>
         <a href={`${site.repo}/blob/main/LICENSE`} class="hover:text-foreground">License (MIT-0)</a>
+        {legalLinks.map((l) => <a href={path(l.href)} data-legal-link={l.id} class="hover:text-foreground">{l.title}</a>)}
         <button type="button" id="privacy-choices" hidden class="hover:text-foreground"></button>
       </div>
     </footer>

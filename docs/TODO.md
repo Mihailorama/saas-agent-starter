@@ -320,3 +320,12 @@
   path: ALTCHA (MIT, proof of work) has no Better Auth provider; it would be a small own
   `hooks.before` verifying the ALTCHA payload with its library, check its license and
   maintenance first.
+- **Legal pages and the acceptance step are English only** (SAASSTARTER-93) (docs/legal.md). The
+  generated policies (`apps/site/src/legal.ts`), `/accept-terms` and `/unsubscribe` have no other
+  language; emails already have en/ru. Fix: a locale dimension in `legalDocs()` with Astro i18n
+  routes (`src/pages/<locale>/legal/`), web strings to i18next when the web gets it; each
+  translation reviewed by a lawyer.
+- **The Orgfold site would publish template legal pages** (SAASSTARTER-94) (docs/legal.md).
+  `config/legal.json` is a template (Example Ltd, `"template": true`) and also feeds the Orgfold
+  landing on GitHub Pages. Owner: pick the legal entity, fill the company and processor names, have
+  a lawyer review, bump the versions + `config/legal.lock.json`, set `"template": false`.

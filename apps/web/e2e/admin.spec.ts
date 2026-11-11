@@ -3,13 +3,14 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 import * as OTPAuth from 'otpauth';
-import { signIn } from './mail';
+import { acceptTerms, signIn } from './mail';
 
 test.describe.configure({ timeout: 120_000 });
 
 /** Signs up (named after the address's local part) and creates an organization. */
 async function signUp(page: Page, email: string, org: string) {
   await signIn(page, email);
+  await acceptTerms(page);
   await page.getByLabel('Organization name').fill(org);
   await page.getByRole('button', { name: 'Create organization' }).click();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();

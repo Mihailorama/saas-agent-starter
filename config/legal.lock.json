@@ -1,0 +1,23 @@
+{
+  "$comment": "Hash of each legal document per version (pnpm check:legal, docs/legal.md). Written by hand from the line the check prints; never edit a hash without bumping the version in config/legal.json.",
+  "privacy": {
+    "version": "2026-11-10",
+    "sha256": "f13df778722dcb1487d528607e774526fc9aca0f30e82efea1bc44865f72739c"
+  },
+  "terms": {
+    "version": "2026-11-10",
+    "sha256": "2cfe71e2aaac75a20efb64f83e20a7b0b436e3137f55f803da1faa3cf45d5337"
+  },
+  "refunds": {
+    "version": "2026-11-10",
+    "sha256": "2301345322ab0c21d8393baf609ade1799d7b2279bf21c560a4c15e50e86074b"
+  },
+  "cookies": {
+    "version": "2026-11-10",
+    "sha256": "7f47636fead65d1624a52cc35dc13952dcc8d1d3fc4ab6702a1265dae2015ccd"
+  },
+  "imprint": {
+    "version": "2026-11-10",
+    "sha256": "04e560279eb4f2204855c413fabbbc587ca4ee63ed23e0a695908d2e6c7fc170"
+  }
+}

@@ -1,0 +1,287 @@
+{
+  "$comment": "Legal pages and acceptance (docs/legal.md). One source for the privacy policy, terms of service, refund policy, cookie policy and business details on apps/site, and for what the app asks at sign-up. `template: true` = the texts and the company values are a starting point for a lawyer to review, and every page says so; set it to false only once a lawyer has reviewed them and every example value is replaced (`pnpm check:legal` refuses example.com values then). Bump a document's `version` whenever its text changes: the API asks every user to accept a new terms or privacy version on their next visit, and `pnpm check:legal` fails when a text changed under an old version (config/legal.lock.json). `age.minimum`: self-attestation at sign-up (16 = GDPR default, 13 where only COPPA applies); `age.b2bOnly: true` drops the question. `processors`: what the stack can send personal data to, one entry per tool; the pages list only the ones in use (docs/legal.md, 'What is generated'). Never claim compliance in these texts.",
+  "template": true,
+  "company": {
+    "legalName": "Example Ltd",
+    "productName": "Workspace",
+    "address": "1 Example Street, 10000 Example City, Example Country",
+    "registration": "Company number 00000000, Example Companies Registry",
+    "vatId": "XX000000000",
+    "representative": "Alex Example, Director",
+    "email": "legal@example.com",
+    "privacyEmail": "privacy@example.com"
+  },
+  "governingLaw": "the laws of Example Country",
+  "jurisdiction": "the courts of Example City",
+  "age": { "minimum": 16, "b2bOnly": false },
+  "sessionDays": 7,
+  "documents": {
+    "privacy": { "title": "Privacy policy", "version": "2026-11-10", "effective": "2026-11-10" },
+    "terms": { "title": "Terms of service", "version": "2026-11-10", "effective": "2026-11-10" },
+    "refunds": {
+      "title": "Refund and cancellation policy",
+      "version": "2026-11-10",
+      "effective": "2026-11-10"
+    },
+    "cookies": { "title": "Cookie policy", "version": "2026-11-10", "effective": "2026-11-10" },
+    "imprint": { "title": "Business details", "version": "2026-11-10", "effective": "2026-11-10" }
+  },
+  "refunds": {
+    "withdrawalDays": 14,
+    "creditsRefundDays": 14
+  },
+  "billing": {
+    "taxNote": "Prices exclude VAT and sales tax. Where tax applies, checkout adds it before you pay."
+  },
+  "processors": [
+    {
+      "id": "app",
+      "component": "core",
+      "name": "This service (first party)",
+      "category": "necessary",
+      "purpose": "Signing you in, keeping you signed in and remembering your cookie choices.",
+      "data": "Session identifiers, the consent choice.",
+      "cookies": [
+        {
+          "name": "better-auth.session_token",
+          "purpose": "Keeps you signed in (\"__Secure-\" prefix on HTTPS).",
+          "duration": "{sessionDays} days"
+        },
+        {
+          "name": "better-auth.state",
+          "purpose": "Protects a single sign-on (SSO) sign-in against forgery.",
+          "duration": "5 minutes"
+        },
+        {
+          "name": "better-auth.better-auth-passkey",
+          "purpose": "Holds the challenge while you register or use a passkey.",
+          "duration": "5 minutes"
+        },
+        {
+          "name": "better-auth.admin_session",
+          "purpose": "Support staff only: keeps their own session while they view the app as a user.",
+          "duration": "while viewing"
+        },
+        {
+          "name": "better-auth.two_factor",
+          "purpose": "Holds a pending second sign-in step.",
+          "duration": "10 minutes"
+        },
+        { "name": "cc_cookie", "purpose": "Remembers your cookie choices.", "duration": "6 months" }
+      ]
+    },
+    {
+      "id": "hosting",
+      "component": "core",
+      "name": "Example Cloud Ltd (server and database hosting)",
+      "category": "service",
+      "purpose": "Runs the application, its database and its job queue.",
+      "data": "All account and workspace data."
+    },
+    {
+      "id": "database",
+      "component": "postgres",
+      "modes": ["connect"],
+      "name": "Example Database Ltd (managed database)",
+      "category": "service",
+      "purpose": "Hosts the application database when it is not on our own server.",
+      "data": "All account and workspace data."
+    },
+    {
+      "id": "backups",
+      "component": "backups",
+      "name": "Example Backup Storage Ltd (off-site backups)",
+      "category": "service",
+      "purpose": "Keeps encrypted copies of the database and files for disaster recovery.",
+      "data": "All account and workspace data, encrypted."
+    },
+    {
+      "id": "storage",
+      "component": "s3",
+      "name": "Example Cloud Ltd (object storage)",
+      "category": "service",
+      "purpose": "Stores uploaded files, data exports and the AI audit record.",
+      "data": "Files you upload, AI requests and responses."
+    },
+    {
+      "id": "mail",
+      "component": "smtp",
+      "name": "Example Mail Ltd (email delivery)",
+      "category": "service",
+      "purpose": "Delivers sign-in codes, invitations and, if you opt in, product news.",
+      "data": "Email address, message content, delivery logs."
+    },
+    {
+      "id": "llm",
+      "component": "llm",
+      "name": "AI model providers (listed on the \"How we use AI\" page)",
+      "category": "service",
+      "purpose": "Generates AI features' output.",
+      "data": "The text sent to the model and its answer."
+    },
+    {
+      "id": "llm-cli",
+      "component": "llm-cli",
+      "name": "AI vendor subscriptions (the model vendors of our CLI subscriptions)",
+      "category": "service",
+      "purpose": "Generates AI features' output through vendor subscriptions.",
+      "data": "The text sent to the model and its answer."
+    },
+    {
+      "id": "posthog",
+      "component": "analytics",
+      "name": "PostHog",
+      "category": "analytics",
+      "env": ["VITE_POSTHOG_KEY"],
+      "modes": ["connect"],
+      "purpose": "Product analytics, session replay, surveys and feature flags, after your consent.",
+      "data": "Pseudonymous user and organization ids, usage events, survey answers.",
+      "cookies": [
+        {
+          "name": "ph_*",
+          "purpose": "Identifies the browser to PostHog across visits.",
+          "duration": "1 year"
+        }
+      ]
+    },
+    {
+      "id": "umami",
+      "component": "analytics",
+      "name": "Umami (self-hosted, cookieless)",
+      "category": "analytics",
+      "env": ["VITE_UMAMI_SCRIPT_URL", "VITE_UMAMI_WEBSITE_ID"],
+      "modes": ["install"],
+      "purpose": "Counts page views and events without cookies or personal identifiers.",
+      "data": "Page path, referrer, browser type; no cookies."
+    },
+    {
+      "id": "ga4",
+      "component": "analytics",
+      "name": "Google Analytics 4",
+      "category": "analytics",
+      "env": ["VITE_GA4_ID"],
+      "purpose": "Traffic analytics, after your consent.",
+      "data": "Browser client id, page views, events.",
+      "cookies": [
+        {
+          "name": "_ga, _ga_*",
+          "purpose": "Distinguishes browsers for Google Analytics.",
+          "duration": "2 years"
+        }
+      ]
+    },
+    {
+      "id": "yandex-metrika",
+      "component": "analytics",
+      "name": "Yandex Metrika",
+      "category": "analytics",
+      "env": ["VITE_YM_ID"],
+      "purpose": "Traffic analytics and, if enabled, session replay, after your consent.",
+      "data": "Browser client id, page views, events.",
+      "cookies": [
+        {
+          "name": "_ym*",
+          "purpose": "Distinguishes browsers for Yandex Metrika.",
+          "duration": "1 year"
+        }
+      ]
+    },
+    {
+      "id": "formbricks",
+      "component": "analytics",
+      "name": "Formbricks",
+      "category": "analytics",
+      "env": ["VITE_FORMBRICKS_WORKSPACE_ID", "VITE_FORMBRICKS_API_HOST"],
+      "purpose": "In-app surveys, after your consent.",
+      "data": "Survey answers, the page they were given on."
+    },
+    {
+      "id": "langfuse",
+      "component": "langfuse",
+      "name": "Langfuse",
+      "category": "service",
+      "env": ["VITE_LANGFUSE_PUBLIC_KEY", "VITE_LANGFUSE_HOST"],
+      "modes": ["install", "connect"],
+      "purpose": "Monitors the quality of AI answers, including your thumbs up or down.",
+      "data": "AI call metadata (no content), feedback scores."
+    },
+    {
+      "id": "sentry",
+      "component": "observability",
+      "name": "Sentry or GlitchTip (error tracking)",
+      "category": "service",
+      "env": ["VITE_SENTRY_DSN"],
+      "modes": ["connect"],
+      "purpose": "Reports application errors so they can be fixed.",
+      "data": "Error details, scrubbed of user, request and extra data."
+    },
+    {
+      "id": "chatwoot",
+      "component": "support",
+      "name": "Chatwoot (service desk)",
+      "category": "functional",
+      "env": ["VITE_CHATWOOT_BASE_URL", "VITE_CHATWOOT_WEBSITE_TOKEN"],
+      "modes": ["install", "connect"],
+      "purpose": "Answers your questions and problem reports.",
+      "data": "Name, email, user id, conversation messages.",
+      "cookies": [
+        {
+          "name": "cw_conversation",
+          "purpose": "Keeps your support conversation open across pages.",
+          "duration": "1 year"
+        }
+      ]
+    },
+    {
+      "id": "telegram",
+      "component": "support",
+      "name": "Telegram (support bot, when you use it)",
+      "category": "functional",
+      "env": ["VITE_TELEGRAM_SUPPORT_BOT"],
+      "purpose": "Lets you reach support through Telegram.",
+      "data": "Telegram user id, messages you send the bot."
+    },
+    {
+      "id": "tracker",
+      "component": "support",
+      "name": "Plane or GitHub Issues (product tracker)",
+      "category": "service",
+      "purpose": "Turns support requests, feedback and alerts into work items.",
+      "data": "The request's text with personal data redacted, a link back to the conversation."
+    },
+    {
+      "id": "twenty",
+      "component": "crm",
+      "name": "Twenty (customer records)",
+      "category": "service",
+      "purpose": "Keeps the customer relationship record of your account.",
+      "data": "Name, email, organization, notes about the relationship."
+    },
+    {
+      "id": "booking",
+      "component": "booking",
+      "name": "Cal.diy or Cal.com (booking calendar)",
+      "category": "functional",
+      "env": ["VITE_BOOKING_ORIGIN", "VITE_BOOKING_LINK"],
+      "modes": ["install", "connect"],
+      "purpose": "Books a call with the team, after your consent to load it.",
+      "data": "Name, email, the answers you give when booking."
+    },
+    {
+      "id": "stripe",
+      "component": "billing",
+      "name": "Stripe (payments)",
+      "category": "service",
+      "purpose": "Takes payments, issues invoices and calculates tax.",
+      "data": "Billing name, email, address, payment method (held by Stripe, never by us)."
+    },
+    {
+      "id": "dub",
+      "component": "billing",
+      "name": "Dub Partners (referral program, when you refer someone)",
+      "category": "marketing",
+      "purpose": "Tracks referrals and pays referral rewards.",
+      "data": "Referrer's email and organization, referred organization ids, payment amounts."
+    }
+  ]
+}

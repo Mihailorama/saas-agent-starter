@@ -27,6 +27,7 @@ import { apiKeyRoutes } from './routes/api-keys.ts';
 import { billingRoutes, billingWebhookRoutes } from './routes/billing.ts';
 import { crmHookRoutes } from './routes/crm.ts';
 import { hookRoutes } from './routes/hooks.ts';
+import { legalRoutes, unsubscribeRoutes } from './routes/legal.ts';
 import { mcpRoutes } from './routes/mcp.ts';
 import { mcpServerRoutes } from './routes/mcp-servers.ts';
 import { onboardingRoutes } from './routes/onboarding.ts';
@@ -305,6 +306,8 @@ export async function buildApp() {
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(impersonationRoutes, { prefix: '/api/impersonation' });
   await app.register(privacyRoutes, { prefix: '/api/privacy' });
+  await app.register(legalRoutes, { prefix: '/api/legal' });
+  await app.register(unsubscribeRoutes, { prefix: '/api/unsubscribe' });
   await app.register(mcpRoutes);
   await app.register(rewardRoutes, { prefix: '/internal/rewards' });
   await app.register(referralRoutes, { prefix: '/api/referrals' });

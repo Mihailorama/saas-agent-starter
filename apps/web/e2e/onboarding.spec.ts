@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { expectAccessibleInBothThemes } from './axe';
-import { signIn } from './mail';
+import { acceptTerms, signIn } from './mail';
 
 test('flag on: the tour starts once, can be dismissed and restarted; the checklist renders', async ({
   page,
@@ -11,6 +11,7 @@ test('flag on: the tour starts once, can be dismissed and restarted; the checkli
   test.slow(); // sign-up plus the first load of another dev server
   const name = `ada-${randomUUID().slice(0, 8)}`; // a code sign-up is named after the address
   await signIn(page, `${name}@example.com`);
+  await acceptTerms(page);
   await page.getByLabel('Organization name').fill('Analytical Engines');
   await page.getByRole('button', { name: 'Create organization' }).click();
   await expect(page.getByText('No projects yet')).toBeVisible();

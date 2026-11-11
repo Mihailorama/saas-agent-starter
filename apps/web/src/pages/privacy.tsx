@@ -15,9 +15,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { gaClientId, track } from '@/lib/analytics';
 import { client, formatDate, type Ok, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
+import { legalQuery } from '@/lib/legal';
 
 // Data-subject rights (docs/privacy.md): download or delete your data, or (owners) the
 // organization's. The worker does the work; this page shows the requests and their outcome.
@@ -206,6 +209,47 @@ function SubjectCard({ subject }: { subject: Subject }) {
   );
 }
 
+/** Marketing email consent (docs/legal.md): opt-in, separate from account mail. */
+function EmailPreferences() {
+  const queryClient = useQueryClient();
+  const { data: session } = authClient.useSession();
+  const query = legalQuery(session?.user.id);
+  const status = useQuery({ ...query, enabled: Boolean(session) });
+  const set = useMutation({
+    mutationFn: (optIn: boolean) => ok(client.PUT('/api/legal/marketing', { body: { optIn } })),
+    onSuccess: (data) => {
+      queryClient.setQueryData(query.queryKey, data);
+      track('marketing_consent_set', { opt_in: data.marketingOptIn });
+      toast.success(
+        data.marketingOptIn ? 'You will get product news.' : 'You will get no more product news.',
+      );
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Email preferences</CardTitle>
+        <CardDescription>
+          Account emails such as sign-in codes, invitations and export notices always arrive.
+          Product news is optional, and every such email has an unsubscribe link.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between gap-4">
+          <Label htmlFor="marketing-opt-in">Product news by email</Label>
+          <Switch
+            id="marketing-opt-in"
+            checked={status.data?.marketingOptIn ?? false}
+            disabled={!status.data || status.data.viewOnly || set.isPending}
+            onCheckedChange={(v) => set.mutate(v)}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function PrivacyPage() {
   const { data: member } = authClient.useActiveMember();
   // UI hint only; the API enforces the owner role.
@@ -215,6 +259,7 @@ export function PrivacyPage() {
       <h1 className="text-2xl font-semibold">Privacy</h1>
       <SubjectCard subject="user" />
       {isOwner && <SubjectCard subject="org" />}
+      <EmailPreferences />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import createClient, { type Middleware } from 'openapi-fetch';
 import { track } from '@/lib/analytics';
 import type { paths } from '@/lib/api.gen';
+import { redirectIfNotAccepted } from '@/lib/legal';
 
 type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
 /** The 200 JSON body of an API operation, from the generated types (`pnpm api:types`). */
@@ -32,10 +33,11 @@ const failed = (method: string, schemaPath: string, status: number, traceId: str
     trace_id: traceId ?? '',
   });
 const errors: Middleware = {
-  onResponse({ request, response, schemaPath }) {
+  async onResponse({ request, response, schemaPath }) {
     lastTrace = response.headers.get('x-trace-id') ?? lastTrace;
     if (!response.ok) {
       failed(request.method, schemaPath, response.status, response.headers.get('x-trace-id'));
+      await redirectIfNotAccepted(response); // a new terms version since this tab checked
     }
   },
   onError({ request, schemaPath }) {

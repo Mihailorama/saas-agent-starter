@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Client, Connection, WorkflowExecutionAlreadyStartedError } from '@temporalio/client';
 import { OpenTelemetryWorkflowClientInterceptor } from '@temporalio/interceptors-opentelemetry/lib/client';
 import type { BillingEvent } from './billing/provider.ts';
+import type { EmailKind } from './email.ts';
 import { env } from './env.ts';
 
 let client: Promise<Client> | undefined;
@@ -129,11 +130,15 @@ export const startTrackerItem = (item: TrackerItem, hash: string) =>
   startOnce('TrackerItemWorkflow', `tracker-item-${hash}`, item);
 /** Contract with services/worker-py (worker/mail.py): one rendered email to one recipient. */
 export type SendEmail = {
-  kind: 'sign-in-code' | 'verify-email' | 'invitation' | 'data-export-ready';
+  kind: EmailKind;
   to: string;
   subject: string;
   html: string;
   text: string;
+  /** Extra headers; the worker sends only List-Unsubscribe and List-Unsubscribe-Post. */
+  headers?: Record<string, string>;
+  /** Marketing mail: the recipient, whose opt-in the worker checks again before delivery. */
+  userId?: string;
 };
 /** `key` identifies one send (token, invitation id + expiry); only its hash is in the id. */
 export const emailWorkflowId = (kind: SendEmail['kind'], key: string) =>

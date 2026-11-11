@@ -36,6 +36,7 @@ const UI_PATHS = [
   'apps/web',
   'config/ai-models.json',
   'config/ai-transparency.json',
+  'config/legal.json',
   'config/events.json',
   'config/flags.json',
   'config/journeys.json',

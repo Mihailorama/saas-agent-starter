@@ -6,6 +6,7 @@ import { auth } from './auth.ts';
 import { countApiCall } from './billing/usage.ts';
 import { db } from './db.ts';
 import { flushEvents } from './events.ts';
+import { ACCEPTANCE_REQUIRED, hasAccepted } from './legal.ts';
 import { ORG_SUSPENDED, READ_ONLY } from './operator-guard.ts';
 
 export type Role = 'member' | 'admin' | 'owner';
@@ -51,8 +52,9 @@ export const httpError = (statusCode: number, message: string) =>
 /**
  * preHandler for every tenant route: needs a session with an active organization
  * in which the user has at least role `min` (owner > admin > member), and 2FA if the
- * org requires it (ADR 0017). A suspended org (docs/admin.md) gets 403 unless `allowSuspended`
- * (data-subject rights, routes/privacy.ts).
+ * org requires it (ADR 0017). A suspended org (docs/admin.md) gets 403 unless `allowSuspended`;
+ * so does a user who has not accepted the current terms and privacy policy (docs/legal.md).
+ * Both are skipped for data-subject rights (routes/privacy.ts), which must always work.
  */
 export const requireRole =
   (min: Role, { allowSuspended = false } = {}) =>
@@ -65,6 +67,9 @@ export const requireRole =
     // An operator viewing as this user (docs/admin.md): reads only.
     if (session.session.impersonatedBy && MUTATING.has(req.method)) {
       return reply.code(403).send({ error: READ_ONLY });
+    }
+    if (!allowSuspended && !session.session.impersonatedBy && !hasAccepted(session.user)) {
+      return reply.code(403).send({ error: ACCEPTANCE_REQUIRED });
     }
     const orgId = session.session.activeOrganizationId;
     if (!orgId) return reply.code(403).send({ error: 'no active organization' });

@@ -4,6 +4,7 @@ import { REGEXP_ONLY_DIGITS } from 'input-otp';
 import { KeyRound, Layers, MailCheck } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { LegalLinks } from '@/components/patterns/legal-links';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { privacyChoicesLabel, showPrivacyChoices, track } from '@/lib/analytics';
 import { client, ok } from '@/lib/api';
 import { authClient } from '@/lib/auth';
+import { legalUrl } from '@/lib/legal';
 
 /** Centered card used by the sign-in, two-factor and invitation pages. */
 export function AuthLayout(props: { title: string; description: string; children: ReactNode }) {
@@ -42,6 +44,7 @@ export function AuthLayout(props: { title: string; description: string; children
             {privacyChoicesLabel}
           </button>
         )}
+        <LegalLinks />
       </div>
     </main>
   );
@@ -258,6 +261,27 @@ export function SignInPage() {
           Sign in with SSO
         </Button>
       )}
+      <p className="mt-4 text-xs text-muted-foreground">
+        New accounts accept the{' '}
+        <a
+          href={legalUrl('terms')}
+          target="_blank"
+          rel="noopener"
+          className="whitespace-nowrap underline"
+        >
+          Terms of service
+        </a>{' '}
+        and the{' '}
+        <a
+          href={legalUrl('privacy')}
+          target="_blank"
+          rel="noopener"
+          className="whitespace-nowrap underline"
+        >
+          Privacy policy
+        </a>{' '}
+        right after the code.
+      </p>
     </AuthLayout>
   );
 }

@@ -18,6 +18,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { devRoutes } from '@/dev/routes';
 import { initAnalytics, page } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
+import { ACCEPT_TERMS_PATH, legalQuery, PRIVACY_PATH } from '@/lib/legal';
 import { AcceptInvitationPage } from '@/pages/accept-invitation';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { SecurityPage } from '@/pages/security';
@@ -59,10 +60,45 @@ const twoFactorRoute = createRoute({
 });
 
 /** Session required; signed-out visitors come back here after signing in. */
-const requireSession = async ({ location }: { location: { href: string } }) => {
+const requireSignedIn = async ({ location }: { location: { href: string } }) => {
   const { data } = await authClient.getSession();
   if (!data) throw redirect({ to: '/sign-in', search: { redirect: location.href } });
+  return data;
 };
+
+/** Session and the current terms accepted (docs/legal.md): new and re-asked users accept first.
+ * The API enforces it too; if the check cannot load, the page loads and the API decides.
+ * Settings, Privacy stays open: someone who declines must still be able to export and delete. */
+const requireSession = async ({ location }: { location: { href: string; pathname: string } }) => {
+  const session = await requireSignedIn({ location });
+  if (location.pathname === PRIVACY_PATH) return;
+  const legal = await queryClient
+    .ensureQueryData(legalQuery(session.user.id))
+    .catch(() => undefined);
+  if (legal?.required)
+    throw redirect({ to: ACCEPT_TERMS_PATH, search: { redirect: location.href } });
+};
+
+// Sign-up's acceptance step and re-acceptance of new versions.
+const acceptTermsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/accept-terms',
+  validateSearch: (s: Record<string, unknown>): { redirect?: string } => ({
+    redirect: safeRedirect(s.redirect),
+  }),
+  beforeLoad: requireSignedIn,
+  component: lazyRouteComponent(() => import('@/pages/accept-terms'), 'AcceptTermsPage'),
+});
+
+// Public: the unsubscribe link of marketing mail carries its own token.
+const unsubscribeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/unsubscribe',
+  validateSearch: (s: Record<string, unknown>): { token?: string } => ({
+    token: typeof s.token === 'string' ? s.token : undefined,
+  }),
+  component: lazyRouteComponent(() => import('@/pages/unsubscribe'), 'UnsubscribePage'),
+});
 
 // Outside the shell: an invitee without an organization of their own must see it too.
 const acceptInvitationRoute = createRoute({
@@ -203,6 +239,8 @@ const router = createRouter({
     signInRoute,
     twoFactorRoute,
     acceptInvitationRoute,
+    acceptTermsRoute,
+    unsubscribeRoute,
     aiTransparencyRoute,
     adminRoute.addChildren([adminOrgsRoute, adminOrgRoute, adminUsersRoute, adminUserRoute]),
     appRoute.addChildren([

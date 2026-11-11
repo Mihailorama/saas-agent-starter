@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 import * as OTPAuth from 'otpauth';
-import { signIn } from './mail';
+import { acceptTerms, signIn } from './mail';
 
 // Many steps against a dev server that compiles on first use: the 30s default is too tight.
 test.describe.configure({ timeout: 90_000 });
@@ -12,6 +12,7 @@ async function signUpWithOrg(page: Page) {
   const name = `grace-${randomUUID().slice(0, 8)}`;
   const email = `${name}@example.com`;
   await signIn(page, email);
+  await acceptTerms(page);
   await page.getByLabel('Organization name').fill('Compilers');
   await page.getByRole('button', { name: 'Create organization' }).click();
   await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
