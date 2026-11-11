@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   analyze:
+    # Code scanning is free on public repositories only; a private copy would need paid
+    # GitHub Advanced Security. osv-scanner and gitleaks (ci.yml) cover dependencies and secrets there.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
     permissions:
       security-events: write
