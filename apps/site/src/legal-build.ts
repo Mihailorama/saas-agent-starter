@@ -18,7 +18,19 @@ function answers() {
   }
 }
 
-export const legal = config as LegalConfig;
+/**
+ * A deployment's own company details (SITE_LEGAL_JSON, a JSON object): the repo keeps the template
+ * in config/legal.json, a site such as the product's own sets its legal entity at build time.
+ * Top-level keys replace the config's; `company` is merged field by field.
+ */
+function override(base: LegalConfig): LegalConfig {
+  const raw = process.env.SITE_LEGAL_JSON;
+  if (!raw) return base;
+  const o = JSON.parse(raw) as Partial<LegalConfig>;
+  return { ...base, ...o, company: { ...base.company, ...(o.company ?? {}) } };
+}
+
+export const legal = override(config as LegalConfig);
 const used = legal.processors.filter((p) => inUse(p, catalog.components, process.env, answers()));
 export const legalPages = legalDocs(legal, used, plans);
 /** Footer links: every legal page, in a fixed order. */

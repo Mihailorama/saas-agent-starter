@@ -29,6 +29,7 @@ jobs:
       # "Talk to us" (managed offer): a mailto: or booking URL; unset = a GitHub issue (site.ts).
       SITE_CONTACT_URL: ${{ vars.PAGES_CONTACT_URL }}
       SITE_CONTACT_EMAIL: ${{ vars.PAGES_CONTACT_EMAIL }}
+      SITE_LEGAL_JSON: ${{ vars.PAGES_LEGAL_JSON }}
       SITE_TELEGRAM_URL: ${{ vars.PAGES_TELEGRAM_URL }}
       SITE_WHATSAPP_URL: ${{ vars.PAGES_WHATSAPP_URL }}
       # The web release's browser tools (release.yml, same repository variables): the legal pages
