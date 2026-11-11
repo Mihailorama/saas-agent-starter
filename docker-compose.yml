@@ -45,7 +45,9 @@ services:
     ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      # Over TCP: initdb's temporary server listens on the socket only, so a socket check
+      # passes before the real server is up and migrate's TCP connect is refused.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d app"]
       interval: 2s
       retries: 30
 

@@ -122,7 +122,7 @@ services:
     restart: unless-stopped
     scale: ${BACKUP_S3_LOCAL:-1} # 0 when the repository is off-site
     command: >-
-      server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -master.telemetry=false
+      server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -master.telemetry=false -volume.max=64
       -s3.port.https=8443 -s3.cert.file=/backup-tls/cert.pem -s3.key.file=/backup-tls/key.pem
     volumes:
       - backups3data:/data

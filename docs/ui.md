@@ -120,6 +120,9 @@ Nobody looks at screenshots, and none are committed (no media in git). `pnpm --f
    change against main (`apps/web`, the config files it imports, `.env.example`, the lockfile)
    it skips the screenshots. A run where no test executed, or Playwright failed for a reason no
    test explains, fails. Another remote than `origin`: `VISUAL_BASE=<remote>/main`.
+   `VISUAL_BASE` takes any git ref, so when you sync a fork whose own `main` predates the visual
+   system, compare with the starter's main instead: `git fetch starter main`, then
+   `VISUAL_BASE=starter/main pnpm --filter web visual`.
 3. **A changed screen needs a declared intent.** Add its id (from the report) to
    `apps/web/.visual-intent`, one per line, `*` as a wildcard (`gallery-*`), `#` for a reason:
 
