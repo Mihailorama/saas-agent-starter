@@ -38,6 +38,12 @@ lawyer must review them for every country the product is sold in.
 3. Have a lawyer review the generated pages (build the site: `pnpm --filter site dev`, then
    `/legal/privacy/` and the others). Only then set `"template": false`: the gate then refuses
    example values (anything containing "example") and the pages drop the template notice.
+   A site that is not the product itself (this repository's own site, say) can keep the template in
+   `config/legal.json` and set its entity at build time instead: `SITE_LEGAL_JSON` is a JSON object
+   whose top-level keys replace the config's and whose `company` is merged field by field (GitHub
+   Pages: repo variable `PAGES_LEGAL_JSON`). It changes only the public pages, not the versions users
+   accept in the app.
+
 4. Set `VITE_SITE_URL` (the web links the pages there) and build the site with the web's `VITE_*`
    values and the deployment's `SITE_DEPLOY_ENV` (below).
 
