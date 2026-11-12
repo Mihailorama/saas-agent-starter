@@ -180,7 +180,12 @@ CI compares no pixels and has no approval label: the deterministic guards run th
 push from a machine without the hook (`pnpm install` sets `core.hooksPath` unless another
 hooks path is already configured, and never in CI); such a push still has to pass the guards
 in CI, and `pnpm check` stays the definition of done. The hook does nothing when the UI did not
-change.
+change, and skips a check that already passed for the same commit against the same main
+(`.visual/passed`; anything uncommitted under the UI paths voids it). Run
+`pnpm --filter web visual` (or `pnpm check`) before you push and the push is instant. If you push
+first, the check runs inside the push: git connects to the remote before the hook, and on a slow
+machine the remote can drop that connection while the check runs, so the push ends with exit code
+141 after a pass. Push again; the pass is reused.
 
 ### Bundle size
 

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   addedIntent,
+  canReuse,
   decide,
   finishMainRender,
   matches,
@@ -243,4 +244,12 @@ test('the AI review always names its model and runs read-only', () => {
     CLAUDE_CODE_USE_VERTEX: '1',
   });
   assert.deepEqual(env, { PATH: '/bin' });
+});
+
+test('the hook reuses a pass only for the same main and the same clean commit', () => {
+  assert.equal(canReuse('abc:tree1\n', 'abc:tree1'), true);
+  assert.equal(canReuse('abc:tree1', 'abc:tree2'), false);
+  assert.equal(canReuse('abc:tree1', 'def:tree1'), false);
+  assert.equal(canReuse('abc:tree1', null), false);
+  assert.equal(canReuse(null, 'abc:tree1'), false);
 });

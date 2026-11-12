@@ -253,6 +253,16 @@ export function finishMainRender(cache, status) {
   return true;
 }
 
+/**
+ * The pre-push hook may reuse a pass only for the exact same thing: the same merge-base with main
+ * and the same committed tree, with nothing uncommitted under the UI paths (`key` is null then).
+ * Git opens the connection to the remote before it runs the hook and the remote drops it while a
+ * long check runs, so a push can die after the check passed; the retry must not run it again.
+ */
+export function canReuse(stamp, key) {
+  return key !== null && stamp?.trim() === key;
+}
+
 /** Environment for the review CLI: the subscription login only, never a key or another backend. */
 export function reviewEnv(env) {
   const out = { ...env };
@@ -290,6 +300,12 @@ function hasUiChanges(base) {
   const diff = spawnSync('git', ['diff', '--quiet', base, '--', ...UI_PATHS], { cwd: root }).status;
   const untracked = git('ls-files', '--others', '--exclude-standard', '--', ...UI_PATHS);
   return diff !== 0 || untracked !== '';
+}
+
+/** `<merge-base>:<HEAD tree>`, or null when anything under the UI paths is uncommitted. */
+function passKey(base) {
+  const dirty = git('status', '--porcelain', '--', ...UI_PATHS);
+  return dirty ? null : `${base}:${git('rev-parse', 'HEAD^{tree}')}`;
 }
 
 /** Main's screenshots at `base`, rendered from a temporary worktree; cached per sha. */
@@ -398,6 +414,14 @@ function main() {
     layoutOnly(1, `no UI changes against main (${base.slice(0, 12)})`);
   }
 
+  const key = passKey(base);
+  const stampFile = join(dir, 'passed');
+  const stamp = existsSync(stampFile) ? readFileSync(stampFile, 'utf8') : null;
+  if (process.argv.includes('--hook') && canReuse(stamp, key)) {
+    console.log('visual: already passed for this commit against this main; skipped');
+    process.exit(0);
+  }
+
   const cache = mainScreenshots(base);
   const out = join(dir, 'run');
   rmSync(out, { recursive: true, force: true });
@@ -430,7 +454,10 @@ function main() {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'report.md'), text);
   console.log(`\n${text}\nReport: ${relative(root, join(dir, 'report.md'))}`);
-  process.exit(failures.length || !decision.ok ? 1 : 0);
+  const passed = !failures.length && decision.ok;
+  if (passed && key) writeFileSync(stampFile, key);
+  else rmSync(stampFile, { force: true });
+  process.exit(passed ? 0 : 1);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) main();
