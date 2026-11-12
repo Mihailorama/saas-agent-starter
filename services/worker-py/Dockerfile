@@ -9,7 +9,7 @@ COPY services/worker-py/pyproject.toml services/worker-py/uv.lock services/worke
 RUN cd services/worker-py && uv sync --locked --no-dev --no-editable
 COPY services/worker-py/worker services/worker-py/worker
 
-FROM python:3.12-slim-trixie
+FROM python:3.15-slim-trixie
 RUN useradd --system --uid 10001 worker
 COPY --from=build /app/services/worker-py /app/services/worker-py
 COPY config /app/config
