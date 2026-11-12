@@ -143,6 +143,38 @@ Nobody looks at screenshots, and none are committed (no media in git). `pnpm --f
    into the report. It never changes the result, never runs in CI, and is skipped without the
    CLI.
 
+### UI council: make it good, not only unbroken
+
+The checks above stop regressions; they do not make a screen good. `pnpm ui:council` scores it.
+One run is one round:
+
+1. It screenshots the working tree (the reference screens and public pages, the `projects` and
+   `screens` of `config/ui-council.json`) and takes main's screenshots from the visual cache.
+   Screenshots of products you want to beat go into `apps/web/.visual/references/<product>/*.png`
+   (gitignored like everything under `.visual/`).
+2. The images are copied under neutral labels (`product-1`, ...) in a shuffled order: a member
+   cannot tell which one is the new version, and none is told the target, because both change
+   the scores.
+3. Each member of the config scores every product 1-10 per category and lists up to ten findings
+   for this branch (screen, problem, fix). Members are CLIs on your own subscriptions (`claude`,
+   `codex`), read-only, with an explicit `model`, API keys removed from their environment. Use
+   models from different providers: one model's taste is not a council.
+4. The round is appended to `apps/web/.visual/council/history.json`; `report.md` shows the climb
+   round by round, by category and the findings. Paste its round table into the PR.
+
+A member passes when it rates every category at least `target` and rates this branch at least as
+high as every reference product. Exit 0: the whole council passed this round; 2: the members
+you asked for (`--members codex`) passed, so add the next, more expensive one; 1: not yet.
+`--reset` starts a new climb. The loop is the `/ui-council` command: run a round, fix the
+findings, run again; it stops after 8 rounds without a pass.
+
+Scores are model judgements, not measurements: the same screenshots can score a point apart on
+two runs, and scores of the references drift as yours improve. That is why the bar is several
+models from different providers agreeing, against references, on a target that is hard to reach
+by noise. It is a tool, not a gate: a project uses it when its owner wants to. Like `--review`, it never runs in CI and is never part of `pnpm check`. Rounds cost
+subscription usage (a full climb can take hours): start with one member, add the rest when it
+passes.
+
 CI compares no pixels and has no approval label: the deterministic guards run there through
 `pnpm check`. The pixel comparison is skipped by `git push --no-verify`, by `CI=1`, and by any
 push from a machine without the hook (`pnpm install` sets `core.hooksPath` unless another
