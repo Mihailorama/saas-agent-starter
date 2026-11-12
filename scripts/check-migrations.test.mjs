@@ -1,7 +1,7 @@
 // node --test 'scripts/*.test.mjs'  (part of pnpm check:ts)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { breaking } from './check-migrations.mjs';
+import { breaking, journalOrder } from './check-migrations.mjs';
 
 test('expand steps pass', () => {
   assert.deepEqual(
@@ -33,4 +33,14 @@ test('a marked contract step passes; a mention in a comment alone does not count
     [],
   );
   assert.deepEqual(breaking('-- DROP COLUMN later\nALTER TABLE "p" ADD COLUMN "y" text;'), []);
+});
+
+test('journal order: newer, numbered once, idx in sequence', () => {
+  const e = (idx, tag, when) => ({ idx, tag, when });
+  assert.deepEqual(journalOrder([e(0, '0000_a', 1), e(1, '0001_b', 2)]), []);
+  const merged = journalOrder([e(0, '0000_a', 1), e(1, '0001_mine', 5), e(2, '0001_starter', 3)]);
+  assert.equal(merged.length, 2);
+  assert.match(merged.join(), /used twice/);
+  assert.match(merged.join(), /skip this one/);
+  assert.match(journalOrder([e(0, '0000_a', 1), e(2, '0001_b', 2)]).join(), /expected 1/);
 });

@@ -189,6 +189,10 @@ const faq = [
     a: 'We host Orgfold for you and set it up: servers and domain, the services you already use connected, updates and support. It runs the same open-source code, so you can take it over and run it yourself at any time. Talk to us for the details and a price.',
   },
   {
+    q: 'How do I get updates after I start building on it?',
+    a: 'With git. Add Orgfold as a second remote and merge its next release tag into your repository. Your own files and settings stay yours; docs/updates.md lists the few conflicts to expect, and pnpm check stops a database migration that would be applied in the wrong order.',
+  },
+  {
     q: 'Does it use Next.js or deploy to Vercel?',
     a: 'No, on purpose. The web app is React with Vite, a static build any web server can serve, and the API is a Fastify server. Everything runs with Docker Compose on your own server, so no hosting platform is required.',
   },
