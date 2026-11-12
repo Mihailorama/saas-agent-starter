@@ -106,6 +106,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose --profile marketing build api web worker site
+      # Building is not starting: a venv built for one Python copied onto another builds fine and
+      # cannot import anything. Load the compiled parts (Rust extension, pydantic-core) for real.
+      - name: Worker image imports its compiled dependencies
+        run: docker compose run --rm --no-deps --entrypoint python worker -c "import saas_core, pydantic_core, temporalio, worker; print('worker image ok')"
 
   # Cal.diy for the booking profile (ADR 0026, docs/crm.md): upstream publishes no image, so it
   # is built here from the pinned commit with upstream's own Dockerfile (infra/caldiy/build.sh),
