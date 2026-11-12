@@ -171,7 +171,7 @@ findings, run again; it stops after 8 rounds without a pass.
 Scores are model judgements, not measurements: the same screenshots can score a point apart on
 two runs, and scores of the references drift as yours improve. That is why the bar is several
 models from different providers agreeing, against references, on a target that is hard to reach
-by noise. Like `--review`, it never runs in CI and is never part of `pnpm check`. Rounds cost
+by noise. It is a tool, not a gate: a project uses it when its owner wants to. Like `--review`, it never runs in CI and is never part of `pnpm check`. Rounds cost
 subscription usage (a full climb can take hours): start with one member, add the rest when it
 passes.
 

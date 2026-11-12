@@ -4,7 +4,8 @@ description: Climb the UI council's score - screenshot, let several models score
 argument-hint: <what to improve, e.g. "the settings screens">
 ---
 
-Improve the UI (`$ARGUMENTS`, or the whole app when empty) until the UI council passes. Read
+Run only because the user asked for it (it costs subscription hours). Improve the UI
+(`$ARGUMENTS`, or the whole app when empty) until the UI council passes. Read
 docs/ui.md "UI council" first. Done means a round where `pnpm ui:council` exits 0, with the
 round table from `apps/web/.visual/council/report.md` in the PR description.
 
