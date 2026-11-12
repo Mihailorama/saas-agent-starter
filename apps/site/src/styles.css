@@ -108,3 +108,15 @@
     transform: translateY(-0.75rem) rotate(-4deg) scale(0.96);
   }
 }
+
+/* Landing diagrams (index.astro): the dashed wires flow once a second. Reduced motion: static. */
+@media (prefers-reduced-motion: no-preference) {
+  .flow {
+    animation: flow 1.2s linear infinite;
+  }
+}
+@keyframes flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}

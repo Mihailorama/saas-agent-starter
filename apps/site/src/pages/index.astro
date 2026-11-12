@@ -9,6 +9,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import Faq from '../components/Faq.astro';
 import Icon from '../components/Icon.astro';
 import { faqLd } from '../faq.ts';
+import type { IconName } from '../icons.ts';
 import Base from '../layouts/Base.astro';
 import { abs, site } from '../site.ts';
 
@@ -30,13 +31,87 @@ const recipes = count(() => readFileSync(new URL('AGENTS.md', root), 'utf8').mat
 
 // The hero graphic: the pieces a company runs on, already in one box. Each exists on main
 // (README, AGENTS.md architecture map).
-const groups = [
-  { name: 'Run', items: ['Sign-in and SSO', 'Billing', 'CRM', 'Support desk', 'Admin console'] },
-  { name: 'Grow', items: ['Marketing site', 'Analytics', 'Email'] },
-  { name: 'Build', items: ['AI gateway', 'API and webhooks', 'Agent rules'] },
-  { name: 'Trust', items: ['Deploy', 'Backups', 'Secrets vault', 'Monitoring'] },
+const groups: { name: string; items: { label: string; icon: IconName }[] }[] = [
+  {
+    name: 'Run',
+    items: [
+      { label: 'Sign-in and SSO', icon: 'lock' },
+      { label: 'Billing', icon: 'card' },
+      { label: 'CRM', icon: 'users' },
+      { label: 'Support desk', icon: 'lifebuoy' },
+      { label: 'Admin console', icon: 'shield' },
+    ],
+  },
+  {
+    name: 'Grow',
+    items: [
+      { label: 'Marketing site', icon: 'globe' },
+      { label: 'Analytics', icon: 'chart' },
+      { label: 'Email', icon: 'mail' },
+    ],
+  },
+  {
+    name: 'Trust',
+    items: [
+      { label: 'Deploy', icon: 'rocket' },
+      { label: 'Backups', icon: 'database' },
+      { label: 'Secrets vault', icon: 'key' },
+      { label: 'Monitoring', icon: 'activity' },
+    ],
+  },
+  {
+    name: 'Build',
+    items: [
+      { label: 'AI gateway', icon: 'sparkles' },
+      { label: 'API and webhooks', icon: 'plug' },
+      { label: 'Agent rules', icon: 'file' },
+    ],
+  },
 ];
-const pieces = groups.reduce((n, g) => n + g.items.length, 0);
+const all = groups.flatMap((g) => g.items);
+const pieces = all.length;
+
+// Hero diagram: the pieces on an ellipse around the box, clockwise by group, a wider gap between
+// groups (11 steps of 22 degrees + 4 gaps of 29.5 = 360).
+const hub = { w: 720, h: 540, cx: 360, cy: 270, rx: 190, ry: 185 };
+const rad = (d: number) => (d * Math.PI) / 180;
+// Labels sit outside the ring: beside a node on the sides, above or below it at the top and bottom.
+type Anchor = 'start' | 'middle' | 'end';
+const nodes: { label: string; icon: IconName; x: number; y: number; lx: number; ly: number; anchor: Anchor }[] = [];
+const groupLabels: { name: string; x: number; y: number }[] = [];
+let angle = -172;
+for (const g of groups) {
+  const first = angle;
+  g.items.forEach((p, i) => {
+    if (i) angle += 22;
+    const c = Math.cos(rad(angle));
+    const x = hub.cx + hub.rx * c;
+    const y = hub.cy + hub.ry * Math.sin(rad(angle));
+    const side = Math.abs(c) > 0.2;
+    nodes.push({
+      ...p,
+      x,
+      y,
+      lx: side ? x + Math.sign(c) * 38 : x,
+      ly: side ? y + 6 : y < hub.cy ? y - 40 : y + 52,
+      anchor: side ? (c > 0 ? 'start' : 'end') : 'middle',
+    });
+  });
+  const mid = rad((first + angle) / 2);
+  groupLabels.push({ name: g.name, x: hub.cx + hub.rx * 0.68 * Math.cos(mid), y: hub.cy + hub.ry * 0.66 * Math.sin(mid) });
+  angle += 29.5;
+}
+
+// "Before": the same pieces scattered, each wired to two others (fixed positions, no randomness
+// so the build is reproducible).
+const scatter = [
+  [44, 52], [150, 34], [262, 58], [326, 150], [262, 252], [124, 266], [34, 186], [96, 132],
+  [200, 112], [312, 236], [184, 198], [62, 258], [246, 168], [132, 196], [330, 46],
+];
+const wires = scatter.flatMap((_, i) => [
+  [i, (i + 3) % scatter.length],
+  [i, (i + 7) % scatter.length],
+]);
 
 // "Who does what": the split of work the product is built around.
 const lanes = [
@@ -168,29 +243,86 @@ const external = site.contact.startsWith('http') ? { target: '_blank', rel: 'noo
       <p class="mt-4 text-sm text-muted-foreground">Free and open source (MIT-0). Keep the services you already use.</p>
     </div>
 
-    <figure class="rounded-2xl border bg-card shadow-lg">
-      <div class="flex items-center gap-2 border-b px-5 py-3">
-        <Icon name="box" class="size-5 text-primary" />
-        <span class="font-semibold">{site.name}</span>
-        <span class="ml-auto text-sm text-muted-foreground">{pieces} pieces, connected</span>
-      </div>
-      <div class="grid grid-cols-2 gap-x-4 gap-y-5 p-5">
-        {
-          groups.map((g) => (
-            <div>
-              <p class="text-sm font-semibold">{g.name}</p>
-              <ul class="fold mt-2 flex flex-wrap gap-1.5">
-                {g.items.map((p) => <li class="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium sm:text-sm">{p}</li>)}
-              </ul>
-            </div>
-          ))
-        }
-      </div>
-      <figcaption class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-b-2xl border-t bg-muted/60 px-5 py-3 font-mono text-sm">
+    <figure>
+      <svg
+        viewBox={`0 0 ${hub.w} ${hub.h}`}
+        role="img"
+        aria-labelledby="hub-title"
+        class="hidden w-full sm:block"
+        font-family="inherit">
+        <title id="hub-title">{site.name} in the middle, connected to {pieces} pieces: {all.map((p) => p.label).join(', ')}</title>
+        {nodes.map((n) => <line x1={hub.cx} y1={hub.cy} x2={n.x} y2={n.y} class="flow stroke-primary/35" stroke-width="1.5" stroke-dasharray="3 6" />)}
+        <ellipse cx={hub.cx} cy={hub.cy} rx={hub.rx} ry={hub.ry} fill="none" class="stroke-border" stroke-width="1" />
+        {groupLabels.map((g) => (
+          <text x={g.x} y={g.y + 5} text-anchor="middle" font-size="18" font-weight="600" class="fill-foreground stroke-background" stroke-width="6" paint-order="stroke">{g.name}</text>
+        ))}
+        <rect x={hub.cx - 68} y={hub.cy - 68} width="136" height="136" rx="32" class="fill-primary" />
+        <Icon name="box" x={hub.cx - 28} y={hub.cy - 48} size={56} class="text-primary-foreground" />
+        <text x={hub.cx} y={hub.cy + 42} text-anchor="middle" font-size="20" font-weight="700" class="fill-primary-foreground">{site.name}</text>
+        {nodes.map((n) => (
+          <g class="node">
+            <circle cx={n.x} cy={n.y} r="29" class="fill-card stroke-border" stroke-width="1.5" />
+            <Icon name={n.icon} x={n.x - 13} y={n.y - 13} size={26} class="text-foreground" />
+            <text x={n.lx} y={n.ly} text-anchor={n.anchor} font-size="17" class="fill-muted-foreground">{n.label}</text>
+          </g>
+        ))}
+      </svg>
+      <ul class="grid grid-cols-3 gap-x-2 gap-y-4 sm:hidden" aria-label={`${site.name} includes`}>
+        {all.map((p) => (
+          <li class="flex flex-col items-center gap-1.5 text-center text-xs text-muted-foreground">
+            <span class="grid size-11 place-items-center rounded-full border bg-card text-foreground"><Icon name={p.icon} class="size-5" /></span>
+            {p.label}
+          </li>
+        ))}
+      </ul>
+      <figcaption class="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 font-mono text-sm">
         <span><span aria-hidden="true" class="text-muted-foreground">$ </span>pnpm check</span>
-        <span class="flex items-center gap-1.5 text-primary"><Icon name="check" />every gate green</span>
+        <span class="flex items-center gap-1.5 text-primary"><Icon name="check" />{pieces} pieces, every gate green</span>
       </figcaption>
     </figure>
+  </section>
+
+  <section aria-labelledby="fold" class="mx-auto max-w-6xl px-6 pb-20">
+    <h2 id="fold" class="max-w-3xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+      {pieces} services to wire together, or one box that already works
+    </h2>
+    <div class="mt-10 flex flex-col items-stretch gap-6 md:flex-row md:items-center">
+      <figure class="rounded-2xl border border-dashed p-4 md:flex-1">
+        <svg viewBox="0 0 360 300" role="img" aria-labelledby="before-title" class="w-full">
+          <title id="before-title">Without {site.name}: {pieces} separate services wired to each other</title>
+          {wires.map(([i, j]) => (
+            <line x1={scatter[i][0]} y1={scatter[i][1]} x2={scatter[j][0]} y2={scatter[j][1]} class="stroke-muted-foreground/35" stroke-width="1.25" />
+          ))}
+          {all.map((p, i) => (
+            <g>
+              <circle cx={scatter[i][0]} cy={scatter[i][1]} r="19" class="fill-background stroke-border" stroke-width="1.5" />
+              <Icon name={p.icon} x={scatter[i][0] - 9} y={scatter[i][1] - 9} size={18} class="text-muted-foreground" />
+            </g>
+          ))}
+        </svg>
+        <figcaption class="mt-3 text-center text-sm text-muted-foreground">
+          Without it: {pieces} services to choose, sign up for, connect, secure and keep running
+        </figcaption>
+      </figure>
+      <Icon name="arrow" class="mx-auto size-8 rotate-90 text-muted-foreground md:rotate-0" />
+      <figure class="rounded-2xl border border-primary/40 bg-primary/5 p-4 md:flex-1">
+        <svg viewBox="0 0 360 300" role="img" aria-labelledby="after-title" class="w-full">
+          <title id="after-title">With {site.name}: the same {pieces} pieces in one box</title>
+          <rect x="22" y="22" width="316" height="256" rx="22" class="fill-card stroke-primary/50" stroke-width="1.5" />
+          <Icon name="box" x={42} y={40} size={22} class="text-primary" />
+          <text x="72" y="57" font-size="17" font-weight="700" class="fill-foreground">{site.name}</text>
+          {all.map((p, i) => (
+            <g class="node">
+              <circle cx={70 + (i % 5) * 55} cy={112 + Math.floor(i / 5) * 62} r="21" class="fill-primary/10 stroke-primary/40" stroke-width="1.5" />
+              <Icon name={p.icon} x={70 + (i % 5) * 55 - 10} y={112 + Math.floor(i / 5) * 62 - 10} size={20} class="text-primary" />
+            </g>
+          ))}
+        </svg>
+        <figcaption class="mt-3 text-center text-sm text-muted-foreground">
+          With {site.name}: connected, tested and guarded by <code>pnpm check</code>
+        </figcaption>
+      </figure>
+    </div>
   </section>
 
   <section aria-labelledby="who" class="border-y bg-muted/40">
@@ -307,35 +439,70 @@ const external = site.contact.startsWith('http') ? { target: '_blank', rel: 'noo
       <h2 id="how-title" class="max-w-3xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
         Your agent does the work. One command decides when it is done.
       </h2>
+      <svg viewBox="0 0 760 250" role="img" aria-labelledby="loop-title" class="mt-10 hidden w-full sm:block">
+        <title id="loop-title">You describe a feature, your agent follows a recipe, pnpm check runs every gate; red sends the work back to the agent, green ships it</title>
+        <defs>
+          <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="fill-muted-foreground" /></marker>
+          <marker id="tip-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="fill-destructive" /></marker>
+          <marker id="tip-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="fill-primary" /></marker>
+        </defs>
+        <line x1="128" y1="140" x2="238" y2="140" class="stroke-muted-foreground" stroke-width="2" marker-end="url(#tip)" />
+        <line x1="338" y1="140" x2="448" y2="140" class="stroke-muted-foreground" stroke-width="2" marker-end="url(#tip)" />
+        <line x1="548" y1="140" x2="642" y2="140" class="stroke-primary" stroke-width="2.5" marker-end="url(#tip-green)" />
+        <text x="595" y="128" text-anchor="middle" font-size="14" font-weight="600" class="fill-primary">green</text>
+        <path d="M478 96 C 455 30, 315 30, 302 94" fill="none" class="flow stroke-destructive" stroke-width="2" stroke-dasharray="4.5 4.5" marker-end="url(#tip-red)" />
+        <text x="390" y="34" text-anchor="middle" font-size="14" font-weight="600" class="fill-destructive">red: fix it, run again</text>
+        <circle cx="80" cy="140" r="44" class="fill-background stroke-border" stroke-width="1.5" />
+        <Icon name="user" x={62} y={122} size={36} class="text-foreground" />
+        <circle cx="290" cy="140" r="44" class="fill-background stroke-border" stroke-width="1.5" />
+        <Icon name="bot" x={272} y={122} size={36} class="text-foreground" />
+        <circle cx="500" cy="140" r="44" class="fill-primary/10 stroke-primary" stroke-width="2" />
+        <Icon name="shieldCheck" x={482} y={122} size={36} class="text-primary" />
+        <circle cx="690" cy="140" r="44" class="fill-primary" />
+        <Icon name="rocket" x={672} y={122} size={36} class="text-primary-foreground" />
+        <text x="80" y="214" text-anchor="middle" font-size="15" font-weight="600" class="fill-foreground">You describe</text>
+        <text x="80" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">a feature</text>
+        <text x="290" y="214" text-anchor="middle" font-size="15" font-weight="600" class="fill-foreground">Your agent</text>
+        <text x="290" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">follows a recipe</text>
+        <text x="500" y="214" text-anchor="middle" font-size="15" font-weight="600" font-family="ui-monospace, monospace" class="fill-foreground">pnpm check</text>
+        <text x="500" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">runs every gate</text>
+        <text x="690" y="214" text-anchor="middle" font-size="15" font-weight="600" class="fill-foreground">Done</text>
+        <text x="690" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">you review and ship</text>
+      </svg>
+      <ul class="mt-6 hidden flex-wrap justify-center gap-x-5 gap-y-2 text-sm sm:flex" aria-label="What pnpm check runs">
+        {gates.map((g) => <li class="flex items-center gap-1.5"><Icon name="check" class="size-3.5 text-primary" />{g}</li>)}
+      </ul>
+      <div class="sm:hidden">
       <div class="mt-10 flex flex-col gap-3 lg:flex-row lg:items-stretch">
-        <div class="rounded-xl border bg-background p-5 lg:flex-1">
-          <Icon name="user" class="size-5 text-muted-foreground" />
-          <p class="mt-3 font-semibold">You describe a feature</p>
-          <p class="mt-1 text-sm text-muted-foreground">"Add invoices to each customer's account."</p>
+          <div class="rounded-xl border bg-background p-5 lg:flex-1">
+            <Icon name="user" class="size-5 text-muted-foreground" />
+            <p class="mt-3 font-semibold">You describe a feature</p>
+            <p class="mt-1 text-sm text-muted-foreground">"Add invoices to each customer's account."</p>
+          </div>
+          <div class="grid shrink-0 place-items-center text-muted-foreground"><Icon name="arrow" class="size-6 rotate-90 lg:rotate-0" /></div>
+          <div class="rounded-xl border bg-background p-5 lg:flex-1">
+            <Icon name="bot" class="size-5 text-muted-foreground" />
+            <p class="mt-3 font-semibold">Your agent follows a recipe</p>
+            <p class="mt-1 text-sm text-muted-foreground">AGENTS.md says where the code goes and which tests to add, step by step.</p>
+          </div>
+          <div class="grid shrink-0 place-items-center text-muted-foreground"><Icon name="arrow" class="size-6 rotate-90 lg:rotate-0" /></div>
+          <div class="rounded-xl border border-primary/40 bg-background p-5 lg:flex-1">
+            <p class="font-mono text-sm font-semibold">pnpm check</p>
+            <ul class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+              {gates.map((g) => <li class="flex items-center gap-1.5"><Icon name="check" class="size-3.5 text-primary" />{g}</li>)}
+            </ul>
+          </div>
         </div>
-        <div class="grid shrink-0 place-items-center text-muted-foreground"><Icon name="arrow" class="size-6 rotate-90 lg:rotate-0" /></div>
-        <div class="rounded-xl border bg-background p-5 lg:flex-1">
-          <Icon name="bot" class="size-5 text-muted-foreground" />
-          <p class="mt-3 font-semibold">Your agent follows a recipe</p>
-          <p class="mt-1 text-sm text-muted-foreground">AGENTS.md says where the code goes and which tests to add, step by step.</p>
+        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+          <p class="flex items-center gap-3 rounded-xl border bg-background p-4 text-sm">
+            <Icon name="retry" class="size-5 text-muted-foreground" />
+            <span><span class="font-semibold">Red:</span> the agent reads what failed, fixes it and runs the check again.</span>
+          </p>
+          <p class="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 p-4 text-sm">
+            <Icon name="check" class="size-5 text-primary" />
+            <span><span class="font-semibold">Green:</span> done. You review the result and ship it.</span>
+          </p>
         </div>
-        <div class="grid shrink-0 place-items-center text-muted-foreground"><Icon name="arrow" class="size-6 rotate-90 lg:rotate-0" /></div>
-        <div class="rounded-xl border border-primary/40 bg-background p-5 lg:flex-1">
-          <p class="font-mono text-sm font-semibold">pnpm check</p>
-          <ul class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-            {gates.map((g) => <li class="flex items-center gap-1.5"><Icon name="check" class="size-3.5 text-primary" />{g}</li>)}
-          </ul>
-        </div>
-      </div>
-      <div class="mt-3 grid gap-3 sm:grid-cols-2">
-        <p class="flex items-center gap-3 rounded-xl border bg-background p-4 text-sm">
-          <Icon name="retry" class="size-5 text-muted-foreground" />
-          <span><span class="font-semibold">Red:</span> the agent reads what failed, fixes it and runs the check again.</span>
-        </p>
-        <p class="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 p-4 text-sm">
-          <Icon name="check" class="size-5 text-primary" />
-          <span><span class="font-semibold">Green:</span> done. You review the result and ship it.</span>
-        </p>
       </div>
       <details class="mt-10 max-w-3xl rounded-xl border bg-card">
         <summary class="cursor-pointer px-5 py-3 text-sm font-medium">For developers: the commands behind these steps</summary>
