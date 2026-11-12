@@ -144,7 +144,7 @@ services:
   temporal-ui:
     logging: *logging
     mem_limit: 128m
-    image: temporalio/ui:2.54.1
+    image: temporalio/ui:2.58.0
     depends_on: { temporal-namespace: { condition: service_completed_successfully } }
     environment: { TEMPORAL_ADDRESS: "temporal:7233", TEMPORAL_UI_PORT: "8233" }
     ports: ["127.0.0.1:${TEMPORAL_UI_PORT:-8233}:8233"]
