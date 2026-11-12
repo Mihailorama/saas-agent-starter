@@ -7,7 +7,8 @@ Single source of rules for coding agents (Claude Code, Codex, others) and humans
 
 `pnpm check` is green. It runs, in order: Biome (format + lint), the generated web API types
 check (`check:api-types`; after changing a route schema run `pnpm api:types`), the analytics event check
-(`check:events`), the feature-flag check (`check:flags`), `scripts/*.test.mjs`, typecheck with tsrs,
+(`check:events`), the feature-flag check (`check:flags`), the budgets (`check:budgets`: gate configs,
+suppressions, AGENTS.md size; docs/quality.md), `scripts/*.test.mjs`, typecheck with tsrs,
 TS unit/integration tests, `cargo fmt/clippy -D warnings/test`, `ruff format/check`,
 pyright (strict), pytest, the license gate for all three ecosystems, the key-free eval
 (`pnpm eval --fake-llm`, needs Docker), the Playwright smoke and the visual check
@@ -20,6 +21,9 @@ fastest and lightest). Releases are also checked with the official TypeScript 7 
 Go): `pnpm check:release` locally, and CI does it on every `v*` tag. If tsrs and tsc disagree,
 tsc wins: fix the code to satisfy tsc and record the case in docs/TODO.md. Do not finish a task with it red, and do not
 "fix" it by skipping, deleting or weakening a test, lint rule or license entry.
+
+A bug fix comes with a test that fails without the fix, in the same change (a new case in the
+existing test file is enough). A defect a user found gets that test before its tracker item closes.
 
 ## Setup
 
@@ -169,6 +173,7 @@ docs/secrets.md     secrets vault: Vaultwarden install or Bitwarden connect, age
 docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 docs/security.md    sign-up protection (disposable email), bot-check follow-up
 docs/legal.md       legal pages, acceptance, age, marketing consent/unsubscribe; what a lawyer reviews
+docs/quality.md     quality budgets: gate config hashes, suppression cap, AGENTS.md size (`pnpm check:budgets`)
 docs/updates.md     taking starter updates into a product: merge a release tag, conflicts, migration order
 ```
 
