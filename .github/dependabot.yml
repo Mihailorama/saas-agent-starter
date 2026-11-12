@@ -27,6 +27,13 @@ updates:
     commit-message: { prefix: chore, include: scope }
     ignore:
       - { dependency-name: node, update-types: [version-update:semver-major] }
+      # The worker's runtime must match the Python its venv is built with (the uv image's
+      # python3.12 tag): a lone bump of `python` ships a venv that cannot start. Change both
+      # together, by hand, with requires-python and pyright's pythonVersion.
+      - {
+          dependency-name: python,
+          update-types: [version-update:semver-major, version-update:semver-minor],
+        }
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly }
