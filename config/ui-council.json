@@ -1,0 +1,19 @@
+{
+  "$comment": "UI council (docs/ui.md \"UI council\"): `pnpm ui:council` screenshots the working tree, then each member scores it 1-10 per category next to main and any reference products in apps/web/.visual/references/<product>/*.png. A round passes when every member gives every category at least `target` and rates this branch at least as high as every reference. Members run on the developer's own CLI subscriptions; `model` is required (no default). Reviewers are never told the target.",
+  "target": 9,
+  "categories": [
+    "visual hierarchy",
+    "typography",
+    "color and contrast",
+    "spacing and alignment",
+    "consistency",
+    "iconography",
+    "clarity of labels and actions"
+  ],
+  "projects": ["desktop-light", "desktop-dark", "mobile-light"],
+  "screens": ["screen-*", "page-*"],
+  "members": [
+    { "name": "codex", "cli": "codex", "model": "gpt-6.1-sol", "effort": "high" },
+    { "name": "opus", "cli": "claude", "model": "claude-opus-5-5" }
+  ]
+}

@@ -48,6 +48,7 @@
     "seo:report": "node scripts/seo-report.mjs",
     "seo:indexnow": "node scripts/indexnow.mjs",
     "geo:check": "node scripts/geo-check.mjs",
+    "ui:council": "node scripts/ui-council.mjs",
     "api:types": "node --env-file=.env.example --env-file-if-exists=.env packages/api-types/generate.mjs",
     "check:api-types": "pnpm api:types --check"
   },

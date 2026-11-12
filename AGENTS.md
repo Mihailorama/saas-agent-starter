@@ -574,6 +574,10 @@ Details: docs/ui.md, DESIGN.md, ADR 0023. Look at `/dev/ui` (`pnpm dev`) before 
 - When the `impeccable` skill is installed (`npx impeccable install`, docs/ui.md), run
   `/impeccable critique` and `/impeccable audit` on the screens you changed and fix what they
   find. Do not vendor the skill into this repository.
+- A UI redesign or polish task ends with `/ui-council` (`pnpm ui:council`, docs/ui.md "UI
+  council"): several models score blinded screenshots until each rates every category at the
+  target; the round table goes into the PR. Never tell a member the target, edit its history or
+  lower the bar to pass.
 
 ## PRs and releases
 

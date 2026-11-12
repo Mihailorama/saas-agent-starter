@@ -274,7 +274,7 @@ const git = (...args) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 
-function playwright(args, env) {
+export function playwright(args, env) {
   return spawnSync(
     'pnpm',
     ['exec', 'playwright', 'test', '-c', 'playwright.visual.config.ts', ...args],
@@ -293,7 +293,7 @@ function hasUiChanges(base) {
 }
 
 /** Main's screenshots at `base`, rendered from a temporary worktree; cached per sha. */
-function mainScreenshots(base) {
+export function mainScreenshots(base) {
   const pw = execFileSync('pnpm', ['exec', 'playwright', '--version'], {
     cwd: web,
     encoding: 'utf8',
