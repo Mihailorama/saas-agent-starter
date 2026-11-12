@@ -53,8 +53,8 @@
     "check:api-types": "pnpm api:types --check"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.5",
-    "@clack/prompts": "1.8.1",
+    "@biomejs/biome": "2.6.6",
+    "@clack/prompts": "1.9.0",
     "pyright": "1.1.414",
     "tsrs": "0.22.0-ts7.1.0-beta",
     "typescript": "7.0.2"
