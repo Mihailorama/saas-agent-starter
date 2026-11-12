@@ -51,6 +51,12 @@ export function pickShots(base, config) {
   });
 }
 
+/** Main's shots of the same screens as ours only: a partial render must not look like a worse app. */
+export function pairedShots(theirs, ours) {
+  const keys = new Set(ours.map((s) => `${s.project}/${s.id}`));
+  return theirs.filter((s) => keys.has(`${s.project}/${s.id}`));
+}
+
 /** Reference products: every folder of apps/web/.visual/references with PNGs in it. */
 export function referenceShots(base) {
   if (!existsSync(base)) return {};
@@ -260,16 +266,24 @@ function main() {
       '--update-snapshots=all',
       '--reporter=dot',
       ...config.projects.flatMap((p) => ['--project', p]),
+      // The gallery is the slowest test; render it only when the config scores it.
+      ...(config.screens.some((p) => matches(p, 'gallery-x')) ? [] : ['--grep-invert', 'gallery']),
     ],
     { VISUAL_SNAPSHOT_DIR: current, VISUAL_OUT: join(dir, 'run') },
   );
+  const ourShots = pickShots(current, config);
+  if (!ourShots.length)
+    throw new Error('ui-council: no screenshots of the working tree; see the output above');
   const shots = {
-    [BRANCH]: pickShots(current, config),
-    main: pickShots(main, config),
+    [BRANCH]: ourShots,
+    main: pairedShots(pickShots(main, config), ourShots),
     ...referenceShots(refs),
   };
-  if (!shots[BRANCH].length)
-    throw new Error('ui-council: no screenshots of the working tree; see the output above');
+  if (shots.main.length < ourShots.length)
+    console.log(
+      `ui-council: main has ${shots.main.length} of ${ourShots.length} screens (a render failed or a screen is new); only those are compared`,
+    );
+  if (!shots.main.length) delete shots.main;
 
   const labels = blind(Object.keys(shots));
   const ours = Object.keys(labels).find((l) => labels[l] === BRANCH);

@@ -8,6 +8,7 @@ import {
   blind,
   memberCommand,
   memberPasses,
+  pairedShots,
   parseAnswer,
   pickShots,
   prompt,
@@ -109,4 +110,11 @@ test('member commands are read-only, carry the model and drop API keys', () => {
     () => memberCommand({ name: 'n', cli: 'x', model: 'm' }, 'p', img, '/x'),
     /unknown cli/,
   );
+});
+
+test('pairedShots keeps only the screens both sides have', () => {
+  const s = (project, id) => ({ project, id, path: `/${project}/${id}.png` });
+  const ours = [s('desktop-light', 'screen-list'), s('mobile-light', 'screen-list')];
+  const theirs = [s('desktop-light', 'screen-list'), s('desktop-dark', 'screen-list')];
+  assert.deepEqual(pairedShots(theirs, ours), [theirs[0]]);
 });
