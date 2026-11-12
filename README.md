@@ -230,6 +230,9 @@ New behaviour ships behind PostHog feature flags declared in `config/flags.json`
 with `CHANGELOG.md`, and each release comments "Released in vX.Y.Z" on the issues it closed.
 Details: [docs/feature-flags.md](docs/feature-flags.md), [docs/releases.md](docs/releases.md).
 
+Your product built on the starter takes its updates by merging a starter release tag; the
+conflicts to expect and the migration order are in [docs/updates.md](docs/updates.md).
+
 ## SSO
 
 - **OIDC** (any provider: Authentik, Okta, Entra ID, Google Workspace, Keycloak...): set
