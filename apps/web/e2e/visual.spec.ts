@@ -6,6 +6,9 @@ import { pages } from './visual-pages';
 
 for (const { path, id, ready } of pages) {
   test(`screenshot ${id}`, async ({ page }) => {
+    // The gallery screenshots every section (15+), each until two shots match: on a busy machine
+    // that outgrows the default 30 s, and a failed render keeps main's screenshots out of the cache.
+    if (id === 'gallery') test.slow();
     await page.goto(path);
     await ready(page);
     if (id !== 'gallery') {
