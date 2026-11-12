@@ -27,7 +27,7 @@ ARG VITE_FLAGS_ON= VITE_FLAGS_OFF=
 RUN pnpm --filter web build
 
 # Static files + /api reverse proxy; runs as non-root on port 8080.
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 ENV S3_PUBLIC_ORIGIN=http://localhost:8333 SENTRY_PUBLIC_ORIGIN=""
 # Space-separated origins of the enabled analytics sinks, added to the CSP (empty = none).
 ENV ANALYTICS_ORIGINS=""
