@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "@app/db": "workspace:*",
-    "@aws-sdk/client-s3": "^3.1164.0",
-    "@aws-sdk/s3-request-presigner": "^3.1164.0",
+    "@aws-sdk/client-s3": "^3.1165.0",
+    "@aws-sdk/s3-request-presigner": "^3.1165.0",
     "@better-auth/api-key": "^1.7.18",
     "@better-auth/passkey": "^1.7.17",
     "@fastify/cors": "^11.4.1",
