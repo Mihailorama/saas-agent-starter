@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { inUse, legalDocs, pricingModels } from '../apps/site/src/legal.ts';
+import {
+  exampleValues,
+  inUse,
+  legalDocs,
+  pricingModels,
+  withOverride,
+} from '../apps/site/src/legal.ts';
 import { billingTerms } from '../apps/web/src/lib/billing-terms.ts';
 import {
   buildArgErrors,
@@ -143,4 +149,32 @@ test('the billing page states only the terms that apply to this organization', (
   const terms = billingTerms(contract, tax).join();
   assert.match(terms, /follows your contract/);
   assert.doesNotMatch(terms, /TAX|renew automatically|Cancel any time/);
+});
+
+test('a build-time override names processors by id and keeps the rest of the catalog', () => {
+  const base = JSON.parse(readFileSync(new URL('../config/legal.json', import.meta.url), 'utf8'));
+  const o = withOverride(
+    base,
+    JSON.stringify({ template: false, processors: [{ id: 'hosting', name: 'Real Host Inc.' }] }),
+  );
+  assert.equal(o.processors.length, base.processors.length);
+  assert.equal(o.processors.find((p) => p.id === 'hosting').name, 'Real Host Inc.');
+  assert.equal(
+    o.processors.find((p) => p.id === 'hosting').purpose,
+    base.processors.find((p) => p.id === 'hosting').purpose,
+  );
+  assert.equal(withOverride(base, undefined), base);
+});
+
+test('with the template off, example values in what a page shows are refused', () => {
+  const base = JSON.parse(readFileSync(new URL('../config/legal.json', import.meta.url), 'utf8'));
+  const hosting = base.processors.filter((p) => p.id === 'hosting');
+  assert.deepEqual(exampleValues({ ...base, template: true }, hosting), []);
+  const off = withOverride(base, JSON.stringify({ template: false }));
+  const left = exampleValues(off, hosting);
+  assert.ok(left.includes('processors.hosting.name'), left.join());
+  assert.ok(
+    left.some((k) => k.startsWith('company.')),
+    left.join(),
+  );
 });

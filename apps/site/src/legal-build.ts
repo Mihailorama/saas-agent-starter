@@ -6,7 +6,15 @@ import { resolve } from 'node:path';
 import catalog from '../../../config/components.json' with { type: 'json' };
 import config from '../../../config/legal.json' with { type: 'json' };
 import plans from '../../../config/plans.json' with { type: 'json' };
-import { DOC_IDS, inUse, type LegalConfig, legalDocs, legalPath } from './legal.ts';
+import {
+  DOC_IDS,
+  exampleValues,
+  inUse,
+  type LegalConfig,
+  legalDocs,
+  legalPath,
+  withOverride,
+} from './legal.ts';
 
 function answers() {
   // `astro build` runs in apps/site (pnpm --filter site build, also in the Dockerfile).
@@ -18,20 +26,13 @@ function answers() {
   }
 }
 
-/**
- * A deployment's own company details (SITE_LEGAL_JSON, a JSON object): the repo keeps the template
- * in config/legal.json, a site such as the product's own sets its legal entity at build time.
- * Top-level keys replace the config's; `company` is merged field by field.
- */
-function override(base: LegalConfig): LegalConfig {
-  const raw = process.env.SITE_LEGAL_JSON;
-  if (!raw) return base;
-  const o = JSON.parse(raw) as Partial<LegalConfig>;
-  return { ...base, ...o, company: { ...base.company, ...(o.company ?? {}) } };
-}
-
-export const legal = override(config as LegalConfig);
+export const legal = withOverride(config as LegalConfig, process.env.SITE_LEGAL_JSON);
 const used = legal.processors.filter((p) => inUse(p, catalog.components, process.env, answers()));
+const examples = exampleValues(legal, used);
+if (examples.length)
+  throw new Error(
+    `legal pages: template is off but these are still example values: ${examples.join(', ')}. Set them in config/legal.json or SITE_LEGAL_JSON (docs/legal.md).`,
+  );
 export const legalPages = legalDocs(legal, used, plans);
 /** Footer links: every legal page, in a fixed order. */
 export const legalLinks = DOC_IDS.map((id) => ({

@@ -103,6 +103,40 @@ export function pricingModels(plans: Plans): Set<string> {
   return models;
 }
 
+/**
+ * A deployment's own details over the repo's config (SITE_LEGAL_JSON, docs/legal.md): top-level
+ * keys replace the config's, `company` merges field by field, and `processors` entries merge by
+ * `id` into the catalog (`[{ "id": "hosting", "name": "..." }]`), so a deployment names its real
+ * providers without copying the catalog.
+ */
+export function withOverride(base: LegalConfig, raw: string | undefined): LegalConfig {
+  if (!raw) return base;
+  const o = JSON.parse(raw) as Partial<LegalConfig>;
+  const named = new Map((o.processors ?? []).map((p) => [p.id, p]));
+  return {
+    ...base,
+    ...o,
+    company: { ...base.company, ...(o.company ?? {}) },
+    processors: base.processors.map((p) => ({ ...p, ...(named.get(p.id) ?? {}) })),
+  };
+}
+
+/**
+ * Example values a page would still show: none are allowed once `template` is false. The build
+ * refuses them, because a deployment can turn the template off at build time (SITE_LEGAL_JSON)
+ * where `pnpm check:legal` never looks.
+ */
+export function exampleValues(config: LegalConfig, processors: Processor[]): string[] {
+  if (config.template) return [];
+  const texts: [string, unknown][] = [
+    ...Object.entries(config.company).map(([k, v]) => [`company.${k}`, v] as [string, unknown]),
+    ['governingLaw', config.governingLaw],
+    ['jurisdiction', config.jurisdiction],
+    ...processors.map((p) => [`processors.${p.id}.name`, p.name] as [string, unknown]),
+  ];
+  return texts.filter(([, v]) => typeof v === 'string' && /example/i.test(v)).map(([k]) => k);
+}
+
 const TEMPLATE_NOTE =
   'This text is a template generated from the product configuration. It has not been reviewed by a lawyer and does not claim compliance with any law. Have it reviewed for every country you sell in before relying on it.';
 
@@ -319,7 +353,9 @@ export function legalDocs(
     {
       heading: 'What we use',
       paragraphs: [
-        'Cookies and similar storage are small pieces of data a site keeps in your browser. Strictly necessary ones run always. Everything else runs only after you agree, and you can change your choice any time with Cookie settings at the bottom of the page.',
+        consentTools.length
+          ? 'Cookies and similar storage are small pieces of data a site keeps in your browser. Strictly necessary ones run always. Everything else runs only after you agree, and you can change your choice any time with Cookie settings at the bottom of the page.'
+          : 'Cookies and similar storage are small pieces of data a site keeps in your browser. This deployment uses only strictly necessary ones, so there is nothing to agree to and no cookie banner.',
         'This list follows the tools this deployment uses and can change without a new version of this policy.',
       ],
       generated: true,

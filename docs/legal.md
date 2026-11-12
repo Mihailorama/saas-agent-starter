@@ -40,9 +40,12 @@ lawyer must review them for every country the product is sold in.
    example values (anything containing "example") and the pages drop the template notice.
    A site that is not the product itself (this repository's own site, say) can keep the template in
    `config/legal.json` and set its entity at build time instead: `SITE_LEGAL_JSON` is a JSON object
-   whose top-level keys replace the config's and whose `company` is merged field by field (GitHub
-   Pages: repo variable `PAGES_LEGAL_JSON`). It changes only the public pages, not the versions users
-   accept in the app.
+   whose top-level keys replace the config's, whose `company` is merged field by field and whose
+   `processors` entries are merged by `id` (`"processors": [{"id": "hosting", "name": "..."}]`)
+   (GitHub Pages: repo variable `PAGES_LEGAL_JSON`). It changes only the public pages, not the
+   versions users accept in the app. With `"template": false` the build fails while any company
+   field or the name of a processor the pages list still contains "example": the gate in step 2
+   only sees `config/legal.json`, so the build checks what the override produces.
 
 4. Set `VITE_SITE_URL` (the web links the pages there) and build the site with the web's `VITE_*`
    values and the deployment's `SITE_DEPLOY_ENV` (below).
