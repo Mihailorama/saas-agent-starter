@@ -384,7 +384,7 @@ services:
   # --- profile ops: Temporal Web UI, loopback only (ssh -L 8233:127.0.0.1:8233 <server>).
   temporal-ui:
     profiles: [ops]
-    image: temporalio/ui:2.58.0
+    image: temporalio/ui:2.58.1
     logging: *logging
     mem_limit: 128m
     restart: unless-stopped
