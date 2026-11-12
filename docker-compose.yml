@@ -488,7 +488,7 @@ services:
   # Loki (logs); Grafana is the single pane. compose.permissive.yaml drops Loki + Grafana.
   otel-collector:
     profiles: [observability]
-    image: otel/opentelemetry-collector-contrib:0.164.0
+    image: otel/opentelemetry-collector-contrib:0.165.0
     logging: *logging
     mem_limit: 384m
     user: "0" # reads /var/lib/docker/containers (root-owned); mounted read-only
