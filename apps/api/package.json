@@ -29,7 +29,7 @@
     "@opentelemetry/instrumentation-http": "^0.301.1",
     "@opentelemetry/instrumentation-ioredis": "^0.73.0",
     "@opentelemetry/instrumentation-pg": "^0.78.0",
-    "@opentelemetry/sdk-metrics": "^2.12.0",
+    "@opentelemetry/sdk-metrics": "^3.1.1",
     "@opentelemetry/sdk-node": "^0.301.1",
     "@react-email/render": "^2.2.0",
     "@sentry/node-core": "^10.78.0",
