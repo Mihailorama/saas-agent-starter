@@ -345,7 +345,7 @@ services:
       postgres: { condition: service_healthy, required: false }
 
   temporal:
-    image: temporalio/server:1.32.0
+    image: temporalio/server:1.32.2
     logging: *logging
     mem_limit: 512m
     restart: unless-stopped
