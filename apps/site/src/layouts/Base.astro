@@ -25,7 +25,7 @@ const hasPosts = (await posts()).length > 0;
   <body class="flex min-h-screen flex-col">
     <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:p-2">Skip to content</a>
     <header class="border-b">
-      <nav aria-label="Main" class="mx-auto flex max-w-5xl items-center gap-6 px-6 py-2">
+      <nav aria-label="Main" class="mx-auto flex max-w-6xl items-center gap-6 px-6 py-2">
         <a href={path('/')} class="py-2 font-semibold">{site.name}</a>
         {hasPosts && <a href={path('/blog/')} class="py-2 text-sm text-muted-foreground hover:text-foreground">Blog</a>}
         <a href={`${path('/')}#offers`} class="py-2 text-sm text-muted-foreground hover:text-foreground">Managed</a>
@@ -52,7 +52,7 @@ const hasPosts = (await posts()).length > 0;
       <slot />
     </main>
     <footer class="border-t">
-      <div class="mx-auto flex max-w-5xl flex-wrap gap-4 px-6 py-6 text-sm text-muted-foreground">
+      <div class="mx-auto flex max-w-6xl flex-wrap gap-4 px-6 py-6 text-sm text-muted-foreground">
         <span>© {new Date().getFullYear()} {site.organization.name}</span>
         {hasPosts && <a href={path('/blog/')} class="hover:text-foreground">Blog</a>}
         {hasPosts && <a href={path('/rss.xml')} class="hover:text-foreground">RSS</a>}

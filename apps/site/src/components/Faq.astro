@@ -2,8 +2,8 @@
 // FAQ section; pair it with faqLd() in the page's jsonLd so the markup matches the visible text.
 interface Props {
   items: { q: string; a: string }[];
-  /** Container width; match the page's own column (blog posts max-w-3xl, the landing max-w-5xl). */
-  width?: 'max-w-3xl' | 'max-w-5xl';
+  /** Container width; match the page's own column (blog posts max-w-3xl, the landing max-w-6xl). */
+  width?: 'max-w-3xl' | 'max-w-6xl';
 }
 const { items, width = 'max-w-3xl' } = Astro.props;
 ---
