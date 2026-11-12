@@ -418,7 +418,7 @@ services:
   # (deploy/sites/s3.caddy). Credentials: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY become its admin.
   s3:
     profiles: [s3]
-    image: chrislusf/seaweedfs:4.52
+    image: chrislusf/seaweedfs:4.53
     logging: *logging
     mem_limit: 256m
     restart: unless-stopped

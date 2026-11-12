@@ -116,7 +116,7 @@ services:
   # Local stand-in for off-site backup storage: a second SeaweedFS, HTTPS only (pgBackRest
   # speaks only TLS to S3) with a self-signed certificate from backup-s3-tls.
   backup-s3:
-    image: chrislusf/seaweedfs:4.52
+    image: chrislusf/seaweedfs:4.53
     logging: *logging
     mem_limit: 512m # local stand-in only; SeaweedFS fills its limit with cache under load
     restart: unless-stopped

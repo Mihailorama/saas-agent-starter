@@ -68,7 +68,7 @@ services:
   s3:
     logging: *logging
     mem_limit: 256m
-    image: chrislusf/seaweedfs:4.52
+    image: chrislusf/seaweedfs:4.53
     command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json -ip.bind=0.0.0.0 -volume.max=64
     ports: ["127.0.0.1:${S3_PORT:-8333}:8333"]
     volumes:
