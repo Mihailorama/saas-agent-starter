@@ -174,6 +174,7 @@ docs/STACK.md       measured memory of the stack, Lite vs Full LLM-ops
 docs/security.md    sign-up protection (disposable email), bot-check follow-up
 docs/legal.md       legal pages, acceptance, age, marketing consent/unsubscribe; what a lawyer reviews
 docs/quality.md     quality budgets: gate config hashes, suppression cap, AGENTS.md size (`pnpm check:budgets`)
+docs/updates.md     taking starter updates into a product: merge a release tag, conflicts, migration order
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,
