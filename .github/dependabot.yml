@@ -9,6 +9,9 @@ updates:
     ignore:
       # Types track the Node runtime major (22).
       - { dependency-name: "@types/node", update-types: [version-update:semver-major] }
+      # The data table follows shadcn/ui's pattern, which is written for TanStack Table v8; v9 is
+      # a different API. Move when shadcn/ui's data table does.
+      - { dependency-name: "@tanstack/react-table", update-types: [version-update:semver-major] }
   - package-ecosystem: uv
     directory: /services/worker-py
     schedule: { interval: weekly }
