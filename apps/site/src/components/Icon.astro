@@ -1,0 +1,28 @@
+---
+// lucide icons (ISC) as inline SVG: the site has no React, so no lucide-react. Pass x/y/size to
+// place one inside another <svg> (the landing's diagrams).
+import { type IconName, paths } from '../icons.ts';
+
+interface Props {
+  name: IconName;
+  class?: string;
+  x?: number;
+  y?: number;
+  size?: number;
+}
+const { name, class: cls = 'size-4', x, y, size } = Astro.props;
+const placed = size === undefined ? {} : { x, y, width: size, height: size };
+---
+
+<svg
+  aria-hidden="true"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  class:list={['shrink-0', size === undefined && cls, size !== undefined && cls !== 'size-4' && cls]}
+  {...placed}
+  set:html={paths[name]}
+/>

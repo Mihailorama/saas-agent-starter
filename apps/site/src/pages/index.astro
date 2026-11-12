@@ -7,7 +7,9 @@
 // The full feature list lives in the README; the page links to it instead of repeating it.
 import { readdirSync, readFileSync } from 'node:fs';
 import Faq from '../components/Faq.astro';
+import Icon from '../components/Icon.astro';
 import { faqLd } from '../faq.ts';
+import type { IconName } from '../icons.ts';
 import Base from '../layouts/Base.astro';
 import { abs, site } from '../site.ts';
 
@@ -27,22 +29,120 @@ const count = (f: () => number) => {
 const adrs = count(() => readdirSync(new URL('docs/adr/', root)).filter((f) => /^\d{4}-.+\.md$/.test(f)).length);
 const recipes = count(() => readFileSync(new URL('AGENTS.md', root), 'utf8').match(/^## Recipe/gm)?.length ?? 0);
 
-// The hero graphic: what a company has to assemble, then the same pieces folded into one box.
-// Each piece exists on main (README, AGENTS.md architecture map).
-const groups = [
-  { name: 'Run', items: ['Sign-in and SSO', 'Billing', 'CRM', 'Support desk', 'Admin console'] },
-  { name: 'Grow', items: ['Marketing site', 'Analytics', 'Email'] },
-  { name: 'Build', items: ['AI gateway', 'API and webhooks', 'Agent rules'] },
-  { name: 'Trust', items: ['Deploy', 'Backups', 'Secrets vault', 'Monitoring'] },
+// The hero graphic: the pieces a company runs on, already in one box. Each exists on main
+// (README, AGENTS.md architecture map).
+const groups: { name: string; items: { label: string; icon: IconName }[] }[] = [
+  {
+    name: 'Run',
+    items: [
+      { label: 'Sign-in and SSO', icon: 'lock' },
+      { label: 'Billing', icon: 'card' },
+      { label: 'CRM', icon: 'users' },
+      { label: 'Support desk', icon: 'lifebuoy' },
+      { label: 'Admin console', icon: 'shield' },
+    ],
+  },
+  {
+    name: 'Grow',
+    items: [
+      { label: 'Marketing site', icon: 'globe' },
+      { label: 'Analytics', icon: 'chart' },
+      { label: 'Email', icon: 'mail' },
+    ],
+  },
+  {
+    name: 'Trust',
+    items: [
+      { label: 'Deploy', icon: 'rocket' },
+      { label: 'Backups', icon: 'database' },
+      { label: 'Secrets vault', icon: 'key' },
+      { label: 'Monitoring', icon: 'activity' },
+    ],
+  },
+  {
+    name: 'Build',
+    items: [
+      { label: 'AI gateway', icon: 'sparkles' },
+      { label: 'API and webhooks', icon: 'plug' },
+      { label: 'Agent rules', icon: 'file' },
+    ],
+  },
 ];
-// The "before" pile: the same pieces, shuffled and tilted (fixed Tailwind classes, no inline
-// styles; small angles so every label stays readable at 390px).
-const pile = [
-  'Billing', 'Deploy', 'CRM', 'Agent rules', 'Analytics', 'Sign-in and SSO', 'Backups', 'Email',
-  'Support desk', 'AI gateway', 'Secrets vault', 'Marketing site', 'Admin console', 'Monitoring',
-  'API and webhooks',
+const all = groups.flatMap((g) => g.items);
+const pieces = all.length;
+
+// Hero diagram: the pieces on an ellipse around the box, clockwise by group, a wider gap between
+// groups (11 steps of 22 degrees + 4 gaps of 29.5 = 360).
+const hub = { w: 720, h: 540, cx: 360, cy: 270, rx: 190, ry: 185 };
+const rad = (d: number) => (d * Math.PI) / 180;
+// Labels sit outside the ring: beside a node on the sides, above or below it at the top and bottom.
+type Anchor = 'start' | 'middle' | 'end';
+const nodes: { label: string; icon: IconName; x: number; y: number; lx: number; ly: number; anchor: Anchor }[] = [];
+const groupLabels: { name: string; x: number; y: number }[] = [];
+let angle = -172;
+for (const g of groups) {
+  const first = angle;
+  g.items.forEach((p, i) => {
+    if (i) angle += 22;
+    const c = Math.cos(rad(angle));
+    const x = hub.cx + hub.rx * c;
+    const y = hub.cy + hub.ry * Math.sin(rad(angle));
+    const side = Math.abs(c) > 0.2;
+    nodes.push({
+      ...p,
+      x,
+      y,
+      lx: side ? x + Math.sign(c) * 38 : x,
+      ly: side ? y + 6 : y < hub.cy ? y - 40 : y + 52,
+      anchor: side ? (c > 0 ? 'start' : 'end') : 'middle',
+    });
+  });
+  const mid = rad((first + angle) / 2);
+  groupLabels.push({ name: g.name, x: hub.cx + hub.rx * 0.68 * Math.cos(mid), y: hub.cy + hub.ry * 0.66 * Math.sin(mid) });
+  angle += 29.5;
+}
+
+// "Before": the same pieces scattered, each wired to two others (fixed positions, no randomness
+// so the build is reproducible).
+const scatter = [
+  [44, 52], [150, 34], [262, 58], [326, 150], [262, 252], [124, 266], [34, 186], [96, 132],
+  [200, 112], [312, 236], [184, 198], [62, 258], [246, 168], [132, 196], [330, 46],
 ];
-const tilt = ['-rotate-3', 'rotate-2', 'rotate-3 translate-y-1', '-rotate-2 -translate-y-1', 'rotate-1', '-rotate-6'];
+const wires = scatter.flatMap((_, i) => [
+  [i, (i + 3) % scatter.length],
+  [i, (i + 7) % scatter.length],
+]);
+
+// "Who does what": the split of work the product is built around.
+const lanes = [
+  {
+    icon: 'user',
+    who: 'You',
+    items: ['Decide what to build next', 'Describe it to your agent', 'Review the result and ship it'],
+  },
+  {
+    icon: 'bot',
+    who: 'Your coding agent',
+    items: ['Reads the rules in AGENTS.md', 'Follows a recipe for the change', 'Runs pnpm check until it is green'],
+  },
+  {
+    icon: 'box',
+    who: `${site.name}, already running`,
+    items: ['Sign-in, teams and roles', 'Billing, CRM and support', 'Deploys, backups and monitoring'],
+  },
+] as const;
+
+// The app mock in "Day one": the real shell's nav (apps/web/src/pages/shell.tsx) and the projects
+// table's columns (pages/projects.tsx); sample names per PRODUCT.md.
+const nav = ['Projects', 'AI calls', 'Billing', 'Members', 'API keys', 'Webhooks'];
+const rows = [
+  ['Apollo', 'a3f9 2c71', 'Nov 3'],
+  ['Gemini', '7be0 91d4', 'Nov 5'],
+  ['Mercury', 'Processing…', 'Today'],
+];
+
+// What `pnpm check` runs (AGENTS.md "Definition of done"), in words a founder reads.
+const gates = ['Format and lint', 'Types', 'Tests', 'Tenant isolation', 'Licenses', 'Accessibility', 'Visual check'];
 
 // The terminal in "How it works": real commands from AGENTS.md "Setup" and /add-resource.
 const session = [
@@ -53,40 +153,6 @@ const session = [
   ['#', 'then ask your agent, e.g. in Claude Code:'],
   ['>', '/add-resource invoices'],
   ['$', 'pnpm check'],
-];
-
-const steps = [
-  {
-    title: 'Get the box running',
-    text: 'Clone it and start it on your machine, or let your coding agent run the setup. pnpm run infra puts it on your own server.',
-  },
-  {
-    title: 'Describe a feature to your agent',
-    text: 'AGENTS.md tells Claude Code or Codex where code goes, with step-by-step recipes for each kind of change.',
-  },
-  {
-    title: 'Let one command decide',
-    text: 'pnpm check runs lint, types, tests and every gate. Green means done. Red means the agent keeps going.',
-  },
-];
-
-const benefits = [
-  {
-    title: 'Run the company',
-    text: 'Sign-in with SSO and 2FA, organizations and roles, billing for any pricing model, a CRM, a support desk and an admin console.',
-  },
-  {
-    title: 'Grow it',
-    text: 'A marketing site with a blog, product analytics and funnels, in-app surveys, referral rewards and tools for social posting and search rankings.',
-  },
-  {
-    title: 'Build it with agents',
-    text: 'Rules in AGENTS.md, ready agent commands, and one check that tells an agent when its work is done. You review outcomes, not every line.',
-  },
-  {
-    title: 'Trust it with customers',
-    text: "Each customer's data is isolated by the database itself. Audit log, secrets vault, backups with restore checks and a record of every AI call.",
-  },
 ];
 
 // Repo facts a visitor can open and check; no customers, stars or testimonials are claimed.
@@ -107,6 +173,10 @@ const faq = [
     a: 'You need to be comfortable letting a coding agent run commands and reading what it reports. If you would rather not run servers at all, the managed option sets everything up for you.',
   },
   {
+    q: 'Do I need to know TypeScript, Python and Rust?',
+    a: 'No. Your agent writes the code and AGENTS.md tells it which language goes where: TypeScript for the API and the web app, Python for AI and background work, Rust only for a hot path someone has measured. You need Docker and the tools from the quickstart installed.',
+  },
+  {
     q: 'Is it really free?',
     a: 'Yes. The code is licensed MIT No Attribution (MIT-0): use, change and sell it without keeping a notice. There are no license fees. Every code dependency is permissive or MPL-2.0, enforced in CI.',
   },
@@ -116,7 +186,15 @@ const faq = [
   },
   {
     q: 'What does the managed option include?',
-    a: 'We host Orgfold for you and set it up: servers and domain, the services you already use connected, updates and support. Talk to us for the details and a price.',
+    a: 'We host Orgfold for you and set it up: servers and domain, the services you already use connected, updates and support. It runs the same open-source code, so you can take it over and run it yourself at any time. Talk to us for the details and a price.',
+  },
+  {
+    q: 'Does it use Next.js or deploy to Vercel?',
+    a: 'No, on purpose. The web app is React with Vite, a static build any web server can serve, and the API is a Fastify server. Everything runs with Docker Compose on your own server, so no hosting platform is required.',
+  },
+  {
+    q: 'Some of the services are AGPL. Does that affect my code?',
+    a: 'Your code stays under any license you choose. Every code dependency is permissive or MPL-2.0, enforced in CI. Services such as Twenty, Grafana and the vault run as unmodified containers next to your app, which AGPL allows. Where a delivery bans AGPL, docs/LICENSES.md lists a permissive replacement for each, and what you lose with it.',
   },
   {
     q: 'Which coding agents does it work with?',
@@ -148,90 +226,344 @@ const external = site.contact.startsWith('http') ? { target: '_blank', rel: 'noo
 ---
 
 <Base title={`${site.name}: ${site.tagline}`} description={site.description} jsonLd={[source, faqLd(faq)]}>
-  <section class="mx-auto max-w-5xl px-6 pt-16 pb-12 sm:pt-20">
-    <h1 class="max-w-3xl text-4xl font-bold tracking-tight text-balance sm:text-5xl">
-      A whole SaaS company in a box. Your AI agents build the product.
-    </h1>
-    <p class="mt-6 max-w-2xl text-lg text-pretty text-muted-foreground">
-      {site.name} gives you the software a company runs on, already built and tested: accounts and
-      sign-in, payments, customer records, support, analytics, deploys and backups. AI coding agents
-      build your product on top, guided by rules and checked by tests.
-    </p>
-    <div class="mt-8 flex flex-wrap items-center gap-3">
-      <a href={site.repo} data-cta="hero_github" class={primary}>Get the code on GitHub</a>
-      <a href={site.contact} {...external} data-cta="hero_contact" class={secondary}>Talk to us about setup</a>
+  <section class="mx-auto grid max-w-6xl items-center gap-12 px-6 pt-14 pb-16 sm:pt-20 lg:grid-cols-2">
+    <div>
+      <h1 class="text-4xl font-bold tracking-tight text-balance sm:text-5xl">
+        Start a software company with your coding agent, not just an app
+      </h1>
+      <p class="mt-6 max-w-xl text-lg text-pretty text-muted-foreground">
+        {site.name} is the open-source software a SaaS company runs on: sign-in and teams, billing,
+        customer records, support, deploys and backups. It is already built and tested, so Claude
+        Code or Codex builds only your product.
+      </p>
+      <div class="mt-8 flex flex-wrap items-center gap-3">
+        <a href={site.repo} data-cta="hero_github" class={primary}>Get the code on GitHub</a>
+        <a href={site.contact} {...external} data-cta="hero_contact" class={secondary}>Talk to us about setup</a>
+      </div>
+      <p class="mt-4 text-sm text-muted-foreground">Free and open source (MIT-0). Keep the services you already use.</p>
     </div>
-    <p class="mt-4 text-sm text-muted-foreground">Free and open source (MIT-0). No license fees, no lock-in.</p>
+
+    <figure>
+      <svg
+        viewBox={`0 0 ${hub.w} ${hub.h}`}
+        role="img"
+        aria-labelledby="hub-title"
+        class="hidden w-full sm:block"
+        font-family="inherit">
+        <title id="hub-title">{site.name} in the middle, connected to {pieces} pieces: {all.map((p) => p.label).join(', ')}</title>
+        {nodes.map((n) => <line x1={hub.cx} y1={hub.cy} x2={n.x} y2={n.y} class="flow stroke-primary/35" stroke-width="1.5" stroke-dasharray="3 6" />)}
+        <ellipse cx={hub.cx} cy={hub.cy} rx={hub.rx} ry={hub.ry} fill="none" class="stroke-border" stroke-width="1" />
+        {groupLabels.map((g) => (
+          <text x={g.x} y={g.y + 5} text-anchor="middle" font-size="18" font-weight="600" class="fill-foreground stroke-background" stroke-width="6" paint-order="stroke">{g.name}</text>
+        ))}
+        <rect x={hub.cx - 68} y={hub.cy - 68} width="136" height="136" rx="32" class="fill-primary" />
+        <Icon name="box" x={hub.cx - 28} y={hub.cy - 48} size={56} class="text-primary-foreground" />
+        <text x={hub.cx} y={hub.cy + 42} text-anchor="middle" font-size="20" font-weight="700" class="fill-primary-foreground">{site.name}</text>
+        {nodes.map((n) => (
+          <g class="node">
+            <circle cx={n.x} cy={n.y} r="29" class="fill-card stroke-border" stroke-width="1.5" />
+            <Icon name={n.icon} x={n.x - 13} y={n.y - 13} size={26} class="text-foreground" />
+            <text x={n.lx} y={n.ly} text-anchor={n.anchor} font-size="17" class="fill-muted-foreground">{n.label}</text>
+          </g>
+        ))}
+      </svg>
+      <ul class="grid grid-cols-3 gap-x-2 gap-y-4 sm:hidden" aria-label={`${site.name} includes`}>
+        {all.map((p) => (
+          <li class="flex flex-col items-center gap-1.5 text-center text-xs text-muted-foreground">
+            <span class="grid size-11 place-items-center rounded-full border bg-card text-foreground"><Icon name={p.icon} class="size-5" /></span>
+            {p.label}
+          </li>
+        ))}
+      </ul>
+      <figcaption class="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 font-mono text-sm">
+        <span><span aria-hidden="true" class="text-muted-foreground">$ </span>pnpm check</span>
+        <span class="flex items-center gap-1.5 text-primary"><Icon name="check" />{pieces} pieces, every gate green</span>
+      </figcaption>
+    </figure>
   </section>
 
-  <section aria-labelledby="fold" class="mx-auto max-w-5xl px-6 pb-20">
-    <h2 id="fold" class="sr-only">What {site.name} replaces</h2>
-    <div class="flex flex-col items-stretch gap-6 lg:flex-row lg:items-center">
-      <figure class="rounded-xl border border-dashed p-6 lg:flex-1">
-        <ul class="flex flex-wrap justify-center gap-3 py-2" aria-label="Pieces a company assembles">
-          {
-            pile.map((p, i) => (
-              <li class:list={['rounded-md border bg-card px-3 py-1.5 text-sm text-muted-foreground shadow-sm', tilt[i % tilt.length]]}>
-                {p}
-              </li>
-            ))
-          }
-        </ul>
-        <figcaption class="mt-6 text-center text-sm text-muted-foreground">
-          Without it: tools to pick, connect, secure and keep running
+  <section aria-labelledby="fold" class="mx-auto max-w-6xl px-6 pb-20">
+    <h2 id="fold" class="max-w-3xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+      {pieces} services to wire together, or one box that already works
+    </h2>
+    <div class="mt-10 flex flex-col items-stretch gap-6 md:flex-row md:items-center">
+      <figure class="rounded-2xl border border-dashed p-4 md:flex-1">
+        <svg viewBox="0 0 360 300" role="img" aria-labelledby="before-title" class="w-full">
+          <title id="before-title">Without {site.name}: {pieces} separate services wired to each other</title>
+          {wires.map(([i, j]) => (
+            <line x1={scatter[i][0]} y1={scatter[i][1]} x2={scatter[j][0]} y2={scatter[j][1]} class="stroke-muted-foreground/35" stroke-width="1.25" />
+          ))}
+          {all.map((p, i) => (
+            <g>
+              <circle cx={scatter[i][0]} cy={scatter[i][1]} r="19" class="fill-background stroke-border" stroke-width="1.5" />
+              <Icon name={p.icon} x={scatter[i][0] - 9} y={scatter[i][1] - 9} size={18} class="text-muted-foreground" />
+            </g>
+          ))}
+        </svg>
+        <figcaption class="mt-3 text-center text-sm text-muted-foreground">
+          Without it: {pieces} services to choose, sign up for, connect, secure and keep running
         </figcaption>
       </figure>
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 24 24"
-        class="mx-auto size-8 shrink-0 rotate-90 text-muted-foreground lg:rotate-0"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg
-      >
-      <figure class="rounded-xl border border-primary/40 bg-card p-6 shadow-sm lg:flex-1">
-        <p class="font-semibold">{site.name}</p>
-        <div class="mt-4 grid grid-cols-2 gap-x-4 gap-y-4">
-          {
-            groups.map((g) => (
-              <div>
-                <p class="text-xs font-medium text-muted-foreground">{g.name}</p>
-                <ul class="fold mt-1.5 space-y-1.5">
-                  {g.items.map((p) => <li class="rounded-md bg-primary/10 px-3 py-1 text-sm font-medium">{p}</li>)}
-                </ul>
-              </div>
-            ))
-          }
-        </div>
-        <figcaption class="mt-4 border-t pt-4 text-sm text-muted-foreground">
-          One stack, connected and checked. Guarded by AGENTS.md and <code>pnpm check</code>.
+      <Icon name="arrow" class="mx-auto size-8 rotate-90 text-muted-foreground md:rotate-0" />
+      <figure class="rounded-2xl border border-primary/40 bg-primary/5 p-4 md:flex-1">
+        <svg viewBox="0 0 360 300" role="img" aria-labelledby="after-title" class="w-full">
+          <title id="after-title">With {site.name}: the same {pieces} pieces in one box</title>
+          <rect x="22" y="22" width="316" height="256" rx="22" class="fill-card stroke-primary/50" stroke-width="1.5" />
+          <Icon name="box" x={42} y={40} size={22} class="text-primary" />
+          <text x="72" y="57" font-size="17" font-weight="700" class="fill-foreground">{site.name}</text>
+          {all.map((p, i) => (
+            <g class="node">
+              <circle cx={70 + (i % 5) * 55} cy={112 + Math.floor(i / 5) * 62} r="21" class="fill-primary/10 stroke-primary/40" stroke-width="1.5" />
+              <Icon name={p.icon} x={70 + (i % 5) * 55 - 10} y={112 + Math.floor(i / 5) * 62 - 10} size={20} class="text-primary" />
+            </g>
+          ))}
+        </svg>
+        <figcaption class="mt-3 text-center text-sm text-muted-foreground">
+          With {site.name}: connected, tested and guarded by <code>pnpm check</code>
         </figcaption>
       </figure>
     </div>
+  </section>
+
+  <section aria-labelledby="who" class="border-y bg-muted/40">
+    <div class="mx-auto max-w-6xl px-6 py-16">
+      <h2 id="who" class="max-w-3xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+        You decide. Your agent builds. {site.name} already runs the rest.
+      </h2>
+      <ol class="mt-10 grid gap-4 lg:grid-cols-3 lg:gap-10">
+        {
+          lanes.map((l, i) => (
+            <li class="relative">
+              <div class:list={['h-full rounded-xl border p-6', i === 2 ? 'border-primary/40 bg-primary/5' : 'bg-background']}>
+                <p class="flex items-center gap-2 font-semibold">
+                  <span class:list={['grid size-9 place-items-center rounded-lg', i === 2 ? 'bg-primary text-primary-foreground' : 'bg-muted']}>
+                    <Icon name={l.icon} class="size-5" />
+                  </span>
+                  {l.who}
+                </p>
+                <ul class="mt-4 space-y-2">
+                  {l.items.map((t) => (
+                    <li class="flex gap-2 text-muted-foreground">
+                      <Icon name="check" class="mt-1 size-4 text-primary" />
+                      {t}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {i < 2 && (
+                <span class="absolute top-1/2 -right-8 hidden -translate-y-1/2 text-muted-foreground lg:block">
+                  <Icon name="arrow" class="size-6" />
+                </span>
+              )}
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </section>
+
+  <section aria-labelledby="day-one" class="mx-auto max-w-6xl px-6 py-20">
+    <h2 id="day-one" class="max-w-3xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+      What is running on day one, before your first feature
+    </h2>
+    <div class="mt-10 grid items-start gap-10 lg:grid-cols-5">
+      <figure class="lg:col-span-3">
+        <div aria-hidden="true" class="overflow-hidden rounded-xl border bg-background text-sm shadow-lg">
+          <div class="flex items-center gap-1.5 border-b bg-muted/60 px-4 py-2.5">
+            <span class="size-2.5 rounded-full bg-border"></span>
+            <span class="size-2.5 rounded-full bg-border"></span>
+            <span class="size-2.5 rounded-full bg-border"></span>
+            <span class="ml-3 truncate text-xs text-muted-foreground">app.example.com/projects</span>
+          </div>
+          <div class="flex">
+            <div class="hidden w-40 shrink-0 border-r bg-sidebar p-3 sm:block">
+              <p class="mb-3 truncate rounded-md border bg-background px-2 py-1.5 text-xs font-medium">Example Org</p>
+              <ul class="space-y-0.5 text-xs">
+                {nav.map((n, i) => <li class:list={['rounded-md px-2 py-1.5', i === 0 ? 'bg-accent font-medium' : 'text-muted-foreground']}>{n}</li>)}
+              </ul>
+            </div>
+            <div class="min-w-0 flex-1 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <p class="text-base font-semibold">Projects</p>
+                <span class="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground">Create project</span>
+              </div>
+              <div class="mt-3 rounded-lg border">
+                <div class="grid grid-cols-3 border-b px-3 py-2 text-xs text-muted-foreground">
+                  <span>Name</span><span>Fingerprint</span><span class="text-right">Created</span>
+                </div>
+                {
+                  rows.map(([name, fp, date]) => (
+                    <div class="grid grid-cols-3 items-center border-b px-3 py-2.5 text-xs last:border-b-0">
+                      <span class="font-medium">{name}</span>
+                      <span>
+                        <span class:list={['rounded-md px-1.5 py-0.5 tabular-nums', fp.startsWith('P') ? 'text-muted-foreground' : 'bg-secondary']}>{fp}</span>
+                      </span>
+                      <span class="text-right text-muted-foreground">{date}</span>
+                    </div>
+                  ))
+                }
+              </div>
+              <p class="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span class="rounded-full bg-primary px-2 py-0.5 text-primary-foreground">AI-generated</span>
+                Summaries are labeled and reviewable
+              </p>
+            </div>
+          </div>
+        </div>
+        <figcaption class="mt-3 text-sm text-muted-foreground">
+          The app you start from. Your product's pages go next to Projects.
+        </figcaption>
+      </figure>
+      <dl class="grid gap-6 sm:grid-cols-2 lg:col-span-2 lg:grid-cols-1">
+        <div>
+          <dt class="font-semibold">Run the company</dt>
+          <dd class="mt-1 text-muted-foreground">Sign-in with SSO and 2FA, teams and roles, billing for any pricing model, CRM, support desk, admin console.</dd>
+        </div>
+        <div>
+          <dt class="font-semibold">Grow it</dt>
+          <dd class="mt-1 text-muted-foreground">Marketing site and blog, product analytics, surveys and referral rewards.</dd>
+        </div>
+        <div>
+          <dt class="font-semibold">Trust it with customers</dt>
+          <dd class="mt-1 text-muted-foreground">Each customer's data isolated by the database, an audit log, a secrets vault and backups with restore checks.</dd>
+        </div>
+      </dl>
+    </div>
+    <p class="mt-8 text-sm">
+      <a href={`${site.repo}#readme`} data-cta="readme" class={link}>See the full component list in the README</a>
+    </p>
+  </section>
+
+  <section id="how" aria-labelledby="how-title" class="border-y bg-muted/40">
+    <div class="mx-auto max-w-6xl px-6 py-20">
+      <h2 id="how-title" class="max-w-3xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+        Your agent does the work. One command decides when it is done.
+      </h2>
+      <svg viewBox="0 0 760 250" role="img" aria-labelledby="loop-title" class="mt-10 hidden w-full sm:block">
+        <title id="loop-title">You describe a feature, your agent follows a recipe, pnpm check runs every gate; red sends the work back to the agent, green ships it</title>
+        <defs>
+          <marker id="tip" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="fill-muted-foreground" /></marker>
+          <marker id="tip-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="fill-destructive" /></marker>
+          <marker id="tip-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" class="fill-primary" /></marker>
+        </defs>
+        <line x1="128" y1="140" x2="238" y2="140" class="stroke-muted-foreground" stroke-width="2" marker-end="url(#tip)" />
+        <line x1="338" y1="140" x2="448" y2="140" class="stroke-muted-foreground" stroke-width="2" marker-end="url(#tip)" />
+        <line x1="548" y1="140" x2="642" y2="140" class="stroke-primary" stroke-width="2.5" marker-end="url(#tip-green)" />
+        <text x="595" y="128" text-anchor="middle" font-size="14" font-weight="600" class="fill-primary">green</text>
+        <path d="M478 96 C 455 30, 315 30, 302 94" fill="none" class="flow stroke-destructive" stroke-width="2" stroke-dasharray="4.5 4.5" marker-end="url(#tip-red)" />
+        <text x="390" y="34" text-anchor="middle" font-size="14" font-weight="600" class="fill-destructive">red: fix it, run again</text>
+        <circle cx="80" cy="140" r="44" class="fill-background stroke-border" stroke-width="1.5" />
+        <Icon name="user" x={62} y={122} size={36} class="text-foreground" />
+        <circle cx="290" cy="140" r="44" class="fill-background stroke-border" stroke-width="1.5" />
+        <Icon name="bot" x={272} y={122} size={36} class="text-foreground" />
+        <circle cx="500" cy="140" r="44" class="fill-primary/10 stroke-primary" stroke-width="2" />
+        <Icon name="shieldCheck" x={482} y={122} size={36} class="text-primary" />
+        <circle cx="690" cy="140" r="44" class="fill-primary" />
+        <Icon name="rocket" x={672} y={122} size={36} class="text-primary-foreground" />
+        <text x="80" y="214" text-anchor="middle" font-size="15" font-weight="600" class="fill-foreground">You describe</text>
+        <text x="80" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">a feature</text>
+        <text x="290" y="214" text-anchor="middle" font-size="15" font-weight="600" class="fill-foreground">Your agent</text>
+        <text x="290" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">follows a recipe</text>
+        <text x="500" y="214" text-anchor="middle" font-size="15" font-weight="600" font-family="ui-monospace, monospace" class="fill-foreground">pnpm check</text>
+        <text x="500" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">runs every gate</text>
+        <text x="690" y="214" text-anchor="middle" font-size="15" font-weight="600" class="fill-foreground">Done</text>
+        <text x="690" y="234" text-anchor="middle" font-size="14" class="fill-muted-foreground">you review and ship</text>
+      </svg>
+      <ul class="mt-6 hidden flex-wrap justify-center gap-x-5 gap-y-2 text-sm sm:flex" aria-label="What pnpm check runs">
+        {gates.map((g) => <li class="flex items-center gap-1.5"><Icon name="check" class="size-3.5 text-primary" />{g}</li>)}
+      </ul>
+      <div class="sm:hidden">
+      <div class="mt-10 flex flex-col gap-3 lg:flex-row lg:items-stretch">
+          <div class="rounded-xl border bg-background p-5 lg:flex-1">
+            <Icon name="user" class="size-5 text-muted-foreground" />
+            <p class="mt-3 font-semibold">You describe a feature</p>
+            <p class="mt-1 text-sm text-muted-foreground">"Add invoices to each customer's account."</p>
+          </div>
+          <div class="grid shrink-0 place-items-center text-muted-foreground"><Icon name="arrow" class="size-6 rotate-90 lg:rotate-0" /></div>
+          <div class="rounded-xl border bg-background p-5 lg:flex-1">
+            <Icon name="bot" class="size-5 text-muted-foreground" />
+            <p class="mt-3 font-semibold">Your agent follows a recipe</p>
+            <p class="mt-1 text-sm text-muted-foreground">AGENTS.md says where the code goes and which tests to add, step by step.</p>
+          </div>
+          <div class="grid shrink-0 place-items-center text-muted-foreground"><Icon name="arrow" class="size-6 rotate-90 lg:rotate-0" /></div>
+          <div class="rounded-xl border border-primary/40 bg-background p-5 lg:flex-1">
+            <p class="font-mono text-sm font-semibold">pnpm check</p>
+            <ul class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+              {gates.map((g) => <li class="flex items-center gap-1.5"><Icon name="check" class="size-3.5 text-primary" />{g}</li>)}
+            </ul>
+          </div>
+        </div>
+        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+          <p class="flex items-center gap-3 rounded-xl border bg-background p-4 text-sm">
+            <Icon name="retry" class="size-5 text-muted-foreground" />
+            <span><span class="font-semibold">Red:</span> the agent reads what failed, fixes it and runs the check again.</span>
+          </p>
+          <p class="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 p-4 text-sm">
+            <Icon name="check" class="size-5 text-primary" />
+            <span><span class="font-semibold">Green:</span> done. You review the result and ship it.</span>
+          </p>
+        </div>
+      </div>
+      <details class="mt-10 max-w-3xl rounded-xl border bg-card">
+        <summary class="cursor-pointer px-5 py-3 text-sm font-medium">For developers: the commands behind these steps</summary>
+        <pre class="overflow-x-auto border-t p-5 text-sm leading-7"><code>{
+          session.map(([prompt, text]) =>
+            prompt === '#' ? (
+              <span class="block text-muted-foreground"># {text}</span>
+            ) : (
+              <span class="block"><span aria-hidden="true" class="text-muted-foreground select-none">{prompt} </span>{text}</span>
+            ),
+          )
+        }</code></pre>
+        <p class="border-t px-5 py-3 text-sm text-muted-foreground">
+          Needs Docker, Node 22.18+ with pnpm, uv and Rust.{' '}
+          <a href={`${site.repo}#5-minute-quickstart`} data-cta="quickstart" class={link}>Full quickstart</a>
+        </p>
+      </details>
+    </div>
+  </section>
+
+  <section aria-labelledby="proof" class="mx-auto max-w-6xl px-6 py-20">
+    <h2 id="proof" class="text-2xl font-semibold tracking-tight sm:text-3xl">Check the claims yourself</h2>
+    <p class="mt-3 max-w-xl text-muted-foreground">No customer logos or star counts here, only files you can open.</p>
+    <dl class="mt-10 grid gap-x-8 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
+      {
+        proof.map((p) => (
+          <div class="border-t pt-4">
+            <dt>
+              <a href={p.href} class="text-2xl leading-tight font-bold tracking-tight text-primary sm:text-3xl underline-offset-4 hover:underline">
+                {p.fact}
+              </a>
+            </dt>
+            <dd class="mt-2 text-sm text-muted-foreground">{p.text}</dd>
+          </div>
+        ))
+      }
+    </dl>
   </section>
 
   <section id="offers" aria-labelledby="offers-title" class="border-y bg-muted/40">
-    <div class="mx-auto max-w-5xl px-6 py-16">
+    <div class="mx-auto max-w-6xl px-6 py-16">
       <h2 id="offers-title" class="text-2xl font-semibold tracking-tight sm:text-3xl">Two ways to run {site.name}</h2>
       <div class="mt-8 grid gap-6 md:grid-cols-2">
         <div class="flex flex-col rounded-xl border bg-card p-6 shadow-sm">
-          <h3 class="text-lg font-semibold">Open source</h3>
+          <h3 class="flex items-center gap-2 text-lg font-semibold"><Icon name="bot" class="size-5 text-muted-foreground" />Open source</h3>
           <p class="mt-1 text-sm text-muted-foreground">Free. For you if you, or your agent, can run commands.</p>
-          <p class="mt-4 flex-1 text-muted-foreground">
-            Clone it, run it on your machine or your own server, change anything, use it for client
-            projects. Connect the services you already pay for, or run them from the box.
-          </p>
+          <ul class="mt-5 flex-1 space-y-2">
+            {['Runs on your machine or your own server', 'Connect the services you already pay for', 'Change anything, use it for client projects'].map((t) => (
+              <li class="flex gap-2"><Icon name="check" class="mt-1 size-4 text-primary" />{t}</li>
+            ))}
+          </ul>
           <a href={site.repo} data-cta="offer_github" class:list={[primary, 'mt-6 self-start']}>Get the code on GitHub</a>
         </div>
         <div class="flex flex-col rounded-xl border bg-card p-6 shadow-sm">
-          <h3 class="text-lg font-semibold">Managed</h3>
+          <h3 class="flex items-center gap-2 text-lg font-semibold"><Icon name="server" class="size-5 text-muted-foreground" />Managed</h3>
           <p class="mt-1 text-sm text-muted-foreground">We host it and set it up. For you if you'd rather not run servers.</p>
-          <p class="mt-4 flex-1 text-muted-foreground">
-            Servers and domain, your existing services connected, updates and support. It runs the
-            same open-source code.
-          </p>
+          <ul class="mt-5 flex-1 space-y-2">
+            {['Servers and domain', 'Your existing services connected', 'Updates and support, on the same open-source code'].map((t) => (
+              <li class="flex gap-2"><Icon name="check" class="mt-1 size-4 text-primary" />{t}</li>
+            ))}
+          </ul>
           <a href={site.contact} {...external} data-cta="offer_contact" class:list={[secondary, 'mt-6 self-start']}>Talk to us about setup</a>
           {
             site.channels.length > 1 && (
@@ -248,83 +580,10 @@ const external = site.contact.startsWith('http') ? { target: '_blank', rel: 'noo
     </div>
   </section>
 
-  <section aria-labelledby="why">
-    <div class="mx-auto max-w-5xl px-6 py-16">
-      <h2 id="why" class="max-w-2xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-        Everything a software company needs, before you write a feature
-      </h2>
-      <div class="mt-10 grid gap-x-12 gap-y-10 sm:grid-cols-2">
-        {
-          benefits.map((b) => (
-            <div>
-              <h3 class="text-lg font-semibold">{b.title}</h3>
-              <p class="mt-2 max-w-prose text-muted-foreground">{b.text}</p>
-            </div>
-          ))
-        }
-      </div>
-    </div>
-  </section>
-
-  <section id="how" aria-labelledby="how-title" class="border-y bg-muted/40">
-    <div class="mx-auto max-w-5xl px-6 py-20">
-      <h2 id="how-title" class="text-2xl font-semibold tracking-tight sm:text-3xl">How it works</h2>
-      <ol class="mt-8 grid gap-8 sm:grid-cols-3">
-          {
-            steps.map((s) => (
-              <li>
-                <h3 class="font-semibold">{s.title}</h3>
-                <p class="mt-2 max-w-prose text-muted-foreground">{s.text}</p>
-              </li>
-            ))
-          }
-      </ol>
-      <p class="mt-10 text-sm text-muted-foreground">For developers, the commands behind these steps:</p>
-      <div class="mt-3 max-w-3xl rounded-xl border bg-card shadow-sm">
-          <pre class="overflow-x-auto p-5 text-sm leading-7"><code>{
-            session.map(([prompt, text]) =>
-              prompt === '#' ? (
-                <span class="block text-muted-foreground"># {text}</span>
-              ) : (
-                <span class="block"><span aria-hidden="true" class="text-muted-foreground select-none">{prompt} </span>{text}</span>
-              ),
-            )
-          }</code></pre>
-      </div>
-      <p class="mt-8 text-sm text-muted-foreground">
-        Needs Docker, Node 22.18+ with pnpm, uv and Rust.{' '}
-        <a href={`${site.repo}#5-minute-quickstart`} data-cta="quickstart" class={link}>Full quickstart</a>
-      </p>
-    </div>
-  </section>
-
-
-  <section aria-labelledby="proof" class="mx-auto max-w-5xl px-6 py-16">
-    <h2 id="proof" class="text-2xl font-semibold tracking-tight sm:text-3xl">Check the claims yourself</h2>
-    <p class="mt-3 max-w-xl text-muted-foreground">No customer logos or star counts here, only files you can open.</p>
-    <dl class="mt-8 grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
-      {
-        proof.map((p) => (
-          <div>
-            <dt>
-              <a href={p.href} class="text-xl font-semibold text-primary underline-offset-4 hover:underline">
-                {p.fact}
-              </a>
-            </dt>
-            <dd class="mt-1 text-sm text-muted-foreground">{p.text}</dd>
-          </div>
-        ))
-      }
-    </dl>
-    <p class="mt-8 text-sm">
-      <a href={`${site.repo}#readme`} data-cta="readme" class={link}>See the full component list in the README</a>
-    </p>
-  </section>
-
-  <Faq items={faq} width="max-w-5xl" />
+  <Faq items={faq} width="max-w-6xl" />
 
   <section aria-labelledby="start" class="border-t">
-    <div class="mx-auto flex max-w-5xl flex-col items-start gap-6 px-6 py-16 md:flex-row md:items-center md:justify-between">
+    <div class="mx-auto flex max-w-6xl flex-col items-start gap-6 px-6 py-16 md:flex-row md:items-center md:justify-between">
       <div>
         <h2 id="start" class="text-2xl font-semibold tracking-tight sm:text-3xl">Start with the whole company in place</h2>
         <p class="mt-2 text-muted-foreground">Open source and free, or hosted and set up by us.</p>
