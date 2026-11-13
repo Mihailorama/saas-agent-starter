@@ -58,7 +58,7 @@ export async function syncSsoClients() {
       clientSecret: hashSecret(c.secret),
       name: c.id,
       redirectUris: c.redirectUris,
-      scopes: ['openid', 'profile', 'email', 'groups'],
+      scopes: ['openid', 'profile', 'email', 'groups', 'offline_access'], // refresh tokens (Vaultwarden asks)
       grantTypes: ['authorization_code', 'refresh_token'],
       responseTypes: ['code'],
       tokenEndpointAuthMethod: 'client_secret_basic',

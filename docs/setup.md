@@ -39,8 +39,8 @@ It asks:
 1. The server's address (IP, host name or an alias from `~/.ssh/config`), and the admin user.
 2. The app's domain, and the e-mail for Let's Encrypt (`internal`: Caddy's own CA, for intranets).
 3. The release to deploy. Until your fork publishes its own `v*` release, the upstream images
-   `ghcr.io/mihailorama/saas-agent-starter/{api,worker,web}` are used (`images.repo` in the
-   answers file switches to yours).
+   `ghcr.io/mihailorama/saas-agent-starter/{api,worker,web}` are used; the question before it
+   (image repository) switches to yours.
 4. For each component: **install** it on the server, **connect** one you already have, or
    **skip** it, then the connect details. Secrets are typed hidden and never shown again.
 

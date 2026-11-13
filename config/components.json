@@ -141,7 +141,7 @@
     {
       "id": "smtp",
       "tier": "core",
-      "description": "Transactional mail (sign-in links, invitations)",
+      "description": "Transactional mail (sign-in codes, invitations; skipped, nobody can sign in by email)",
       "modes": ["connect", "skip"],
       "connect": [
         {
