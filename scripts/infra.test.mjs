@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { checkComponents } from './check-components.mjs';
 import {
   catalog,
+  command,
   expandField,
   freshEnvError,
   plan,
@@ -200,4 +201,24 @@ test('--rotate only what the server re-applies', () => {
   ]);
   assert.equal(errors.length, 3);
   assert.match(errors[0], /--rotate POSTGRES_PASSWORD: nothing re-applies it/);
+});
+
+test('the subcommand counts wherever it stands: a misplaced plan stays a dry run', () => {
+  assert.deepEqual(command(['staging', 'plan']), {
+    cmd: 'plan',
+    only: undefined,
+    words: ['staging'],
+  });
+  assert.deepEqual(command(['plan', 'staging']), {
+    cmd: 'plan',
+    only: undefined,
+    words: ['staging'],
+  });
+  assert.deepEqual(command(['staging', 'add', 'vault']), {
+    cmd: 'add',
+    only: 'vault',
+    words: ['staging'],
+  });
+  assert.deepEqual(command(['add', 'vault']), { cmd: 'add', only: 'vault', words: [] });
+  assert.deepEqual(command(['staging']), { cmd: 'setup', only: undefined, words: ['staging'] });
 });
