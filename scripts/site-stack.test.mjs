@@ -1,8 +1,9 @@
 // node --test 'scripts/*.test.mjs'. The landing's "What is in the box" (apps/site/src/stack.ts)
 // against docs/LICENSES.md: every image there is shown (or listed as not shown) with its license.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { ownSkills, thirdPartySkills } from '../apps/site/src/skills.ts';
 import { notShown, stack } from '../apps/site/src/stack.ts';
 
 /** `image` -> license from the first table of docs/LICENSES.md. */
@@ -38,6 +39,29 @@ test('every image in docs/LICENSES.md is on the landing or deliberately not show
 test('each tool shows the license docs/LICENSES.md gives its images', () => {
   for (const t of tools)
     for (const i of t.images) assert.equal(table.get(i), t.license, `${t.name} (${i})`);
+});
+
+test('a connect-only tool says what you connect and claims no license of the box', () => {
+  for (const t of tools.filter((t) => !t.images.length)) {
+    assert.ok(t.connect, `${t.name}: connect-only needs connect`);
+    assert.equal(t.license, undefined, t.name);
+  }
+});
+
+test('every Claude Code command in the repository is listed as our skill, and only those', () => {
+  const commands = readdirSync(new URL('../.claude/commands/', import.meta.url))
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => f.slice(0, -3))
+    .sort();
+  assert.deepEqual(ownSkills.map((s) => s.name).sort(), commands);
+});
+
+test('third-party skills carry an author and a license the gate allows for tooling', () => {
+  for (const s of thirdPartySkills) {
+    assert.ok(s.author && s.href.startsWith('https://github.com/'), s.name);
+    // Non-commercial or copyleft skills cannot ship with a template people build businesses on.
+    assert.match(s.license, /^(MIT|Apache-2\.0|BSD-[23]-Clause|ISC|MIT-0|CC0-1\.0)$/, s.name);
+  }
 });
 
 test('every icon slug exists in Simple Icons', () => {

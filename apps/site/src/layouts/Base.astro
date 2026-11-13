@@ -28,6 +28,7 @@ const hasPosts = (await posts()).length > 0;
       <nav aria-label="Main" class="mx-auto flex max-w-6xl items-center gap-6 px-6 py-2">
         <a href={path('/')} class="py-2 font-semibold">{site.name}</a>
         {hasPosts && <a href={path('/blog/')} class="py-2 text-sm text-muted-foreground hover:text-foreground">Blog</a>}
+        <a href={path('/stack/')} class="py-2 text-sm text-muted-foreground hover:text-foreground">What's inside</a>
         <a href={`${path('/')}#offers`} class="py-2 text-sm text-muted-foreground hover:text-foreground">Managed</a>
         <span class="ml-auto flex items-center gap-4">
           <a

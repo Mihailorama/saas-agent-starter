@@ -6,10 +6,14 @@
 export type Tool = {
   name: string;
   role: string;
-  license: string;
+  /** SPDX-style license as docs/LICENSES.md has it; absent for a hosted service you only connect. */
+  license?: string;
+  /** Images from docs/LICENSES.md; empty for a tool the stack only connects to. */
   images: string[];
   icon?: string;
   href: string;
+  /** What you can connect instead of (or, with no images, as) this one; docs/setup.md and the component docs. */
+  connect?: string;
 };
 
 export const stack: { group: string; tools: Tool[] }[] = [
@@ -23,6 +27,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         images: ['postgres'],
         icon: 'postgresql',
         href: 'https://www.postgresql.org',
+        connect: 'Neon, Supabase, Amazon RDS or any PostgreSQL you run',
       },
       {
         name: 'Redis',
@@ -45,6 +50,14 @@ export const stack: { group: string; tools: Tool[] }[] = [
         license: 'Apache-2.0',
         images: ['chrislusf/seaweedfs'],
         href: 'https://github.com/seaweedfs/seaweedfs',
+        connect: 'AWS S3, Cloudflare R2 or any S3-compatible storage',
+      },
+      {
+        name: 'Email',
+        role: 'sign-in codes, invitations, product news',
+        images: [],
+        href: 'https://github.com/Mihailorama/saas-agent-starter/blob/main/docs/email.md',
+        connect: 'Amazon SES, Mailgun or any SMTP server',
       },
     ],
   },
@@ -81,6 +94,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         license: 'MIT core + `ee/` commercial',
         images: ['langfuse/langfuse', 'langfuse/langfuse-worker'],
         href: 'https://langfuse.com',
+        connect: 'Langfuse Cloud',
       },
       {
         name: 'ClickHouse',
@@ -96,6 +110,14 @@ export const stack: { group: string; tools: Tool[] }[] = [
         license: 'MIT',
         images: ['ghcr.io/promptfoo/promptfoo'],
         href: 'https://www.promptfoo.dev',
+      },
+      {
+        name: 'Model providers',
+        role: 'every AI call goes through one gateway',
+        images: [],
+        href: 'https://github.com/Mihailorama/saas-agent-starter/blob/main/docs/llm-providers.md',
+        connect:
+          'Anthropic, OpenAI, Google Gemini, xAI, Moonshot, OpenRouter, your Claude Code, Codex or Gemini CLI subscription, or any OpenAI-compatible endpoint, such as your vLLM on Modal or RunPod',
       },
     ],
   },
@@ -163,6 +185,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         license: 'MIT',
         images: ['glitchtip/glitchtip'],
         href: 'https://glitchtip.com',
+        connect: 'Sentry, same SDKs, only the DSN changes',
       },
     ],
   },
@@ -176,6 +199,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         images: ['chatwoot/chatwoot'],
         icon: 'chatwoot',
         href: 'https://www.chatwoot.com',
+        connect: 'Chatwoot Cloud',
       },
       {
         name: 'Twenty',
@@ -184,6 +208,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         images: ['twentycrm/twenty'],
         icon: 'twenty',
         href: 'https://twenty.com',
+        connect: 'Twenty Cloud',
       },
       {
         name: 'Cal.diy',
@@ -191,6 +216,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         license: 'MIT',
         images: ['caldiy'],
         href: 'https://github.com/calcom/cal.diy',
+        connect: 'Cal.com Cloud',
       },
       {
         name: 'Umami',
@@ -199,6 +225,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         images: ['ghcr.io/umami-software/umami'],
         icon: 'umami',
         href: 'https://umami.is',
+        connect: 'PostHog Cloud, Google Analytics 4 or Yandex Metrica',
       },
       {
         name: 'Postiz',
@@ -215,6 +242,22 @@ export const stack: { group: string; tools: Tool[] }[] = [
         images: ['towfiqi/serpbear'],
         href: 'https://github.com/towfiqi/serpbear',
       },
+      {
+        name: 'Plane',
+        role: 'backlog: alerts, feedback and support requests become items',
+        icon: 'plane',
+        images: [],
+        href: 'https://plane.so',
+        connect: 'Plane Cloud or your own Plane, or GitHub Issues',
+      },
+      {
+        name: 'Stripe',
+        role: 'payments and subscriptions',
+        icon: 'stripe',
+        images: [],
+        href: 'https://stripe.com',
+        connect: 'Stripe, or contracts you invoice yourself',
+      },
     ],
   },
   {
@@ -227,6 +270,7 @@ export const stack: { group: string; tools: Tool[] }[] = [
         images: ['vaultwarden/server'],
         icon: 'vaultwarden',
         href: 'https://github.com/dani-garcia/vaultwarden',
+        connect: 'Bitwarden Cloud or a Bitwarden server you run',
       },
       {
         name: 'Mailpit',
