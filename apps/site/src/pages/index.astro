@@ -6,12 +6,14 @@
 // Two offers: open source (free) and managed (we host and set it up; no price on the page).
 // The full feature list lives in the README; the page links to it instead of repeating it.
 import { readdirSync, readFileSync } from 'node:fs';
+import * as simpleIcons from 'simple-icons';
 import Faq from '../components/Faq.astro';
 import Icon from '../components/Icon.astro';
 import { faqLd } from '../faq.ts';
 import type { IconName } from '../icons.ts';
 import Base from '../layouts/Base.astro';
-import { abs, site } from '../site.ts';
+import { abs, path, site } from '../site.ts';
+import { stack } from '../stack.ts';
 
 const file = (p: string) => `${site.repo}/blob/main/${p}`;
 const tree = (p: string) => `${site.repo}/tree/main/${p}`;
@@ -227,6 +229,11 @@ const primary = `${button} bg-primary text-primary-foreground hover:bg-primary/9
 const secondary = `${button} border bg-background hover:bg-secondary`;
 const link = 'font-medium text-primary underline-offset-4 hover:underline';
 const external = site.contact.startsWith('http') ? { target: '_blank', rel: 'noopener' } : {};
+// Logos (Simple Icons paths, drawn in the text colour so they sit quietly in both themes).
+const logoPaths = new Map(Object.values(simpleIcons).map((i) => [i.slug, i.path]));
+const bundledTools = stack.flatMap((g) => g.tools).filter((t) => t.images.length);
+const toolCount = bundledTools.length;
+
 ---
 
 <Base title={`${site.name}: ${site.tagline}`} description={site.description} jsonLd={[source, faqLd(faq)]}>
@@ -525,6 +532,35 @@ const external = site.contact.startsWith('http') ? { target: '_blank', rel: 'noo
         </p>
       </details>
     </div>
+  </section>
+
+  <section id="stack" aria-labelledby="stack-title" class="mx-auto max-w-6xl px-6 pt-20">
+    <h2 id="stack-title" class="max-w-3xl text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
+      {toolCount} open-source services in the box, each under its own license
+    </h2>
+    <ul class="mt-8 flex flex-wrap gap-x-6 gap-y-4" aria-label="Services in the box">
+      {
+        bundledTools.map((t) => (
+          <li class="flex items-center gap-2 text-sm text-muted-foreground">
+            {t.icon && logoPaths.get(t.icon) ? (
+              <svg aria-hidden="true" viewBox="0 0 24 24" class="size-5 shrink-0 fill-current text-foreground">
+                <path d={logoPaths.get(t.icon)} />
+              </svg>
+            ) : (
+              <span aria-hidden="true" class="grid size-5 shrink-0 place-items-center rounded bg-muted text-xs font-semibold text-foreground">
+                {t.name[0]}
+              </span>
+            )}
+            {t.name}
+          </li>
+        ))
+      }
+    </ul>
+    <p class="mt-8">
+      <a href={path('/stack/')} data-cta="stack" class="font-medium text-primary underline-offset-4 hover:underline">
+        Licenses, the managed services you can connect instead, and the agent skills
+      </a>
+    </p>
   </section>
 
   <section aria-labelledby="proof" class="mx-auto max-w-6xl px-6 py-20">
