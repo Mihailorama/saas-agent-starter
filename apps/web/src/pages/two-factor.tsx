@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { track } from '@/lib/analytics';
 import { authClient } from '@/lib/auth';
-import { AuthLayout } from '@/pages/sign-in';
+import { AuthLayout, goTo } from '@/pages/sign-in';
 
 /** Second sign-in step for accounts with 2FA: a TOTP code or a one-time backup code. */
 export function TwoFactorPage() {
@@ -35,7 +35,7 @@ export function TwoFactorPage() {
       return setError(error.message ?? 'That code did not work');
     }
     track('signin_completed');
-    navigate({ href: redirect ?? '/' });
+    goTo(navigate, redirect ?? '/');
   }
 
   const field = backup ? 'Backup code' : 'Authentication code';

@@ -189,7 +189,13 @@ export async function buildApp() {
       new Request(new URL(req.url, env.BETTER_AUTH_URL), {
         method: req.method,
         headers,
-        body: req.body === undefined ? undefined : JSON.stringify(req.body),
+        // OAuth token requests are form-encoded (docs/sso.md): passed through as received.
+        body:
+          req.body === undefined
+            ? undefined
+            : typeof req.body === 'string'
+              ? req.body
+              : JSON.stringify(req.body),
       }),
     );
     reply.code(res.status);
@@ -215,10 +221,50 @@ export async function buildApp() {
     async () => ({ sso: ssoEnabled }),
   );
   authRoute('/api/auth/*', 300, ['GET', 'POST']);
+  // OAuth clients (the tools, docs/sso.md) post forms to these; scoped so other routes keep theirs.
+  await app.register(async (oauth) => {
+    oauth.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string', bodyLimit: 16 * 1024 },
+      (_req, body, done) => done(null, body),
+    );
+    for (const url of ['token', 'revoke', 'introspect', 'userinfo', 'end-session']) {
+      oauth.route({
+        method: ['GET', 'POST'],
+        url: `/api/auth/oauth2/${url}`,
+        schema: { hide: true },
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+        handler: authHandler,
+      });
+    }
+  });
   // API keys are managed through /api/api-keys (scopes, audit log), not the plugin's endpoints.
   app.all('/api/auth/api-key/*', { schema: { hide: true } }, async (_req, reply) =>
     reply.code(404).send({ error: 'not found' }),
   );
+  // Staff SSO (docs/sso.md): clients come only from the environment (sso.ts), so the provider's
+  // client and consent management endpoints are closed; the protocol endpoints stay open. The
+  // jwt plugin's /token (a JWT for the session) has no use here either.
+  for (const url of [
+    '/api/auth/token',
+    '/api/auth/oauth2/register',
+    '/api/auth/oauth2/create-client',
+    '/api/auth/oauth2/update-client',
+    '/api/auth/oauth2/delete-client',
+    '/api/auth/oauth2/get-client',
+    '/api/auth/oauth2/get-clients',
+    '/api/auth/oauth2/client/rotate-secret',
+    '/api/auth/oauth2/public-client',
+    '/api/auth/oauth2/public-client-prelogin',
+    '/api/auth/oauth2/get-consent',
+    '/api/auth/oauth2/get-consents',
+    '/api/auth/oauth2/update-consent',
+    '/api/auth/oauth2/delete-consent',
+  ]) {
+    app.all(url, { schema: { hide: true } }, async (_req, reply) =>
+      reply.code(404).send({ error: 'not found' }),
+    );
+  }
   // Operator actions go through /api/admin (reason, audit log), not the admin plugin's endpoints.
   app.all('/api/auth/admin/*', { schema: { hide: true } }, async (_req, reply) =>
     reply.code(404).send({ error: 'not found' }),

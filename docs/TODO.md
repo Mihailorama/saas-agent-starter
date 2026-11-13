@@ -56,12 +56,19 @@
 - **MCP tools: no OAuth servers, no a11y/e2e coverage of the settings page** (SAASSTARTER-4) (flag off in e2e,
   like AI providers). Fix: OAuth via the SDK's client auth provider with tokens stored like the
   auth header; e2e with `VITE_FLAGS_ON=mcp-tools` on the consent build or a third dev server.
+- **Staff SSO: only Grafana runs end to end** (SAASSTARTER-97) (docs/sso.md). The app is the tools' OIDC
+  provider and Vaultwarden is wired in compose.prod.yaml, but Temporal UI, Langfuse, GlitchTip and
+  Postiz are documented settings only, and oauth2-proxy (for Prometheus, Jaeger, Mailpit, ...) is a
+  recipe, not a service. Twenty, Chatwoot CE, Plane CE and Cal.diy have SSO only in paid editions
+  or not at all: owner decision whether a gate in front (double login) is worth it. To do: wire
+  each tool where it runs on this host, one e2e per tool like `e2e/sso.spec.ts`.
 - **MCP: OAuth 2.1 sign-in for hosted connectors** (SAASSTARTER-5) (docs/mcp.md, ADR 0027). `/mcp` accepts only
   organization API keys as a bearer header; ChatGPT connectors and claude.ai custom connectors
   expect OAuth 2.1 (RFC 9728 protected resource metadata, PKCE, client registration). Better Auth
   can cover it: `@better-auth/mcp` (MIT, same 1.7.x line as `better-auth`) turns the app into an
   OAuth 2.1 authorization server and protected resource on top of `@better-auth/oauth-provider`
-  (the old `oidc-provider` plugin is no longer in `better-auth` 1.7). To do: login/consent pages,
+  (the old `oidc-provider` plugin is no longer in `better-auth` 1.7; staff SSO already runs on it,
+  docs/sso.md). To do: login/consent pages,
   choose the organization at consent (OAuth tokens are per user, keys per org), map OAuth scopes
   to `SCOPES` in tenant.ts, accept those tokens in `verifiedKey()` next to keys, and check
   `pnpm check:licenses`. Its README recommends `legacy: 'reject'` (2026-07-28 clients only):

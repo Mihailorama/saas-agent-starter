@@ -132,7 +132,7 @@ test('plan (dry run): key names only, no value, exact text', () => {
       `Plan for production: deploy@203.0.113.10, https://app.example.com, ghcr.io/mihailorama/saas-agent-starter v1.0.0
   components: core install, postgres install, s3 install, smtp connect, analytics install, llm connect, vault install
   profiles: + analytics, + vault
-  env keys: ~ S3_ACCESS_KEY_ID (generated), + UMAMI_PUBLIC_URL, + UMAMI_DB_PASSWORD (generated), + UMAMI_APP_SECRET (generated), + UMAMI_ADMIN_PASSWORD (generated), + ANALYTICS_ORIGINS, + VAULT_PUBLIC_URL, + VAULT_DB_PASSWORD (generated), + VAULT_DATABASE_URL, - POSTHOG_HOST, - POSTHOG_KEY
+  env keys: ~ S3_ACCESS_KEY_ID (generated), + UMAMI_PUBLIC_URL, + UMAMI_DB_PASSWORD (generated), + UMAMI_APP_SECRET (generated), + UMAMI_ADMIN_PASSWORD (generated), + ANALYTICS_ORIGINS, + VAULT_PUBLIC_URL, + VAULT_DB_PASSWORD (generated), + VAULT_DATABASE_URL, + SSO_VAULTWARDEN_SECRET (generated), + SSO_VAULTWARDEN_REDIRECT_URIS, - POSTHOG_HOST, - POSTHOG_KEY
   RAM budget (mem_limit): 3.5 GiB of 3.8 GiB on the server
   WARNING: that is more than 90 % of it`,
     );

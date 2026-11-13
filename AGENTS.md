@@ -59,6 +59,7 @@ apps/api            TypeScript, Fastify. HTTP API, auth, tenancy, starts workflo
                       admin plugin's platform roles (user, operator)
   src/operator-guard.ts operator list (OPERATOR_EMAILS), read-only "view as user" sessions and
                       suspended orgs on Better Auth's endpoints (docs/admin.md)
+  src/sso.ts          staff SSO: the app as OIDC provider of the tools, clients from SSO_<TOOL>_*
   src/events.ts       publishEvent(): the one path for webhook events (docs/public-api.md)
   src/routes/*.ts     one file per resource (Zod schemas + handlers); ai-calls.ts = AI audit log,
                       hooks.ts = PostHog alerts (-> S3 + TrackerItemWorkflow) + CRM signals,
@@ -175,6 +176,7 @@ docs/security.md    sign-up protection (disposable email), bot-check follow-up
 docs/legal.md       legal pages, acceptance, age, marketing consent/unsubscribe; what a lawyer reviews
 docs/quality.md     quality budgets: gate config hashes, suppression cap, AGENTS.md size (`pnpm check:budgets`)
 docs/updates.md     taking starter updates into a product: merge a release tag, conflicts, migration order
+docs/sso.md         staff single sign-on into the tools (Grafana, Vaultwarden, ...): who, how, per tool
 ```
 
 Request path: browser -> web (`/api` same origin) -> Fastify -> `requireRole` (session,

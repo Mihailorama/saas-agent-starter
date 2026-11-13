@@ -85,6 +85,9 @@ services:
       - OIDC_ISSUER
       - OIDC_CLIENT_ID
       - OIDC_CLIENT_SECRET
+      # Staff SSO into the tools (docs/sso.md): one secret + callback list per tool on this host.
+      - SSO_VAULTWARDEN_SECRET
+      - SSO_VAULTWARDEN_REDIRECT_URIS
       - POSTHOG_WEBHOOK_SECRET
       - POSTHOG_APP_HOST
       - POSTHOG_PROJECT_ID
@@ -549,6 +552,7 @@ services:
     command:
       - >-
         [ -n "$$SMTP_HOST" ] || unset SMTP_HOST SMTP_FROM SMTP_PORT SMTP_SECURITY SMTP_USERNAME SMTP_PASSWORD;
+        if [ -n "$$SSO_CLIENT_SECRET" ]; then export SSO_ENABLED=true; else unset SSO_AUTHORITY SSO_CLIENT_ID SSO_CLIENT_SECRET SSO_SCOPES SSO_PKCE; fi;
         case "$$ADMIN_TOKEN" in ""|'$$argon2'*) exec /start.sh ;;
         *) echo "VAULT_ADMIN_TOKEN must be an argon2 hash (docs/secrets.md)" >&2; exit 1 ;; esac
     environment:
@@ -567,6 +571,13 @@ services:
       - SMTP_USERNAME=${VAULT_SMTP_USERNAME:-}
       - SMTP_PASSWORD=${VAULT_SMTP_PASSWORD:-}
       - SMTP_FROM=${VAULT_SMTP_FROM:-}
+      # Sign in with the app (docs/sso.md) when SSO_VAULTWARDEN_SECRET is set. The master password
+      # still unlocks the vault: SSO replaces the login, not the encryption key.
+      - SSO_AUTHORITY=${BETTER_AUTH_URL:-https://${APP_DOMAIN}}/api/auth
+      - SSO_CLIENT_ID=vaultwarden
+      - SSO_CLIENT_SECRET=${SSO_VAULTWARDEN_SECRET:-}
+      - SSO_SCOPES=email profile offline_access
+      - SSO_PKCE=true
     volumes: [vault_data:/data] # RSA signing key + icon cache only; secrets are in Postgres
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:80/alive"]

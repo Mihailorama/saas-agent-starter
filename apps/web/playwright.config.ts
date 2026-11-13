@@ -9,7 +9,12 @@ for (const file of ['../../.env', '../../.env.example']) {
 // The operator console spec (e2e/admin.spec.ts) signs up this operator; the API it starts below
 // inherits the list. Set here once, so the test workers see the same address.
 process.env.E2E_OPERATOR_EMAIL ??= `operator-${Date.now()}@example.com`;
-process.env.OPERATOR_EMAILS ??= process.env.E2E_OPERATOR_EMAIL;
+process.env.E2E_SSO_OPERATOR_EMAIL ??= `sso-operator-${Date.now()}@example.com`;
+process.env.OPERATOR_EMAILS ??= `${process.env.E2E_OPERATOR_EMAIL},${process.env.E2E_SSO_OPERATOR_EMAIL}`;
+// Staff SSO (e2e/sso.spec.ts, docs/sso.md): the API registers Grafana as a client; the spec runs
+// only when E2E_GRAFANA_URL points at a Grafana started with the same secret (CI does).
+process.env.SSO_GRAFANA_SECRET ??= 'local-dev-grafana-sso-secret';
+process.env.SSO_GRAFANA_REDIRECT_URIS ??= `${process.env.E2E_GRAFANA_URL ?? 'http://localhost:3001'}/login/generic_oauth`;
 
 // Override when 5173 is taken (e.g. agents running in parallel).
 const webPort = process.env.PLAYWRIGHT_PORT ?? '5173';
