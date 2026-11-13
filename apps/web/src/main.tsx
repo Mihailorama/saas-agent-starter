@@ -23,7 +23,7 @@ import { AcceptInvitationPage } from '@/pages/accept-invitation';
 import { AiTransparencyPage } from '@/pages/ai-transparency';
 import { SecurityPage } from '@/pages/security';
 import { Shell } from '@/pages/shell';
-import { SignInPage, safeRedirect } from '@/pages/sign-in';
+import { oauthResume, SignInPage, safeRedirect } from '@/pages/sign-in';
 import { TwoFactorPage } from '@/pages/two-factor';
 
 // App pages load on first visit (own chunks: data table, forms, zod); the bundle budget in
@@ -42,9 +42,10 @@ const rootRoute = createRootRoute({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sign-in',
-  // After signing in, back to where the user was sent away from (e.g. an invitation link).
+  // After signing in, back to where the user was sent away from (e.g. an invitation link), or
+  // on to the tool whose single sign-on sent them here.
   validateSearch: (s: Record<string, unknown>): { redirect?: string } => ({
-    redirect: safeRedirect(s.redirect),
+    redirect: safeRedirect(s.redirect) ?? oauthResume(window.location.search),
   }),
   component: SignInPage,
 });

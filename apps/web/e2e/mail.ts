@@ -25,13 +25,17 @@ async function mailText(to: string, subject: RegExp, seen: string[] = []): Promi
  * Asks for a sign-in code on the sign-in page; returns the mailed code without entering it.
  * Signs up on first use: the account is named after the address's local part.
  */
-export async function requestCode(page: Page, email: string): Promise<string> {
+export async function requestCode(
+  page: Page,
+  email: string,
+  { open = true } = {},
+): Promise<string> {
   const seen = (await inbox(email)).map((m) => m.ID);
   // One client IP per sign-in (the API trusts x-forwarded-for in e2e, playwright.config.ts): the
   // per-IP auth limit then applies per simulated user, like in production.
   const ip = `10.${[0, 0, 0].map(() => Math.floor(Math.random() * 250)).join('.')}`;
   await page.setExtraHTTPHeaders({ 'x-forwarded-for': ip });
-  await page.goto('/sign-in');
+  if (open) await page.goto('/sign-in'); // else the page is already there (e.g. SSO, sso.spec.ts)
   await page.getByLabel('Email').fill(email);
   await page.getByRole('button', { name: 'Email me a code' }).click();
   await expect(page.getByRole('heading', { name: 'Check your email' })).toBeVisible();
@@ -39,8 +43,8 @@ export async function requestCode(page: Page, email: string): Promise<string> {
 }
 
 /** Signs in (or up) with the mailed code; the 6th digit submits. */
-export async function signIn(page: Page, email: string) {
-  const code = await requestCode(page, email);
+export async function signIn(page: Page, email: string, opts?: { open?: boolean }) {
+  const code = await requestCode(page, email, opts);
   await page.getByLabel('Code', { exact: true }).fill(code);
 }
 

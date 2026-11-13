@@ -42,7 +42,16 @@ jobs:
           (cd services/worker-py && uv sync --locked)
           TEMPORAL_TASK_QUEUE=ci-unused pnpm worker > worker.log 2>&1 &
           timeout 60 sh -c 'until grep -q "worker started" worker.log; do sleep 1; done'
+      # Staff SSO end to end (e2e/sso.spec.ts, docs/sso.md): Grafana signs in through the app.
+      - name: Start Grafana with SSO
+        run: docker compose --profile observability up -d --no-deps --wait grafana
+        env:
+          GRAFANA_SSO: "true"
+          GRAFANA_ANONYMOUS: "false"
+          SSO_GRAFANA_SECRET: local-dev-grafana-sso-secret
       - run: pnpm check
+        env:
+          E2E_GRAFANA_URL: http://localhost:3001
       - name: Release typecheck with official TypeScript (tsc, Go); see ADR 0011
         if: startsWith(github.ref, 'refs/tags/v')
         run: pnpm typecheck

@@ -54,6 +54,22 @@ export function AuthLayout(props: { title: string; description: string; children
 export const safeRedirect = (value: unknown) =>
   typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : undefined;
 
+/**
+ * A tool's single sign-on (docs/sso.md) sends a signed-out operator here with its OAuth request in
+ * the query. After sign-in the same request goes to the API's authorize endpoint again, which now
+ * sees the session and returns to the tool (the API checks the client and its redirect URI).
+ */
+export const oauthResume = (search: string) => {
+  const q = new URLSearchParams(search);
+  if (!q.has('client_id') || !q.has('redirect_uri')) return undefined;
+  for (const k of [...q.keys()]) if (k === 'sig' || k === 'exp' || k.startsWith('ba_')) q.delete(k);
+  return `/api/auth/oauth2/authorize?${q}`;
+};
+
+/** In-app paths through the router; API paths (the OAuth resume) need a real page load. */
+export const goTo = (navigate: (o: { href: string }) => unknown, href: string) =>
+  href.startsWith('/api/') ? window.location.assign(href) : navigate({ href });
+
 /** Seconds before another code may be mailed (the API enforces the same per address). */
 const RESEND_AFTER = 30;
 
@@ -117,7 +133,7 @@ export function SignInPage() {
     setPending(false);
     if (error) return toast.error(error.message ?? 'Passkey sign-in failed');
     track('passkey_signin_completed');
-    navigate({ href: redirect ?? '/' });
+    goTo(navigate, redirect ?? '/');
   }
 
   /** Mails a code. Same answer whether or not an account exists: the code creates it. */
@@ -150,7 +166,7 @@ export function SignInPage() {
     const created = 'user' in data ? new Date(data.user.createdAt).getTime() : 0;
     if (Date.now() - created < 60_000) track('signup_completed');
     else track('signin_completed');
-    navigate({ href: redirect ?? '/' });
+    goTo(navigate, redirect ?? '/');
   }
 
   if (email) {

@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { schema } from '@app/db';
+import { oauthProvider } from '@better-auth/oauth-provider';
 import { passkey } from '@better-auth/passkey';
 import * as Sentry from '@sentry/node-core';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api';
-import { admin, emailOTP, genericOAuth, organization, twoFactor } from 'better-auth/plugins';
+import { admin, emailOTP, genericOAuth, jwt, organization, twoFactor } from 'better-auth/plugins';
 import { z } from 'zod';
 import { apiKeys, operatorAccess, orgAccess } from './access.ts';
 import { entitlements } from './billing/entitlements.ts';
@@ -18,6 +19,7 @@ import { ACCEPTANCE_REQUIRED, hasAccepted, LEGAL } from './legal.ts';
 import { mfaGuard } from './mfa.ts';
 import { operatorGuard } from './operator-guard.ts';
 import { assertAllowedEmail } from './signup-guard.ts';
+import { ssoClaims, ssoClientIds } from './sso.ts';
 import { type CrmEvent, startCrmSync, startSendEmail } from './temporal.ts';
 
 /** Renders in the request's language and starts the worker's SendEmailWorkflow; that is all. */
@@ -292,6 +294,19 @@ export const auth = betterAuth({
     }),
     operatorGuard(),
     ...oidc,
+    // Staff single sign-on into the tools (docs/sso.md): the app is their OpenID Connect provider.
+    // RS256: every tool's OIDC library verifies it (the jwt plugin's default EdDSA is not).
+    jwt({ jwks: { keyPairConfig: { alg: 'RS256' } } }),
+    oauthProvider({
+      loginPage: '/sign-in',
+      consentPage: '/sign-in', // never shown: tool clients skip consent and none other exists
+      scopes: ['openid', 'profile', 'email', 'offline_access', 'groups'],
+      allowDynamicClientRegistration: false,
+      cachedTrustedClients: ssoClientIds,
+      customIdTokenClaims: ({ user, metadata }) => ssoClaims(user, !!metadata?.staffSso),
+      customUserInfoClaims: ({ user, jwt }) =>
+        ssoClaims(user, ssoClientIds.has(String(jwt.azp ?? jwt.client_id))),
+    }),
   ],
   // Rate limiting is done by @fastify/rate-limit backed by Redis (shared across replicas).
   rateLimit: { enabled: false },
