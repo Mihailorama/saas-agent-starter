@@ -861,7 +861,7 @@ services:
   twenty:
     profiles: [crm]
     <<: &twenty
-      image: twentycrm/twenty:v2.56.1
+      image: twentycrm/twenty:v2.57.0
       logging: *logging
       environment: &twenty-env
         PG_DATABASE_URL: postgres://twenty:twenty@postgres:5432/twenty

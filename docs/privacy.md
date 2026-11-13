@@ -174,7 +174,7 @@ Sources: [PostHog persons API](https://posthog.com/docs/api/persons),
 [Sentry data retention](https://docs.sentry.io/security-legal-pii/security/data-retention-periods/),
 [GlitchTip install](https://glitchtip.com/documentation/install),
 [Umami delete session](https://docs.umami.is/docs/api-reference/delete-website-session),
-Twenty's source at `twenty/v2.56.1` (`rest-api-core.service.ts`: `DELETE` without
+Twenty's source at `twenty/v2.57.0` (`rest-api-core.service.ts`: `DELETE` without
 `soft_delete=true` destroys; `parse-soft-delete-rest-request.util.ts`).
 
 ## Retention
