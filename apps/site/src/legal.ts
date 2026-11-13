@@ -44,6 +44,12 @@ export type LegalConfig = {
   refunds: { withdrawalDays: number; creditsRefundDays: number };
   billing: { taxNote: string };
   processors: Processor[];
+  /**
+   * Hosting and service providers are agreed per customer contract (enterprise or managed
+   * deployments): the privacy policy says so instead of listing providers, and no provider name is
+   * required. Set it in SITE_LEGAL_JSON for a site that sells such contracts.
+   */
+  processorsByContract?: boolean;
 };
 type Component = { id: string; tier: string };
 type Answers = { components?: Record<string, { mode?: string }> };
@@ -132,7 +138,9 @@ export function exampleValues(config: LegalConfig, processors: Processor[]): str
     ...Object.entries(config.company).map(([k, v]) => [`company.${k}`, v] as [string, unknown]),
     ['governingLaw', config.governingLaw],
     ['jurisdiction', config.jurisdiction],
-    ...processors.map((p) => [`processors.${p.id}.name`, p.name] as [string, unknown]),
+    ...(config.processorsByContract ? [] : processors).map(
+      (p) => [`processors.${p.id}.name`, p.name] as [string, unknown],
+    ),
   ];
   return texts.filter(([, v]) => typeof v === 'string' && /example/i.test(v)).map(([k]) => k);
 }
@@ -188,14 +196,18 @@ export function legalDocs(
     {
       heading: 'Who processes your data',
       paragraphs: [
-        'The service providers below process personal data on our behalf. This list follows the tools this deployment uses and can change without a new version of this policy.',
+        config.processorsByContract
+          ? `Where an organization's ${product} is hosted and which service providers process its data are agreed in that organization's contract with us and its data processing agreement, which name each provider. We do not add or change a provider without telling the organization first, as that agreement sets out.`
+          : 'The service providers below process personal data on our behalf. This list follows the tools this deployment uses and can change without a new version of this policy.',
       ],
       generated: true,
       table: {
         columns: ['Provider', 'Purpose', 'Data'],
-        rows: processors
-          .filter((p) => p.category !== 'necessary')
-          .map((p) => [p.name, p.purpose, p.data]),
+        rows: config.processorsByContract
+          ? []
+          : processors
+              .filter((p) => p.category !== 'necessary')
+              .map((p) => [p.name, p.purpose, p.data]),
       },
     },
     {
