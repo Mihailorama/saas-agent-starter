@@ -26,6 +26,12 @@ export const ownSkills: Skill[] = [
     href: `${repo}/.claude/commands/validate-idea.md`,
   },
   {
+    name: 'setup-infra',
+    group: 'Build',
+    text: 'sets up your servers in a conversation and explains the plan; you type the secrets',
+    href: `${repo}/.claude/commands/setup-infra.md`,
+  },
+  {
     name: 'ui-council',
     group: 'Design',
     text: 'several models score screenshots until every one rates the UI at the target; opt-in',

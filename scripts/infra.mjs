@@ -492,15 +492,27 @@ async function ask(a, current, secrets, only) {
   return () => p.confirm({ message: 'Apply this plan?' }).then((v) => v === true);
 }
 
+/**
+ * The subcommand wherever it stands: `plan staging` and `staging plan` are the same dry run (a
+ * misplaced `plan` must never become a setup that applies). `add` takes the next word.
+ */
+export function command(words) {
+  const rest = [...words];
+  const i = rest.findIndex((w) => ['plan', 'add', 'verify'].includes(w));
+  const cmd = i < 0 ? 'setup' : rest.splice(i, 1)[0];
+  const only = cmd === 'add' ? rest.splice(i, 1)[0] : undefined;
+  return { cmd, only, words: rest };
+}
+
 async function main() {
   process.chdir(ROOT);
   const argv = process.argv.slice(2).filter((x) => x !== '--');
   const VALUED = ['--answers', '--rotate', '--org'];
   const opt = (n) => argv[argv.indexOf(n) + 1];
   const rotate = argv.flatMap((x, i) => (x === '--rotate' ? [argv[i + 1]] : []));
-  const words = argv.filter((x, i) => !x.startsWith('--') && !VALUED.includes(argv[i - 1]));
-  const cmd = ['plan', 'add', 'verify'].includes(words[0]) ? words.shift() : 'setup';
-  const only = cmd === 'add' ? words.shift() : undefined;
+  const { cmd, only, words } = command(
+    argv.filter((x, i) => !x.startsWith('--') && !VALUED.includes(argv[i - 1])),
+  );
   const dry = cmd === 'plan' || argv.includes('--dry-run');
   const interactive = !argv.includes('--yes') && cmd !== 'verify' && !dry;
   const envName = words[0] ?? 'production';

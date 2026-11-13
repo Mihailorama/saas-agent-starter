@@ -29,6 +29,11 @@ pnpm run infra                # environment "production"; `pnpm run infra -- sta
 
 (`pnpm setup` is a pnpm built-in, hence `run infra`.)
 
+Rather talk it through? In Claude Code, `/setup-infra [environment]` asks the same questions in
+the chat, recommends choices for your case, writes `deploy/setup/<env>.answers.json` and explains
+the `plan`. It never asks for a secret: you run `pnpm run infra -- <env>` yourself at the end and
+type them there.
+
 It asks:
 
 1. The server's address (IP, host name or an alias from `~/.ssh/config`), and the admin user.
