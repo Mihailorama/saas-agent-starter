@@ -284,14 +284,35 @@ const git = (...args) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 
+/**
+ * A TCP port nothing listens on right now. The visual web server used to take a fixed 5177, so a
+ * second project built on the starter on the same machine (or its `pnpm dev`) made the check fail.
+ */
+export function freePort() {
+  const r = spawnSync(
+    process.execPath,
+    [
+      '-e',
+      "const s = require('node:net').createServer().listen(0, 'localhost', () => { console.log(s.address().port); s.close(); });",
+    ],
+    { encoding: 'utf8' },
+  );
+  const port = Number(r.stdout.trim());
+  if (!Number.isInteger(port) || port <= 0) throw new Error('visual: found no free port');
+  return port;
+}
+
+let port;
 export function playwright(args, env) {
+  // One port per run (VISUAL_PORT wins): main's render and the working tree's never overlap.
+  port ??= process.env.VISUAL_PORT ?? String(freePort());
   return spawnSync(
     'pnpm',
     ['exec', 'playwright', 'test', '-c', 'playwright.visual.config.ts', ...args],
     {
       cwd: web,
       stdio: 'inherit',
-      env: { ...process.env, ...env },
+      env: { ...process.env, VISUAL_PORT: port, ...env },
     },
   ).status;
 }

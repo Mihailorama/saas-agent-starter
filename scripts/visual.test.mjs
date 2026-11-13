@@ -1,6 +1,7 @@
 // node --test 'scripts/*.test.mjs'. Pure parts of visual.mjs: intent matching and the decision.
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -9,6 +10,7 @@ import {
   canReuse,
   decide,
   finishMainRender,
+  freePort,
   matches,
   parseIntent,
   readResults,
@@ -252,4 +254,11 @@ test('the hook reuses a pass only for the same main and the same clean commit', 
   assert.equal(canReuse('abc:tree1', 'def:tree1'), false);
   assert.equal(canReuse('abc:tree1', null), false);
   assert.equal(canReuse(null, 'abc:tree1'), false);
+});
+
+test('freePort returns a port that can be bound right away', async () => {
+  const port = freePort();
+  const server = createServer();
+  await new Promise((ok, fail) => server.once('error', fail).listen(port, 'localhost', ok));
+  server.close();
 });
