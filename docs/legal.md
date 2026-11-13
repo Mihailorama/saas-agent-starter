@@ -46,6 +46,12 @@ lawyer must review them for every country the product is sold in.
    versions users accept in the app. With `"template": false` the build fails while any company
    field or the name of a processor the pages list still contains "example": the gate in step 2
    only sees `config/legal.json`, so the build checks what the override produces.
+   When hosting and providers are agreed per customer contract (enterprise or managed
+   deployments, no fixed provider list), set `"processorsByContract": true` instead: the privacy
+   policy then says each organization's contract and data processing agreement set where it runs
+   and who processes its data, including services the organization brings itself (its own
+   database, cloud services, AI or GPU providers), lists none, and the build requires no
+   provider names.
 
 4. Set `VITE_SITE_URL` (the web links the pages there) and build the site with the web's `VITE_*`
    values and the deployment's `SITE_DEPLOY_ENV` (below).

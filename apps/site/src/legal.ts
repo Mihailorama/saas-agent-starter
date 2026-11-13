@@ -44,6 +44,12 @@ export type LegalConfig = {
   refunds: { withdrawalDays: number; creditsRefundDays: number };
   billing: { taxNote: string };
   processors: Processor[];
+  /**
+   * Hosting and service providers are agreed per customer contract (enterprise or managed
+   * deployments): the privacy policy says so instead of listing providers, and no provider name is
+   * required. Set it in SITE_LEGAL_JSON for a site that sells such contracts.
+   */
+  processorsByContract?: boolean;
 };
 type Component = { id: string; tier: string };
 type Answers = { components?: Record<string, { mode?: string }> };
@@ -132,7 +138,9 @@ export function exampleValues(config: LegalConfig, processors: Processor[]): str
     ...Object.entries(config.company).map(([k, v]) => [`company.${k}`, v] as [string, unknown]),
     ['governingLaw', config.governingLaw],
     ['jurisdiction', config.jurisdiction],
-    ...processors.map((p) => [`processors.${p.id}.name`, p.name] as [string, unknown]),
+    ...(config.processorsByContract ? [] : processors).map(
+      (p) => [`processors.${p.id}.name`, p.name] as [string, unknown],
+    ),
   ];
   return texts.filter(([, v]) => typeof v === 'string' && /example/i.test(v)).map(([k]) => k);
 }
@@ -188,14 +196,18 @@ export function legalDocs(
     {
       heading: 'Who processes your data',
       paragraphs: [
-        'The service providers below process personal data on our behalf. This list follows the tools this deployment uses and can change without a new version of this policy.',
+        config.processorsByContract
+          ? `Where an organization's ${product} runs and which providers process its data are set in that organization's contract with us and its data processing agreement. A deployment can also use services the organization already has, such as its own database, cloud services or AI and GPU providers, wherever they run: those are the organization's own choice and the contract records them too. We do not add or change a provider we engage without telling the organization first, as that agreement sets out.`
+          : 'The service providers below process personal data on our behalf. This list follows the tools this deployment uses and can change without a new version of this policy.',
       ],
       generated: true,
       table: {
         columns: ['Provider', 'Purpose', 'Data'],
-        rows: processors
-          .filter((p) => p.category !== 'necessary')
-          .map((p) => [p.name, p.purpose, p.data]),
+        rows: config.processorsByContract
+          ? []
+          : processors
+              .filter((p) => p.category !== 'necessary')
+              .map((p) => [p.name, p.purpose, p.data]),
       },
     },
     {

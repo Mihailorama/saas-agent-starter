@@ -178,3 +178,16 @@ test('with the template off, example values in what a page shows are refused', (
     left.join(),
   );
 });
+
+test('with providers agreed per contract, the policy names none and needs none', () => {
+  const base = JSON.parse(readFileSync(new URL('../config/legal.json', import.meta.url), 'utf8'));
+  const plans = JSON.parse(readFileSync(new URL('../config/plans.json', import.meta.url), 'utf8'));
+  const off = withOverride(base, JSON.stringify({ template: false, processorsByContract: true }));
+  const hosting = base.processors.filter((p) => p.id === 'hosting');
+  assert.ok(!exampleValues(off, hosting).some((k) => k.startsWith('processors.')));
+  const { privacy } = legalDocs(off, hosting, plans);
+  const who = privacy.sections.find((s) => s.heading === 'Who processes your data');
+  assert.equal(who.table.rows.length, 0);
+  assert.match(who.paragraphs[0], /contract with us and its data processing agreement/);
+  assert.match(who.paragraphs[0], /services the organization already has/);
+});
