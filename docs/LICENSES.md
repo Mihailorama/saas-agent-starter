@@ -215,7 +215,7 @@ Notes:
 
 - CRM and booking ([docs/crm.md](crm.md), [ADR 0026](adr/0026-crm-and-booking.md)), checked
   2026-11-07:
-  - `twentycrm/twenty` (Twenty v2.56.1, server and worker from one image): its
+  - `twentycrm/twenty` (Twenty v2.57.0, server and worker from one image): its
     [LICENSE](https://github.com/twentyhq/twenty/blob/main/LICENSE) is AGPL-3.0 for most of the
     code, a commercial license for files marked `/* @license Enterprise */`, and MIT for its SDK
     packages; it adds an AGPLv3 section 7 "Twenty Application Exception": an application that
