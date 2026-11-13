@@ -48,8 +48,10 @@ lawyer must review them for every country the product is sold in.
    only sees `config/legal.json`, so the build checks what the override produces.
    When hosting and providers are agreed per customer contract (enterprise or managed
    deployments, no fixed provider list), set `"processorsByContract": true` instead: the privacy
-   policy then says each organization's contract and data processing agreement name its
-   providers, lists none, and the build requires no provider names.
+   policy then says each organization's contract and data processing agreement set where it runs
+   and who processes its data, including services the organization brings itself (its own
+   database, cloud services, AI or GPU providers), lists none, and the build requires no
+   provider names.
 
 4. Set `VITE_SITE_URL` (the web links the pages there) and build the site with the web's `VITE_*`
    values and the deployment's `SITE_DEPLOY_ENV` (below).

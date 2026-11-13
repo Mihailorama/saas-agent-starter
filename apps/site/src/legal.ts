@@ -197,7 +197,7 @@ export function legalDocs(
       heading: 'Who processes your data',
       paragraphs: [
         config.processorsByContract
-          ? `Where an organization's ${product} is hosted and which service providers process its data are agreed in that organization's contract with us and its data processing agreement, which name each provider. We do not add or change a provider without telling the organization first, as that agreement sets out.`
+          ? `Where an organization's ${product} runs and which providers process its data are set in that organization's contract with us and its data processing agreement. A deployment can also use services the organization already has, such as its own database, cloud services or AI and GPU providers, wherever they run: those are the organization's own choice and the contract records them too. We do not add or change a provider we engage without telling the organization first, as that agreement sets out.`
           : 'The service providers below process personal data on our behalf. This list follows the tools this deployment uses and can change without a new version of this policy.',
       ],
       generated: true,

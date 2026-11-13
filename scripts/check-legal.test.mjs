@@ -189,4 +189,5 @@ test('with providers agreed per contract, the policy names none and needs none',
   const who = privacy.sections.find((s) => s.heading === 'Who processes your data');
   assert.equal(who.table.rows.length, 0);
   assert.match(who.paragraphs[0], /contract with us and its data processing agreement/);
+  assert.match(who.paragraphs[0], /services the organization already has/);
 });
