@@ -65,6 +65,11 @@ Picks that are not obvious, one line each:
 ## Alternatives
 
 - Own tickets table and inbox UI: rejected by the owner; it rebuilds a help desk badly.
+- Linear as the tracker: SaaS only and closed source, so it cannot run inside an installation
+  that must keep its data in place (RU contour, enterprise contracts), and it has no intake queue
+  that waits for a human. Plane (AGPL-3.0, self-hostable or Plane Cloud) has Intake and an
+  official Python SDK; a team that already lives in Linear can still get the same flow by adding
+  an adapter next to `worker/tracker.py`'s Plane and GitHub ones.
 - Zammad (AGPL-3.0, a heavier stack) and FreeScout (AGPL-3.0, email-first): not checked in
   depth; both allowed as containers and kept as candidate replacements.
 - Chatwoot Cloud: fine where data may leave, but not for on-prem or data-residency
