@@ -67,6 +67,13 @@ if [ "$STEP" = base ]; then
     [ -z "$k" ] || grep -qxF "$k" "$keys" || printf '%s\n' "$k" >>"$keys"
   done <"$admin_home/.ssh/authorized_keys"
   chown "$DEPLOY_USER:$DEPLOY_USER" "$keys" && chmod 600 "$keys"
+  # A hardened sshd may let in only listed users: the key alone would then fail with a bare
+  # "Permission denied". Say what to change instead (the run is safe to repeat).
+  allowed=$(sshd -T 2>/dev/null | awk '$1 == "allowusers" { print $2 }' | tr '\n' ' ')
+  if [ -n "$allowed" ] && ! printf '%s\n' $allowed | grep -qx "$DEPLOY_USER"; then
+    echo "bootstrap: sshd AllowUsers ($allowed) leaves out $DEPLOY_USER: add it to that line in /etc/ssh/sshd_config(.d), reload ssh, run again" >&2
+    exit 1
+  fi
   install -d -m 755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$DEPLOY_PATH"
 
   # Firewall: only SSH (the port(s) sshd listens on), 80 and 443. Docker's published ports bypass

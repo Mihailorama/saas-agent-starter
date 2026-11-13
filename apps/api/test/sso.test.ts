@@ -154,6 +154,15 @@ describe('staff single sign-on', () => {
     expect(String(foreign.headers.location ?? '')).not.toContain('evil.example.com');
   });
 
+  it('allows offline_access, as Vaultwarden requests it, and returns a refresh token', async () => {
+    const res = await authorize(operator, { scope: 'openid email profile offline_access' });
+    const code = location(res).searchParams.get('code');
+    expect(code, String(res.headers.location)).toBeTruthy();
+    const t = await token(code!);
+    expect(t.statusCode, t.body).toBe(200);
+    expect(t.json().refresh_token).toBeTruthy();
+  });
+
   it('refuses a wrong client secret', async () => {
     const code = location(await authorize(operator)).searchParams.get('code')!;
     const t = await app.inject({

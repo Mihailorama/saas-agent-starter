@@ -458,6 +458,8 @@ async function ask(a, current, secrets, only) {
     a.server.admin = await text('Admin user (root, or passwordless sudo)', a.server.admin);
     a.domain = await text('Domain of the app (its DNS record points at the server)', a.domain);
     a.tls = await text('E-mail for Let\'s Encrypt ("internal": own CA)', a.tls, '@|^internal$');
+    // A fork's own images until it publishes releases (docs/setup.md, step 3).
+    a.images.repo = await text('Image repository (yours, or the upstream)', a.images.repo);
     a.images.version = await text(`Release of ${a.images.repo}`, a.images.version);
   }
   for (const c of catalog.filter((c) => c.available !== false && c.modes.length > 1)) {
