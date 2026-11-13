@@ -12,6 +12,7 @@
 // Design and server layout: docs/deploy.md, ADR 0016.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { registryDigest } from './registry.mjs';
 
 process.chdir(new URL('..', import.meta.url).pathname);
 const USAGE = 'usage: pnpm run deploy -- <env> (--version <tag> | --rollback | --status)';
@@ -63,60 +64,6 @@ const ip = [undefined, '', '0.0.0.0'].includes(env.PUBLISH_IP) ? '127.0.0.1' : e
 // --- the release: one digest per app image ---
 // Upstream images until a fork has its own `v*` release (docs/setup.md).
 const UPSTREAM_REPO = 'ghcr.io/mihailorama/saas-agent-starter';
-
-/** `repo@sha256:...` of repo:tag from the registry's HTTP API (OCI distribution spec). */
-async function registryDigest(repo, tag) {
-  const env = process.env;
-  const [host, ...path] = repo.split('/'); // IMAGE_REPO starts with the registry host
-  const name = path.join('/');
-  if (!(host.includes('.') || /^localhost(:\d+)?$/.test(host)) || !name) {
-    throw new Error(`IMAGE_REPO ${repo}: must start with a registry host (ghcr.io/owner/name)`);
-  }
-  // Plain HTTP only for loopback or when asked (a local test registry); then never credentials.
-  const http = /^(localhost|127\.)/.test(host) || env.REGISTRY_INSECURE === '1';
-  const url = `${http ? 'http' : 'https'}://${host}/v2/${name}/manifests/${tag}`;
-  const accept = [
-    'application/vnd.oci.image.index.v1+json',
-    'application/vnd.docker.distribution.manifest.list.v2+json',
-    'application/vnd.oci.image.manifest.v1+json',
-    'application/vnd.docker.distribution.manifest.v2+json',
-  ].join(', ');
-  let res = await fetch(url, { method: 'HEAD', headers: { accept } });
-  if (res.status === 401) {
-    // Bearer token flow: realm/service/scope from WWW-Authenticate, anonymous unless REGISTRY_AUTH.
-    const p = Object.fromEntries(
-      [...(res.headers.get('www-authenticate') ?? '').matchAll(/(\w+)="([^"]*)"/g)].map((m) => [
-        m[1],
-        m[2],
-      ]),
-    );
-    const tokenUrl = new URL(p.realm);
-    if (tokenUrl.protocol !== 'https:' && !http)
-      throw new Error(`${host}: token realm is not https`);
-    if (p.service) tokenUrl.searchParams.set('service', p.service);
-    tokenUrl.searchParams.set('scope', p.scope ?? `repository:${name}:pull`);
-    const auth =
-      env.REGISTRY_AUTH && !http
-        ? { authorization: `Basic ${Buffer.from(env.REGISTRY_AUTH).toString('base64')}` }
-        : {};
-    const t = await fetch(tokenUrl, { headers: auth });
-    const body = t.ok ? await t.json() : {};
-    const token = body.token ?? body.access_token;
-    if (token) {
-      res = await fetch(url, {
-        method: 'HEAD',
-        headers: { accept, authorization: `Bearer ${token}` },
-      });
-    }
-  }
-  const digest = res.headers.get('docker-content-digest');
-  if (!res.ok || !/^sha256:[0-9a-f]{64}$/.test(digest ?? '')) {
-    throw new Error(
-      `${repo}:${tag} not found in the registry (HTTP ${res.status}). Released yet? Private? Set REGISTRY_AUTH=user:token`,
-    );
-  }
-  return `${repo}@${digest}`;
-}
 
 async function digest(name) {
   const pinned = process.env[`IMAGE_${name.toUpperCase()}`];

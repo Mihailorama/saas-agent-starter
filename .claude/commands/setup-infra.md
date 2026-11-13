@@ -15,7 +15,7 @@ command the human runs next. Stop there.
    If `deploy/setup/<env>.answers.json` exists, start from it and ask only what changes.
 2. Ask a few questions at a time, in the human's language, each with the catalog's default and
    what it costs: the server (host or `~/.ssh/config` alias, admin user), the domain and the
-   Let's Encrypt e-mail (or `internal`), the release tag, then for each component install /
+   Let's Encrypt e-mail (or `internal`), then (the release is always the newest, never ask) for each component install /
    connect / skip with its RAM and what skipping turns off. Recommend for their case (one small
    server: install Postgres and S3, connect SMTP and the LLM provider). Check that the domain and
    the subdomains the choices need resolve (`dig +short <name>`) and say which are missing.
