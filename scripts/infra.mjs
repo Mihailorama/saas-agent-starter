@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 // One-command infrastructure setup (docs/setup.md, ADR 0032). Components: config/components.json.
 //   pnpm run infra [-- <env>]                    questions, then bootstrap, deploy, verify
 //   pnpm run infra -- plan [<env>]               (or --dry-run) what would change; changes nothing
@@ -10,13 +17,7 @@
 // The answers file holds choices, hosts and URLs, never a secret. Secrets go only into
 // deploy/env/<env>.enc.env (DEPLOY_ENV_FILE), piped into sops on stdin. Nothing prints a value:
 // plans show key names. SSH: your ssh config and agent (DEPLOY_SSH_CONFIG: another config file).
-import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { latestRelease } from './registry.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');
@@ -206,7 +207,7 @@ const ramOf = (a) =>
   catalog.reduce((sum, c) => sum + (modeOf(a, c) === 'install' ? (c.install?.ramMiB ?? 0) : 0), 0);
 
 /** The plan: profiles and env KEY NAMES added (+), changed (~), removed (-), and RAM. */
-export function plan({ a, current, next, generated, missing = [], serverMiB }) {
+export function plan({ a, current, next, generated, missing = [], serverMiB, release }) {
   const diff = (before, after) => [
     ...Object.keys(after).flatMap((k) =>
       !(k in before) ? [`+ ${k}`] : before[k] !== after[k] ? [`~ ${k}`] : [],
@@ -227,7 +228,7 @@ export function plan({ a, current, next, generated, missing = [], serverMiB }) {
   const gib = (m) => `${(m / 1024).toFixed(1)} GiB`;
   const ram = ramOf(a);
   const lines = [
-    `Plan for ${a.env}: ${a.server.user}@${a.server.host}, https://${a.domain}, ${a.images.repo} ${a.images.version}`,
+    `Plan for ${a.env}: ${a.server.user}@${a.server.host}, https://${a.domain}, ${a.images.repo} ${release ?? a.images.version}${a.images.version === 'latest' ? ' (latest)' : ''}`,
     `  components: ${catalog
       .filter((c) => c.available !== false)
       .map((c) => `${c.id} ${modeOf(a, c)}`)
@@ -458,9 +459,6 @@ async function ask(a, current, secrets, only) {
     a.server.admin = await text('Admin user (root, or passwordless sudo)', a.server.admin);
     a.domain = await text('Domain of the app (its DNS record points at the server)', a.domain);
     a.tls = await text('E-mail for Let\'s Encrypt ("internal": own CA)', a.tls, '@|^internal$');
-    // A fork's own images until it publishes releases (docs/setup.md, step 3).
-    a.images.repo = await text('Image repository (yours, or the upstream)', a.images.repo);
-    a.images.version = await text(`Release of ${a.images.repo}`, a.images.version);
   }
   for (const c of catalog.filter((c) => c.available !== false && c.modes.length > 1)) {
     if (only && c.id !== only) continue;
@@ -524,7 +522,6 @@ async function main() {
   if (only && !byId[only]) die(`unknown component ${only} (config/components.json)`);
   if (only && byId[only].available === false) die(`${only} cannot be added yet (docs/TODO.md)`);
 
-  const version = `v${JSON.parse(read('.release-please-manifest.json'))['.']}`;
   const saved = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : undefined;
   if (!saved && (!interactive || only)) die(`${file} not found: run pnpm run infra first`);
   const a = structuredClone(saved) ?? {
@@ -533,7 +530,8 @@ async function main() {
     server: { host: '', admin: 'root', user: 'deploy' },
     domain: '',
     tls: '',
-    images: { repo: UPSTREAM, version },
+    // Always the newest release, looked up at each run; a fixed tag only by editing the answers.
+    images: { repo: UPSTREAM, version: 'latest' },
     components: {},
   };
   const envFile = process.env.DEPLOY_ENV_FILE ?? `deploy/env/${a.env}.enc.env`;
@@ -566,7 +564,11 @@ async function main() {
   if (rotateErr.length) die(rotateErr.join('\n'));
   if (out.invalid.length) die(`invalid value (format, or contains $): ${out.invalid.join(', ')}`);
   await checkDns(a, out.env);
-  console.log(plan({ a, current, next: out.env, ...out, serverMiB: serverMiB(out.env) }));
+  const release =
+    a.images.version === 'latest'
+      ? await latestRelease(a.images.repo).catch((err) => die(err.message))
+      : a.images.version;
+  console.log(plan({ a, current, next: out.env, ...out, serverMiB: serverMiB(out.env), release }));
   if (dry) return;
   if (out.missing.length)
     die(`missing secrets: ${out.missing.map((k) => `INFRA_${k}`).join(', ')}`);
@@ -579,13 +581,7 @@ async function main() {
   if (!backups) console.warn('  warning: no backups configured (docs/backups.md): --skip-backup');
   const deploy = spawnSync(
     'node',
-    [
-      'scripts/deploy.mjs',
-      a.env,
-      '--version',
-      a.images.version,
-      ...(backups ? [] : ['--skip-backup']),
-    ],
+    ['scripts/deploy.mjs', a.env, '--version', release, ...(backups ? [] : ['--skip-backup'])],
     { stdio: 'inherit', env: { ...process.env, DEPLOY_ENV_FILE: envFile } },
   );
   if (deploy.status !== 0) die('deploy failed: fix the cause and run the same command again');
@@ -602,7 +598,23 @@ async function main() {
   console.log('verify');
   const mailChanged = ['SMTP_URL', 'MAIL_FROM'].some((k) => current[k] !== out.env[k]);
   verify(a, out.env, { org: opt('--org'), mail: mailChanged || argv.includes('--mail') });
+  console.log(`\n${summary(a, out.env, release)}`);
   console.log(`\nDone: https://${a.domain}. Commit ${file} and ${envFile} (values are encrypted).`);
+}
+
+/** What the run left on the server, connected and skipped, with addresses: the run's receipt. */
+export function summary(a, env, release) {
+  const by = { install: [], connect: [], skip: [] };
+  for (const c of catalog.filter((c) => c.available !== false)) {
+    const where = c.id === 'core' ? `https://${a.domain} (${release})` : env[c.install?.site];
+    by[modeOf(a, c)]?.push(`  ${c.id.padEnd(10)} ${c.description}${where ? `: ${where}` : ''}`);
+  }
+  return [
+    'Installed on the server:',
+    ...by.install,
+    ...(by.connect.length ? ['Connected:', ...by.connect] : []),
+    ...(by.skip.length ? ['Skipped:', ...by.skip] : []),
+  ].join('\n');
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();

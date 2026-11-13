@@ -13,6 +13,7 @@ import {
   plan,
   render,
   rotateErrors,
+  summary,
   validateAnswers,
 } from './infra.mjs';
 
@@ -221,4 +222,17 @@ test('the subcommand counts wherever it stands: a misplaced plan stays a dry run
   });
   assert.deepEqual(command(['add', 'vault']), { cmd: 'add', only: 'vault', words: [] });
   assert.deepEqual(command(['staging']), { cmd: 'setup', only: undefined, words: ['staging'] });
+});
+
+test('the receipt lists what is installed with addresses, then connected and skipped', () => {
+  const a = answers();
+  const env = render(a, {}, {}).env;
+  const text = summary(a, env, 'v1.0.0');
+  assert.match(
+    text,
+    /^Installed on the server:\n {2}core .*: https:\/\/app\.example\.com \(v1\.0\.0\)/,
+  );
+  assert.match(text, /\n {2}s3 .*: https:\/\/s3\.app\.example\.com/);
+  for (const c of catalog.filter((c) => c.available !== false))
+    assert.ok(text.includes(`  ${c.id} `), c.id);
 });
