@@ -72,7 +72,8 @@
       "keys": ["POSTGRES_PASSWORD"],
       "verify": {
         "install": "docker compose exec -T postgres pg_isready -q -U postgres -d app"
-      }
+      },
+      "group": "base"
     },
     {
       "id": "s3",
@@ -136,13 +137,14 @@
           "secret": true
         }
       ],
-      "verify": "docker compose exec -T worker python -m worker.selfcheck s3"
+      "verify": "docker compose exec -T worker python -m worker.selfcheck s3",
+      "group": "base"
     },
     {
       "id": "smtp",
       "tier": "core",
       "description": "Transactional mail (sign-in codes, invitations; skipped, nobody can sign in by email)",
-      "modes": ["connect", "skip"],
+      "modes": ["connect"],
       "connect": [
         {
           "key": "SMTP_URL",
@@ -157,7 +159,8 @@
           "validate": "@"
         }
       ],
-      "verify": "docker compose exec -T worker python -m worker.selfcheck smtp"
+      "verify": "docker compose exec -T worker python -m worker.selfcheck smtp",
+      "group": "base"
     },
     {
       "id": "analytics",
@@ -363,11 +366,46 @@
     {
       "id": "crm",
       "tier": "optional",
-      "description": "Twenty CRM (docs/crm.md)",
+      "group": "product",
+      "description": "Twenty CRM: people, companies and deals from sign-ups and bookings (docs/crm.md)",
+      "ask": "Do you need a CRM?",
+      "labels": {
+        "install": "yes: install Twenty on the server",
+        "connect": "I already use Twenty: connect it",
+        "skip": "no CRM"
+      },
       "modes": ["install", "connect", "skip"],
-      "available": false,
+      "requires": {
+        "install": ["postgres:install"]
+      },
       "install": {
-        "ramMiB": 2560
+        "profile": "crm",
+        "ramMiB": 2560,
+        "site": "CRM_PUBLIC_URL",
+        "env": {
+          "CRM_PUBLIC_URL": "https://crm.{domain}",
+          "TWENTY_DB_PASSWORD": "{hex:24}",
+          "TWENTY_ENCRYPTION_KEY": "{hex:32}",
+          "TWENTY_API_URL": "http://twenty:3000"
+        },
+        "rotate": ["TWENTY_DB_PASSWORD"]
+      },
+      "connect": [
+        {
+          "key": "TWENTY_API_URL",
+          "prompt": "Your Twenty's address",
+          "secret": false,
+          "validate": "^https://"
+        },
+        {
+          "key": "TWENTY_API_KEY",
+          "prompt": "Twenty API key (Settings, APIs)",
+          "secret": true
+        }
+      ],
+      "keys": ["TWENTY_API_KEY", "CRM_FILE"],
+      "verify": {
+        "install": "docker compose exec -T twenty curl -fsS -o /dev/null http://localhost:3000/healthz"
       }
     },
     {

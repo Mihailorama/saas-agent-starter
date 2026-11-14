@@ -34,28 +34,36 @@ the chat, recommends choices for your case, writes `deploy/setup/<env>.answers.j
 the `plan`. It never asks for a secret: you run `pnpm run infra -- <env>` yourself at the end and
 type them there.
 
-It asks:
+Setup asks only for the base; every other component is added afterwards, one at a time, with
+`pnpm run infra -- add <component>` (the same action the stack console will call, SAASSTARTER-98):
 
-1. The server's address (IP, host name or an alias from `~/.ssh/config`), and the admin user.
-2. The app's domain, and the e-mail for Let's Encrypt (`internal`: Caddy's own CA, for intranets).
-3. Nothing about releases: it deploys the newest `v*` release of the images, looked up at each
+1. The product: its name (the app's `APP_NAME`) and a sentence or two about it.
+2. The server's address (IP, host name or an alias from `~/.ssh/config`), and the admin user.
+3. The app's address (`app.example.com` or the bare domain: the domain's owner decides), and the
+   e-mail for Let's Encrypt (`internal`: Caddy's own CA, for intranets).
+4. The base components: Postgres and S3 (install on the server or connect yours) and mail
+   (required: sign-in codes go by e-mail). Secrets are typed hidden and never shown again.
+5. Nothing about releases: it deploys the newest `v*` release of the images, looked up at each
    run (the plan names it). Until your fork publishes its own, the upstream
    `ghcr.io/mihailorama/saas-agent-starter/{api,worker,web}` are used; `images.repo` in the answers
    file switches to yours, `images.version` pins a tag instead of `latest`.
-4. For each component: **install** it on the server, **connect** one you already have, or
-   **skip** it, then the connect details. Secrets are typed hidden and never shown again.
 
-| Component | Install (on the server)                 | Connect                                      | Skip             |
-| --------- | --------------------------------------- | -------------------------------------------- | ---------------- |
-| Postgres  | Postgres 17 (`db` profile)              | owner URL, app URL, Temporal's role          | -                |
-| S3        | SeaweedFS (`s3` profile), `s3.<domain>` | endpoint, bucket, keys (AWS, R2, ...)        | -                |
-| SMTP      | -                                       | `SMTP_URL`, sender                           | no sign-in mails |
-| Analytics | Umami (`analytics`), `umami.<domain>`   | PostHog key and host                         | off              |
-| LLM       | -                                       | provider, model, key (config/ai-models.json) | AI features off  |
-| Vault     | Vaultwarden (`vault`), `vault.<domain>` | Bitwarden Cloud or your Vaultwarden          | -                |
+The run ends with a receipt: what is installed and where, what is connected, and what is not
+added yet with the command that adds it. Each component below can be added later: **install** it
+on the server, **connect** one you already have, or **skip** it.
+
+| Component | Install (on the server)                 | Connect                                      | Skip            |
+| --------- | --------------------------------------- | -------------------------------------------- | --------------- |
+| Postgres  | Postgres 17 (`db` profile)              | owner URL, app URL, Temporal's role          | -               |
+| S3        | SeaweedFS (`s3` profile), `s3.<domain>` | endpoint, bucket, keys (AWS, R2, ...)        | -               |
+| SMTP      | -                                       | `SMTP_URL`, sender (required, base)          | -               |
+| Analytics | Umami (`analytics`), `umami.<domain>`   | PostHog key and host                         | off             |
+| LLM       | -                                       | provider, model, key (config/ai-models.json) | AI features off |
+| Vault     | Vaultwarden (`vault`), `vault.<domain>` | Bitwarden Cloud or your Vaultwarden          | -               |
+| CRM       | Twenty (`crm`), `crm.<domain>`          | your Twenty: address and API key             | no CRM          |
 
 Everything else (backups to off-site S3, Temporal UI, PII redaction, llm-cli, booking, Chatwoot,
-Twenty, Stripe, Langfuse, error tracking) is listed in [config/components.json](../config/components.json)
+Stripe, Langfuse, error tracking) is listed in [config/components.json](../config/components.json)
 and comes later through `pnpm run infra -- add <component>` (docs/TODO.md). The plan shows the RAM
 the choices reserve (`mem_limit` sums from [STACK.md](STACK.md)) against the server's RAM.
 

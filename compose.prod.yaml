@@ -32,6 +32,7 @@ services:
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
       VAULT_PUBLIC_URL: ${VAULT_PUBLIC_URL:-}
       UMAMI_PUBLIC_URL: ${UMAMI_PUBLIC_URL:-}
+      CRM_PUBLIC_URL: ${CRM_PUBLIC_URL:-}
       # vault site: who may reach Vaultwarden's /admin; everyone else gets 403
       VAULT_ADMIN_IPS: ${VAULT_ADMIN_IPS:-127.0.0.1/32}
     ports:
@@ -220,7 +221,8 @@ services:
       - TELEGRAM_SUPPORT_BOT_TOKEN
       - TELEGRAM_SUPPORT_CHAT_ID
       - TELEGRAM_SUPPORT_WEBHOOK_URL
-      # CRM sync (docs/crm.md); Twenty runs elsewhere (docs/deploy.md), empty = dry run
+      # CRM sync (docs/crm.md): profile crm on this host (http://twenty:3000) or your own Twenty;
+      # no key = dry run
       - TWENTY_API_URL
       - TWENTY_API_KEY
       - CRM_FILE
@@ -533,6 +535,67 @@ services:
     depends_on:
       umami-db: { condition: service_completed_successfully }
 
+  # --- profile crm: Twenty (AGPL-3.0 + app exception, unmodified; docs/crm.md, ADR 0026) at
+  # CRM_PUBLIC_URL. Role + database `twenty` on the app's Postgres (twenty-db; the backups cover
+  # it), Redis db 4, attachments in the twenty_data volume. The worker syncs to it once
+  # TWENTY_API_KEY is set (an API key made in Twenty: Settings, APIs). ~2.5 GiB (docs/STACK.md).
+  twenty-db:
+    profiles: [crm]
+    image: postgres:17-alpine
+    logging: *logging
+    mem_limit: 64m
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: app
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      DB_PASSWORD: ${TWENTY_DB_PASSWORD:-}
+      DB_NAME: twenty
+    entrypoint: ["/bin/sh", "/db-init.sh"]
+    volumes: ["./db-init.sh:/db-init.sh:ro"]
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+
+  twenty:
+    profiles: [crm]
+    image: twentycrm/twenty:v2.57.0@sha256:17293aa80415035cdeb5f43bd222072b2c00527195c584e4f0d967923e99d9e1
+    logging: *logging
+    mem_limit: 1536m
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment: &twenty-env
+      PG_DATABASE_URL: postgres://twenty:${TWENTY_DB_PASSWORD:-}@postgres:5432/twenty
+      SERVER_URL: ${CRM_PUBLIC_URL:-}
+      REDIS_URL: redis://redis:6379/4
+      ENCRYPTION_KEY: ${TWENTY_ENCRYPTION_KEY:-}
+      APP_SECRET: ${TWENTY_ENCRYPTION_KEY:-}
+      STORAGE_TYPE: local
+      TELEMETRY_ENABLED: "false"
+    volumes: [twenty_data:/app/packages/twenty-server/.local-storage]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/healthz >/dev/null"]
+      interval: 10s
+      start_period: 20m # the first start runs ~580 migration steps
+      retries: 30
+    depends_on:
+      twenty-db: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  twenty-worker:
+    profiles: [crm]
+    image: twentycrm/twenty:v2.57.0@sha256:17293aa80415035cdeb5f43bd222072b2c00527195c584e4f0d967923e99d9e1
+    logging: *logging
+    mem_limit: 1g
+    restart: unless-stopped
+    command: ["yarn", "worker:prod"]
+    environment:
+      <<: *twenty-env
+      NODE_OPTIONS: --max-old-space-size=768
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+    volumes: [twenty_data:/app/packages/twenty-server/.local-storage]
+    depends_on: { twenty: { condition: service_healthy } }
+
   # --- profile vault: Vaultwarden (AGPL-3.0, unmodified) as the team's secrets vault for humans
   # and coding agents (docs/secrets.md). Its database lives on the app's Postgres server (create
   # role + database `vaultwarden`: vault-db), so the backups cover it. Reachable only
@@ -594,3 +657,4 @@ volumes:
   pgdata:
   s3data:
   vault_data:
+  twenty_data:

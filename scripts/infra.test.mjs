@@ -44,7 +44,7 @@ const secrets = {
 };
 
 test('the catalog covers every prod profile and example.env key', () => {
-  const profiles = ['db', 's3', 'vault', 'analytics', 'ops', 'pii', 'llm-cli', 'booking'];
+  const profiles = ['db', 's3', 'vault', 'analytics', 'ops', 'pii', 'llm-cli', 'booking', 'crm'];
   const ok = checkComponents(catalog, profiles, ['DATABASE_URL']);
   assert.deepEqual(ok, []);
   const bad = checkComponents(catalog, [...profiles, 'newthing'], ['DATABASE_URL', 'NEW_KEY']);
@@ -80,6 +80,12 @@ test('answers: valid ones pass, secrets and wrong choices are refused', () => {
   ]) {
     assert.match(errors, re);
   }
+  // Mail is the only way in (sign-in codes): it cannot be skipped or left out.
+  const noMail = answers();
+  noMail.components.smtp = { mode: 'skip' };
+  assert.match(validateAnswers(noMail).join('\n'), /smtp\.mode: one of connect/);
+  delete noMail.components.smtp;
+  assert.match(validateAnswers(noMail).join('\n'), /components\.smtp/);
 });
 
 test('render: secrets generated once, kept, rotated on request; derived values follow', () => {
@@ -132,7 +138,7 @@ test('plan (dry run): key names only, no value, exact text', () => {
     assert.equal(
       text,
       `Plan for production: deploy@203.0.113.10, https://app.example.com, ghcr.io/mihailorama/saas-agent-starter v1.0.0
-  components: core install, postgres install, s3 install, smtp connect, analytics install, llm connect, vault install
+  components: core install, postgres install, s3 install, smtp connect, analytics install, llm connect, vault install, crm skip
   profiles: + analytics, + vault
   env keys: ~ S3_ACCESS_KEY_ID (generated), + UMAMI_PUBLIC_URL, + UMAMI_DB_PASSWORD (generated), + UMAMI_APP_SECRET (generated), + UMAMI_ADMIN_PASSWORD (generated), + ANALYTICS_ORIGINS, + VAULT_PUBLIC_URL, + VAULT_DB_PASSWORD (generated), + VAULT_DATABASE_URL, + SSO_VAULTWARDEN_SECRET (generated), + SSO_VAULTWARDEN_REDIRECT_URIS, - POSTHOG_HOST, - POSTHOG_KEY
   RAM budget (mem_limit): 3.5 GiB of 3.8 GiB on the server
@@ -235,4 +241,19 @@ test('the receipt lists what is installed with addresses, then connected and ski
   assert.match(text, /\n {2}s3 .*: https:\/\/s3\.app\.example\.com/);
   for (const c of catalog.filter((c) => c.available !== false))
     assert.ok(text.includes(`  ${c.id} `), c.id);
+  // What setup left out is listed with the command that adds it later.
+  assert.match(text, /\nNot added yet \(pnpm run infra -- add <component>\):\n(.*\n)* {2}vault /);
+});
+
+test('a setting made by hand for a component (its keys) survives a re-run while it is on', () => {
+  const a = answers();
+  a.components.vault = { mode: 'install' };
+  const kept = render(a, {
+    VAULT_ADMIN_TOKEN: 'argon2-hash',
+    VAULT_ADMIN_IPS: '192.0.2.10/32',
+  }).env;
+  assert.equal(kept.VAULT_ADMIN_TOKEN, 'argon2-hash');
+  assert.equal(kept.VAULT_ADMIN_IPS, '192.0.2.10/32');
+  a.components.vault = { mode: 'skip' };
+  assert.equal(render(a, { VAULT_ADMIN_TOKEN: 'argon2-hash' }).env.VAULT_ADMIN_TOKEN, undefined);
 });

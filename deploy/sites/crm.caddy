@@ -1,0 +1,5 @@
+# Profile crm (Twenty, docs/crm.md): its own domain, CRM_PUBLIC_URL=https://crm.example.com.
+{$CRM_PUBLIC_URL} {
+	tls {$CADDY_TLS}
+	reverse_proxy twenty:3000
+}
