@@ -1,0 +1,70 @@
+# Changelog
+
+## 1.0.0 (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ai:** `OPENAI_BASE_URL` / `OPENAI_API_KEY` for a self-hosted or in-country OpenAI-compatible endpoint are renamed to `OPENAI_COMPATIBLE_BASE_URL` / `OPENAI_COMPATIBLE_API_KEY` (provider `openai_compatible`); `OPENAI_API_KEY` now means the OpenAI API. The worker refuses to start while `OPENAI_BASE_URL` is set and `OPENAI_COMPATIBLE_BASE_URL` is not. Upgrade note: docs/deploy.md "Upgrade notes".
+
+### Features
+
+* **admin:** operator console with audited actions and impersonation ([#43](https://github.com/Mihailorama/saas-agent-starter/issues/43)) ([c424843](https://github.com/Mihailorama/saas-agent-starter/commit/c424843f8defcc1de81f2747558fec9c918fdbe4))
+* **ai:** external MCP tools for AI purposes, per organization ([#52](https://github.com/Mihailorama/saas-agent-starter/issues/52)) ([1172daf](https://github.com/Mihailorama/saas-agent-starter/commit/1172daf1e8e261defedecb5eff58477d205c6efb))
+* **ai:** LiteLLM gateway, CLI subscriptions by default, BYO and on-prem providers ([#44](https://github.com/Mihailorama/saas-agent-starter/issues/44)) ([5f5f9ce](https://github.com/Mihailorama/saas-agent-starter/commit/5f5f9ce2dbe67120470b0ee51c24d748c92196da))
+* **analytics:** NPS and CSAT surveys as code, Formbricks connector ([#54](https://github.com/Mihailorama/saas-agent-starter/issues/54)) ([35f7a47](https://github.com/Mihailorama/saas-agent-starter/commit/35f7a47271ecbac63b8810f87c5b7d9e5e2a122e))
+* **api:** customer API keys and outbound webhooks ([#32](https://github.com/Mihailorama/saas-agent-starter/issues/32)) ([0c55eea](https://github.com/Mihailorama/saas-agent-starter/commit/0c55eea9bbbe535aa564fdefdf41e58f02847e33))
+* **api:** MCP server for organization API keys ([#51](https://github.com/Mihailorama/saas-agent-starter/issues/51)) ([b4c3744](https://github.com/Mihailorama/saas-agent-starter/commit/b4c3744b9feb537d0e254fede5cef30dc020d89d))
+* **auth:** block disposable email addresses at sign-up and invitations ([#58](https://github.com/Mihailorama/saas-agent-starter/issues/58)) ([35464d2](https://github.com/Mihailorama/saas-agent-starter/commit/35464d2806f5318098fab4e2084e901a373fd75e))
+* **auth:** passwordless sign-in with e-mail one-time codes ([#65](https://github.com/Mihailorama/saas-agent-starter/issues/65)) ([430de4f](https://github.com/Mihailorama/saas-agent-starter/commit/430de4f3b79018dde0419344cb9bf9600227cbe6))
+* **auth:** transactional email — verification, password reset, invitations ([#29](https://github.com/Mihailorama/saas-agent-starter/issues/29)) ([6c57136](https://github.com/Mihailorama/saas-agent-starter/commit/6c5713680185fd991ce2a36412d9b2495d3a9d69))
+* **auth:** two-factor authentication and passkeys ([#27](https://github.com/Mihailorama/saas-agent-starter/issues/27)) ([10717ea](https://github.com/Mihailorama/saas-agent-starter/commit/10717eadffae4b81f4c0c071e7855fe2172cdae8))
+* **billing:** any pricing model in plans.json; manual contract provider ([#57](https://github.com/Mihailorama/saas-agent-starter/issues/57)) ([61d4d73](https://github.com/Mihailorama/saas-agent-starter/commit/61d4d7317f7a7525e90dda305d94adadf188c0ff))
+* **billing:** plans, entitlements, Stripe and LLM spend limits ([#37](https://github.com/Mihailorama/saas-agent-starter/issues/37)) ([899baae](https://github.com/Mihailorama/saas-agent-starter/commit/899baaea52970dd6707e8ee2117a3a9861a3532f))
+* **billing:** prepaid credit packs ([#62](https://github.com/Mihailorama/saas-agent-starter/issues/62)) ([7bf1aed](https://github.com/Mihailorama/saas-agent-starter/commit/7bf1aedec56b6fa2a705eb887f7a7ca897f89f96))
+* **billing:** referrals with Stripe promotion codes; Dub Partners connector ([#59](https://github.com/Mihailorama/saas-agent-starter/issues/59)) ([a2dcbad](https://github.com/Mihailorama/saas-agent-starter/commit/a2dcbadda8032e74cdcf7e3bfdc2780ac8e940e6))
+* **billing:** rewards as code and team invite reward ([#55](https://github.com/Mihailorama/saas-agent-starter/issues/55)) ([ab94031](https://github.com/Mihailorama/saas-agent-starter/commit/ab940311b761fcfb1b97cd77ee80f030ced803bf))
+* **billing:** usage reporting to provider meters ([#61](https://github.com/Mihailorama/saas-agent-starter/issues/61)) ([2fb5f2a](https://github.com/Mihailorama/saas-agent-starter/commit/2fb5f2a37244215e54c884a818549bad4eeb580c))
+* **crm:** Twenty CRM and self-hosted Cal.diy booking wired to signup, billing, support and analytics ([#45](https://github.com/Mihailorama/saas-agent-starter/issues/45)) ([49a1153](https://github.com/Mihailorama/saas-agent-starter/commit/49a1153103a450f81131aa56e7507413b6b5c016))
+* **deploy:** provider-neutral production deploy ([#31](https://github.com/Mihailorama/saas-agent-starter/issues/31)) ([f63083b](https://github.com/Mihailorama/saas-agent-starter/commit/f63083b05cf0c29ec2d5a4114ba734c566f69032))
+* feature flags via PostHog and automated release notes ([#26](https://github.com/Mihailorama/saas-agent-starter/issues/26)) ([b357e9a](https://github.com/Mihailorama/saas-agent-starter/commit/b357e9acb35de307f2003416508901b9fc37cd36))
+* legal pages, terms acceptance at sign-up and marketing consent ([#73](https://github.com/Mihailorama/saas-agent-starter/issues/73)) ([5dcc8ea](https://github.com/Mihailorama/saas-agent-starter/commit/5dcc8ea032c8e1c0425f2647073c8ba08a407a5f))
+* **llmops:** versioned prompts, Promptfoo evals, PostHog generations, Langfuse profile ([#24](https://github.com/Mihailorama/saas-agent-starter/issues/24)) ([2fbdcc4](https://github.com/Mihailorama/saas-agent-starter/commit/2fbdcc4b8ed18157b2160c645818ba2b274285a4))
+* **marketing:** Astro site with SEO basics, Postiz, SerpBear, Lighthouse CI ([#39](https://github.com/Mihailorama/saas-agent-starter/issues/39)) ([ad2dbbc](https://github.com/Mihailorama/saas-agent-starter/commit/ad2dbbc35210afee6ff9c12a04c43ccaf2eee163))
+* **ops:** backups with point-in-time recovery and restore checks ([#30](https://github.com/Mihailorama/saas-agent-starter/issues/30)) ([24b5552](https://github.com/Mihailorama/saas-agent-starter/commit/24b5552de8a8b56fbbb81e09b3905127743bfd3e))
+* **ops:** one-command infrastructure setup (pnpm run infra) ([#66](https://github.com/Mihailorama/saas-agent-starter/issues/66)) ([f746491](https://github.com/Mihailorama/saas-agent-starter/commit/f74649199cd4217d3ff87efb730ae5328830e6d4))
+* **ops:** Vaultwarden secrets vault for humans and coding agents ([#60](https://github.com/Mihailorama/saas-agent-starter/issues/60)) ([5ddf0c9](https://github.com/Mihailorama/saas-agent-starter/commit/5ddf0c90abdca48d83e4872794075d9f1c7cf7a7))
+* **privacy:** Presidio PII redaction; license gate accepts Zlib, CNRI-Python and common license spellings ([#47](https://github.com/Mihailorama/saas-agent-starter/issues/47)) ([d5ea728](https://github.com/Mihailorama/saas-agent-starter/commit/d5ea728dbc2738646f7dc7bb352fce1197deb582))
+* **privacy:** user data export, deletion across tools, retention enforcement ([#41](https://github.com/Mihailorama/saas-agent-starter/issues/41)) ([8895cc0](https://github.com/Mihailorama/saas-agent-starter/commit/8895cc00db546a871dc8d113041732df539fc930))
+* quality budgets for gate configs, suppressions and AGENTS.md size ([#86](https://github.com/Mihailorama/saas-agent-starter/issues/86)) ([a00965a](https://github.com/Mihailorama/saas-agent-starter/commit/a00965a57a0c43a3dfc5db5d910a726bb1ae4e85))
+* set up the servers in a conversation with /setup-infra ([#101](https://github.com/Mihailorama/saas-agent-starter/issues/101)) ([ee2ef29](https://github.com/Mihailorama/saas-agent-starter/commit/ee2ef29233d2415d656ba9cc0e77b7e5a6f0d5c7))
+* setup asks only the base; add the CRM and other components later with infra add ([#104](https://github.com/Mihailorama/saas-agent-starter/issues/104)) ([818d8ce](https://github.com/Mihailorama/saas-agent-starter/commit/818d8ceddcc56dac05f433ae1803fa99ba895d57))
+* **site:** contact channels next to Talk to us ([#72](https://github.com/Mihailorama/saas-agent-starter/issues/72)) ([79e46ce](https://github.com/Mihailorama/saas-agent-starter/commit/79e46ce98ccc1cb5215175f73eff821d5313e948))
+* **site:** landing that shows what Orgfold is and who it is for ([#76](https://github.com/Mihailorama/saas-agent-starter/issues/76)) ([2f99b69](https://github.com/Mihailorama/saas-agent-starter/commit/2f99b690e2eb8e3804670d95979bf6d85595ce64))
+* **site:** legal pages for providers agreed per contract ([#97](https://github.com/Mihailorama/saas-agent-starter/issues/97)) ([e4140b7](https://github.com/Mihailorama/saas-agent-starter/commit/e4140b746e43813334fd660f4020b15120f26e0f))
+* **site:** Orgfold landing page, short and two offers ([#70](https://github.com/Mihailorama/saas-agent-starter/issues/70)) ([5048859](https://github.com/Mihailorama/saas-agent-starter/commit/5048859f21d10ea32fbc5277e6c8ffe580c3c5d1))
+* **site:** set a deployment's legal entity at build time ([#74](https://github.com/Mihailorama/saas-agent-starter/issues/74)) ([7376291](https://github.com/Mihailorama/saas-agent-starter/commit/737629113190cc3c7ea40bfad4088c8dd5235a81))
+* **site:** show every service in the box with its logo and license ([#98](https://github.com/Mihailorama/saas-agent-starter/issues/98)) ([6d1d0a5](https://github.com/Mihailorama/saas-agent-starter/commit/6d1d0a5ae53cc047515b6306f2c4d9de0371ce2c))
+* **site:** starter landing page and GitHub Pages deploy ([#49](https://github.com/Mihailorama/saas-agent-starter/issues/49)) ([dc02b22](https://github.com/Mihailorama/saas-agent-starter/commit/dc02b228bd4cd066bea5b2d68cafa685257522ee))
+* staff single sign-on into the tools (the app as their OpenID Connect provider) ([#100](https://github.com/Mihailorama/saas-agent-starter/issues/100)) ([ef07055](https://github.com/Mihailorama/saas-agent-starter/commit/ef070556fc6fbf0c84bc4b096675d6a12b8ad0ad))
+* **support:** Chatwoot service desk with triage into the tracker ([#33](https://github.com/Mihailorama/saas-agent-starter/issues/33)) ([8fddae9](https://github.com/Mihailorama/saas-agent-starter/commit/8fddae94a0dc28fa64e018df1994d9091893ee38))
+* **support:** lite Telegram support bot with forum topics and triage ([#64](https://github.com/Mihailorama/saas-agent-starter/issues/64)) ([5817647](https://github.com/Mihailorama/saas-agent-starter/commit/581764721baca2e350225fbebfef0a662c35a13a))
+* the setup wizard deploys the newest release and ends with what it installed ([#103](https://github.com/Mihailorama/saas-agent-starter/issues/103)) ([7bcf9ed](https://github.com/Mihailorama/saas-agent-starter/commit/7bcf9ed122814a4eb5e31165e333eed79f39b127))
+* **ui:** UI council that scores blinded screenshots until the UI reaches the target ([#77](https://github.com/Mihailorama/saas-agent-starter/issues/77)) ([6443bc0](https://github.com/Mihailorama/saas-agent-starter/commit/6443bc063c53a7a810fdd49726df9f5be4d05d46))
+* validate a business idea before building (founder-skill plugin, /validate-idea) ([#53](https://github.com/Mihailorama/saas-agent-starter/issues/53)) ([bd973a2](https://github.com/Mihailorama/saas-agent-starter/commit/bd973a2d2f0cfb4f37bbe10efb60f29e2f3c8e49))
+* **web:** onboarding checklist and product tour ([#56](https://github.com/Mihailorama/saas-agent-starter/issues/56)) ([37bfd08](https://github.com/Mihailorama/saas-agent-starter/commit/37bfd0829de0051202812ddfa4829ec4be1ff558))
+* **web:** UI kit, patterns, gallery and visual/a11y checks ([#42](https://github.com/Mihailorama/saas-agent-starter/issues/42)) ([ccbf549](https://github.com/Mihailorama/saas-agent-starter/commit/ccbf549ede2e5f9f2c869ce7c05a5bf6a1de5341))
+
+
+### Fixes
+
+* **ci:** checks that work in private forks ([#75](https://github.com/Mihailorama/saas-agent-starter/issues/75)) ([6ef0525](https://github.com/Mihailorama/saas-agent-starter/commit/6ef0525ba899fd6e6fc0eacb302976f260d65967))
+* **infra:** a re-run with nothing changed no longer rewrites the env file ([#105](https://github.com/Mihailorama/saas-agent-starter/issues/105)) ([3bd4554](https://github.com/Mihailorama/saas-agent-starter/commit/3bd455414667aa6f00d007ae0fae9cafe38dd0b9))
+* **ops:** back up Chatwoot conversations and attachments ([#46](https://github.com/Mihailorama/saas-agent-starter/issues/46)) ([e5a409b](https://github.com/Mihailorama/saas-agent-starter/commit/e5a409ba42439a553a5b2a98a8ebe74eb155c0f7))
+* **site:** a site build with the template off refuses example processors ([#91](https://github.com/Mihailorama/saas-agent-starter/issues/91)) ([c03fa8c](https://github.com/Mihailorama/saas-agent-starter/commit/c03fa8c6db9d694cb5059e3debed785d57d88a02))
+* **site:** Orgfold as publisher, contact link, hide empty blog links ([#71](https://github.com/Mihailorama/saas-agent-starter/issues/71)) ([dde2bbc](https://github.com/Mihailorama/saas-agent-starter/commit/dde2bbc1310def75c69725c5c71d813d0550d50f))
+* **ui:** a push no longer dies after the visual check passed ([#90](https://github.com/Mihailorama/saas-agent-starter/issues/90)) ([8eb16f0](https://github.com/Mihailorama/saas-agent-starter/commit/8eb16f0ac71025e69971a4bcfeed65c7b0c64f83))
+* **ui:** the visual check picks a free port instead of 5177 ([#99](https://github.com/Mihailorama/saas-agent-starter/issues/99)) ([14d9d7a](https://github.com/Mihailorama/saas-agent-starter/commit/14d9d7a4c49f75901b00cf7f2935486bc784ea65))
+* **ui:** visual check pages get time for their first load, so main's screenshots get cached ([#89](https://github.com/Mihailorama/saas-agent-starter/issues/89)) ([bc1d876](https://github.com/Mihailorama/saas-agent-starter/commit/bc1d876c2082123733ac24f5023b70a580b22d27))
+* what a real server install found: Vaultwarden SSO scope, sshd AllowUsers, fork images ([#102](https://github.com/Mihailorama/saas-agent-starter/issues/102)) ([63d720d](https://github.com/Mihailorama/saas-agent-starter/commit/63d720d152a7032e02ce0d44c1e8dc01eaaad5da))
+* **worker:** keep the worker image on the Python its venv is built with ([#87](https://github.com/Mihailorama/saas-agent-starter/issues/87)) ([bb3b0fa](https://github.com/Mihailorama/saas-agent-starter/commit/bb3b0fa0a6a64c7b3f2444a2fef50215e22dc2e3))
