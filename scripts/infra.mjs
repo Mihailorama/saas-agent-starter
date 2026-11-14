@@ -97,12 +97,20 @@ export function validateAnswers(a) {
   for (const c of catalog) {
     const ca = a.components?.[c.id];
     if (!ca) {
-      need(c.tier !== 'core' || c.modes.length === 1, `components.${c.id}: ${c.modes.join('|')}`);
+      // Required: a core choice (install or connect), or a connect-only component (mail).
+      const required =
+        (c.tier === 'core' && c.modes.length > 1) ||
+        (c.modes.length === 1 && c.modes[0] === 'connect');
+      need(!required, `components.${c.id}: ${c.modes.join('|')}`);
       continue;
     }
     const at = `components.${c.id}`;
     if (!c.modes.includes(ca.mode)) {
-      errors.push(`${at}.mode: one of ${c.modes.join(', ')}`);
+      errors.push(
+        c.modes.length === 1 && c.modes[0] === 'connect'
+          ? `${at}: now required, it cannot be ${ca.mode}: run pnpm run infra -- add ${c.id}`
+          : `${at}.mode: one of ${c.modes.join(', ')}`,
+      );
       continue;
     }
     need(ca.mode === 'skip' || c.available !== false, `${at}: not available yet (docs/TODO.md)`);
@@ -164,6 +172,8 @@ export function render(a, current = {}, { rotate = [], secrets = {}, previous } 
         }
       }
     }
+    // Settings of the component set by hand (`keys`, e.g. VAULT_ADMIN_TOKEN) stay while it is on.
+    if (mode !== 'skip') for (const k of c.keys ?? []) if (k in current) env[k] = current[k];
     if (mode !== 'connect') continue;
     for (const f of fields(c, ca)) {
       if (f.answerOnly) continue;
@@ -176,6 +186,11 @@ export function render(a, current = {}, { rotate = [], secrets = {}, previous } 
     }
   }
   env.COMPOSE_PROFILES = profiles.join(',');
+  // The answers own APP_NAME only once they name the product; a hand-set one stays until then.
+  if (a.product?.name) {
+    owned.add('APP_NAME');
+    env.APP_NAME = a.product.name;
+  }
   // Keys no component owns (added by hand with `sops edit`) stay as they are.
   for (const [k, v] of Object.entries(current)) if (!owned.has(k)) env[k] = v;
   // compose interpolates `$` in .env, and one line holds one value
@@ -454,20 +469,22 @@ async function ask(a, current, secrets, only) {
   const text = async (message, initialValue, re) =>
     ok(await p.text({ message, initialValue, validate: check(re) }));
   p.intro(`Infrastructure for ${a.env}`);
-  if (!only) {
-    a.server.host = await text('Server: IP, host name or ssh alias', a.server.host, '^[\\w.-]+$');
-    a.server.admin = await text('Admin user (root, or passwordless sudo)', a.server.admin);
-    a.domain = await text('Domain of the app (its DNS record points at the server)', a.domain);
-    a.tls = await text('E-mail for Let\'s Encrypt ("internal": own CA)', a.tls, '@|^internal$');
-  }
-  for (const c of catalog.filter((c) => c.available !== false && c.modes.length > 1)) {
-    if (only && c.id !== only) continue;
+  // Setup asks only the base (product, server, domain, mail, where data lives); every other
+  // component comes later through `add <component>` (the action the stack console calls).
+  const askable = catalog.filter(
+    (c) => c.available !== false && (c.modes.length > 1 || c.modes[0] === 'connect'),
+  );
+  const component = async (c) => {
     a.components[c.id] ??= {};
     const ca = a.components[c.id];
-    const options = c.modes.map((m) => ({ value: m, label: LABEL[m] }));
+    const options = c.modes.map((m) => ({ value: m, label: c.labels?.[m] ?? LABEL[m] }));
     const initialValue = ca.mode ?? c.modes[0];
-    ca.mode = ok(await p.select({ message: `${c.id}: ${c.description}`, options, initialValue }));
-    if (ca.mode !== 'connect') continue;
+    const message = c.ask ? `${c.ask} (${c.description})` : `${c.id}: ${c.description}`;
+    if (c.modes.length === 1) {
+      p.log.step(message);
+      ca.mode = c.modes[0];
+    } else ca.mode = ok(await p.select({ message, options, initialValue }));
+    if (ca.mode !== 'connect') return;
     for (const f of (c.connect ?? []).flatMap((f) => expandField(f, ca))) {
       if (!f.secret) {
         const list = choices(f.key, ca);
@@ -488,6 +505,29 @@ async function ask(a, current, secrets, only) {
         secrets[f.key] = ok(await p.password({ message: f.prompt, validate: check(f.validate) }));
       }
     }
+  };
+  if (!only) {
+    a.product ??= {};
+    a.product.name = await text(
+      'What is the product called?',
+      a.product.name ?? current.APP_NAME ?? 'Workspace',
+      '^[^$\\n]+$',
+    );
+    a.product.description = await text(
+      'Describe it in a sentence or two (landing page, search results)',
+      a.product.description ?? '',
+    );
+  }
+  if (only) await component(byId[only]);
+  else {
+    a.server.host = await text('Server: IP, host name or ssh alias', a.server.host, '^[\\w.-]+$');
+    a.server.admin = await text('Admin user (root, or passwordless sudo)', a.server.admin);
+    a.domain = await text(
+      'Address of the app (its DNS record points at the server), e.g. app.example.com',
+      a.domain,
+    );
+    a.tls = await text('E-mail for Let\'s Encrypt ("internal": own CA)', a.tls, '@|^internal$');
+    for (const c of askable.filter((c) => c.group === 'base')) await component(c);
   }
   return () => p.confirm({ message: 'Apply this plan?' }).then((v) => v === true);
 }
@@ -613,7 +653,7 @@ export function summary(a, env, release) {
     'Installed on the server:',
     ...by.install,
     ...(by.connect.length ? ['Connected:', ...by.connect] : []),
-    ...(by.skip.length ? ['Skipped:', ...by.skip] : []),
+    ...(by.skip.length ? ['Not added yet (pnpm run infra -- add <component>):', ...by.skip] : []),
   ].join('\n');
 }
 

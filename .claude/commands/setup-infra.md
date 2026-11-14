@@ -13,12 +13,14 @@ command the human runs next. Stop there.
 1. Read `docs/setup.md` and `config/components.json` (modes, `connect` fields, `requires`,
    `available`, `install.ramMiB`). Ask from the catalog, never from memory: it is the source.
    If `deploy/setup/<env>.answers.json` exists, start from it and ask only what changes.
-2. Ask a few questions at a time, in the human's language, each with the catalog's default and
-   what it costs: the server (host or `~/.ssh/config` alias, admin user), the domain and the
-   Let's Encrypt e-mail (or `internal`), then (the release is always the newest, never ask) for each component install /
-   connect / skip with its RAM and what skipping turns off. Recommend for their case (one small
-   server: install Postgres and S3, connect SMTP and the LLM provider). Check that the domain and
-   the subdomains the choices need resolve (`dig +short <name>`) and say which are missing.
+2. Ask only the base, a few questions at a time, in the human's language: the product's name and
+   a sentence about it, the server (host or `~/.ssh/config` alias, admin user), the app's address
+   (the domain's owner decides: `app.` or the bare domain) and the Let's Encrypt e-mail (or
+   `internal`), then the base components (`group: base`): Postgres and S3 install or connect, and
+   mail (required). The release is always the newest; never ask. Other components are not part of
+   setup: when the human wants one (a CRM, analytics, a vault), it is `pnpm run infra -- add <id>`
+   after setup, with its RAM and what it turns on. Check that the domain and the subdomains the
+   choices need resolve (`dig +short <name>`) and say which are missing.
 3. Connect fields marked `"secret": true` are never asked for, written or repeated here, even if
    the human offers one: say they will type it into `pnpm run infra` (hidden), or store it first
    with `/save-secret` and pass it as `INFRA_<KEY>` from the vault. Non-secret fields go into the
