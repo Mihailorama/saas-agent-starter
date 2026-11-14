@@ -248,6 +248,12 @@ test('the receipt lists what is installed with addresses, then connected and ski
   assert.match(text, /\nNot added yet \(pnpm run infra -- add <component>\):\n(.*\n)* {2}vault /);
 });
 
+test('a re-run with nothing changed renders the same env, key order included', () => {
+  const first = render(answers(), {}, { secrets }).env;
+  const again = render(answers(), first, { secrets }).env;
+  assert.deepEqual(Object.entries(again), Object.entries(first));
+});
+
 test('a hand-set APP_NAME stays until the answers name the product', () => {
   const a = answers();
   assert.equal(render(a, { APP_NAME: 'Acme' }).env.APP_NAME, 'Acme');
