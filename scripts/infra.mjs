@@ -185,6 +185,8 @@ export function render(a, current = {}, { rotate = [], secrets = {}, previous } 
       else env[f.key] = v;
     }
   }
+  // Computed here, last: a value kept from `keys` must not move it (a re-run rewrites nothing).
+  delete env.COMPOSE_PROFILES;
   env.COMPOSE_PROFILES = profiles.join(',');
   // The answers own APP_NAME only once they name the product; a hand-set one stays until then.
   if (a.product?.name) {
