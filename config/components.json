@@ -380,7 +380,7 @@
       },
       "install": {
         "profile": "crm",
-        "ramMiB": 2560,
+        "ramMiB": 2624,
         "site": "CRM_PUBLIC_URL",
         "env": {
           "CRM_PUBLIC_URL": "https://crm.{domain}",

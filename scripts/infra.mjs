@@ -106,7 +106,11 @@ export function validateAnswers(a) {
     }
     const at = `components.${c.id}`;
     if (!c.modes.includes(ca.mode)) {
-      errors.push(`${at}.mode: one of ${c.modes.join(', ')}`);
+      errors.push(
+        c.modes.length === 1 && c.modes[0] === 'connect'
+          ? `${at}: now required, it cannot be ${ca.mode}: run pnpm run infra -- add ${c.id}`
+          : `${at}.mode: one of ${c.modes.join(', ')}`,
+      );
       continue;
     }
     need(ca.mode === 'skip' || c.available !== false, `${at}: not available yet (docs/TODO.md)`);
@@ -182,8 +186,11 @@ export function render(a, current = {}, { rotate = [], secrets = {}, previous } 
     }
   }
   env.COMPOSE_PROFILES = profiles.join(',');
-  owned.add('APP_NAME');
-  if (a.product?.name) env.APP_NAME = a.product.name;
+  // The answers own APP_NAME only once they name the product; a hand-set one stays until then.
+  if (a.product?.name) {
+    owned.add('APP_NAME');
+    env.APP_NAME = a.product.name;
+  }
   // Keys no component owns (added by hand with `sops edit`) stay as they are.
   for (const [k, v] of Object.entries(current)) if (!owned.has(k)) env[k] = v;
   // compose interpolates `$` in .env, and one line holds one value
@@ -503,7 +510,7 @@ async function ask(a, current, secrets, only) {
     a.product ??= {};
     a.product.name = await text(
       'What is the product called?',
-      a.product.name ?? 'Workspace',
+      a.product.name ?? current.APP_NAME ?? 'Workspace',
       '^[^$\\n]+$',
     );
     a.product.description = await text(

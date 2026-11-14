@@ -83,7 +83,10 @@ test('answers: valid ones pass, secrets and wrong choices are refused', () => {
   // Mail is the only way in (sign-in codes): it cannot be skipped or left out.
   const noMail = answers();
   noMail.components.smtp = { mode: 'skip' };
-  assert.match(validateAnswers(noMail).join('\n'), /smtp\.mode: one of connect/);
+  assert.match(
+    validateAnswers(noMail).join('\n'),
+    /smtp: now required, it cannot be skip: run pnpm run infra -- add smtp/,
+  );
   delete noMail.components.smtp;
   assert.match(validateAnswers(noMail).join('\n'), /components\.smtp/);
 });
@@ -243,6 +246,13 @@ test('the receipt lists what is installed with addresses, then connected and ski
     assert.ok(text.includes(`  ${c.id} `), c.id);
   // What setup left out is listed with the command that adds it later.
   assert.match(text, /\nNot added yet \(pnpm run infra -- add <component>\):\n(.*\n)* {2}vault /);
+});
+
+test('a hand-set APP_NAME stays until the answers name the product', () => {
+  const a = answers();
+  assert.equal(render(a, { APP_NAME: 'Acme' }).env.APP_NAME, 'Acme');
+  a.product = { name: 'Orbit' };
+  assert.equal(render(a, { APP_NAME: 'Acme' }).env.APP_NAME, 'Orbit');
 });
 
 test('a setting made by hand for a component (its keys) survives a re-run while it is on', () => {
