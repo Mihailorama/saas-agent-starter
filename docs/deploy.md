@@ -39,8 +39,8 @@ rolling updates; the expand/contract rule below is what makes them, and rollback
 Merge the release-please PR (docs/releases.md), or push a tag yourself:
 `git tag v1.4.0 && git push origin v1.4.0`. The `Release images` workflow builds the three
 images, refuses to overwrite an existing tag, pushes `ghcr.io/<owner>/<repo>/{api,worker,web}:v1.4.0`
-and prints each digest in the run summary. The `CI` (tsc release typecheck) and `SBOM` workflows
-run on the same tag. It uses only the built-in `GITHUB_TOKEN`. Tags created with `GITHUB_TOKEN`
+and prints each digest in the run summary; its `sbom` job then writes the SBOMs (Cal.diy's image
+included, so it waits for `caldiy`). The `CI` workflow (tsc release typecheck) runs on the same tag. It uses only the built-in `GITHUB_TOKEN`. Tags created with `GITHUB_TOKEN`
 (release-please) do not fire tag pushes, so `Release images` also accepts `workflow_dispatch` on a tag ref
 (dispatched on a branch, it does nothing).
 
