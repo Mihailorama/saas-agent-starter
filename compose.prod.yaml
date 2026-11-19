@@ -698,7 +698,7 @@ services:
   # they get through. One callback for all sites at GATE_PUBLIC_URL, the cookie covers *.APP_DOMAIN.
   gate:
     profiles: [gate]
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.6@sha256:c3415e8660af553f5e18f5d90db050614c02493c0ac6260ac59442f6d9b12048
     logging: *logging
     mem_limit: 64m
     restart: unless-stopped
