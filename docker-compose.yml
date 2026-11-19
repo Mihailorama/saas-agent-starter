@@ -619,7 +619,7 @@ services:
   umami:
     logging: *logging
     profiles: [analytics]
-    image: ghcr.io/umami-software/umami:3.4.1
+    image: ghcr.io/umami-software/umami:3.5.0
     depends_on: { umami-db: { condition: service_completed_successfully } }
     init: true
     mem_limit: 1g # measured: ~256 MiB idle, ~780 MiB peak at ~75 events/s (docs/product-analytics.md)

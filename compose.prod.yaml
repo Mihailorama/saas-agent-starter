@@ -557,7 +557,7 @@ services:
   # deploy (deploy/setup/umami-admin.sh, run by `pnpm run infra`). PostHog Cloud: leave it off.
   umami:
     profiles: [analytics]
-    image: ghcr.io/umami-software/umami:3.4.1
+    image: ghcr.io/umami-software/umami:3.5.0
     logging: *logging
     init: true
     mem_limit: 1g
