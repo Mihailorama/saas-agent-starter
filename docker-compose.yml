@@ -165,7 +165,7 @@ services:
   mcp-server:
     logging: *logging
     mem_limit: 256m
-    image: node:24-alpine
+    image: node:26-alpine
     profiles: [mcp]
     command: ["npx", "-y", "@modelcontextprotocol/server-everything@2.0.1", "streamableHttp"]
     environment:
