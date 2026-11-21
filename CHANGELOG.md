@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/Mihailorama/saas-agent-starter/compare/v0.2.0...v0.3.0) (2026-11-21)
+
+
+### Features
+
+* build internal apps with agents: OpenHands and bolt.diy in the catalog, behind a staff sign-in gate ([#116](https://github.com/Mihailorama/saas-agent-starter/issues/116)) ([c029e8b](https://github.com/Mihailorama/saas-agent-starter/commit/c029e8bba323fe398cc8370887f5cb023115ff1e))
+* connect services from the console's chat: plan cards with a secure connect form, one-click Add, free-tier suggestions ([#115](https://github.com/Mihailorama/saas-agent-starter/issues/115)) ([3ef2c8f](https://github.com/Mihailorama/saas-agent-starter/commit/3ef2c8f53fc31606a165b90e820a1bbcc0a49b66))
+* daily site report in Telegram: visitors from Umami and Google search from Search Console ([#118](https://github.com/Mihailorama/saas-agent-starter/issues/118)) ([7ca84b9](https://github.com/Mihailorama/saas-agent-starter/commit/7ca84b99a3d39360646531fe3602bd55b0155314))
+* setup connects the AI model first, by subscription or API key, and the stack agent uses it ([#112](https://github.com/Mihailorama/saas-agent-starter/issues/112)) ([16eb460](https://github.com/Mihailorama/saas-agent-starter/commit/16eb460de1889dd39049204fc512f297dd74f455))
+* site report prints the day's numbers for a report factory, GitHub stars included ([#120](https://github.com/Mihailorama/saas-agent-starter/issues/120)) ([23cb8fe](https://github.com/Mihailorama/saas-agent-starter/commit/23cb8fe739c588bfb11aa4359325d3b5b96ba46a))
+* test reports in the stack: Allure and ReportPortal to choose from, CI sends every run ([#117](https://github.com/Mihailorama/saas-agent-starter/issues/117)) ([8a15f86](https://github.com/Mihailorama/saas-agent-starter/commit/8a15f86a42cf28262535ddc5f87ca737b8f3ca03))
+
 ## [0.2.0](https://github.com/Mihailorama/saas-agent-starter/compare/v0.1.0...v0.2.0) (2026-11-16)
 
 
